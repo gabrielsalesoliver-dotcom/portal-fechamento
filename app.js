@@ -341,27 +341,45 @@ async function gravarUmov() {
 // Regra de vínculo (aprovada em 19/10/2026): 1) rota com parceiro no de-para; 2) cidade atendida por um só parceiro;
 // 3) cidade dividida: parceiro principal se tiver >= 90% dos pontos; 4) rota de base própria fica com a GSM; 5) resto pendente.
 async function rotasSemParceiro(ativa) {
-  const [pend, vinc] = await Promise.all([
+  const [pend, vinc, pendM] = await Promise.all([
     q(sb.from('umov_pendentes_cidade').select('*').eq('importacao_id', ativa.id).order('atendimentos', { ascending: false })),
     q(sb.from('umov_vinculos_resumo').select('*').eq('importacao_id', ativa.id)),
+    q(sb.from('umov_pendentes_malote').select('*').eq('importacao_id', ativa.id).order('atendimentos', { ascending: false }).limit(300)),
   ]);
   const cont = {}; vinc.forEach(v => cont[v.vinculo] = v.atendimentos);
   const opts = S.parceiros.filter(p => p.ativo).map(p => `<option value="${p.id}">${esc(p.codigo + ' · ' + p.regiao + ' · ' + p.nome)}</option>`).join('');
   $('#rotas').innerHTML = `<section class="bloco"><h2>Vínculo com parceiros</h2>
-    <p class="sub">Primeiro vale a rota do de-para; se a rota não tem parceiro, vale a cidade (pela base de pontos de cada parceiro). Cidade dividida entre parceiros vai para o principal quando ele tem 90% ou mais dos pontos.</p>
+    <p class="sub">Malote: o parceiro vem do cadastro de pontos, pelo código de integração. Kits: primeiro a rota do de-para; se a rota não tem parceiro, a cidade (cidade dividida vai para o principal quando ele tem 90% ou mais dos pontos).</p>
     <div class="kpis">
-      <div class="kpi"><small>Pela rota</small><b>${fmtN(cont.rota || 0)}</b><span></span></div>
+      <div class="kpi"><small>Malote pelo cadastro</small><b>${fmtN(cont.cadastro || 0)}</b><span></span></div>
+      <div class="kpi"><small>Kits pela rota</small><b>${fmtN(cont.rota || 0)}</b><span></span></div>
       <div class="kpi"><small>Pela cidade</small><b>${fmtN((cont.cidade || 0) + (cont.cidade_principal || 0))}</b><span>${cont.cidade_principal ? fmtN(cont.cidade_principal) + ' pelo parceiro principal' : ''}</span></div>
       <div class="kpi neutro"><small>Manual</small><b>${fmtN(cont.manual || 0)}</b><span></span></div>
       <div class="kpi neutro"><small>Base própria GSM</small><b>${fmtN(cont.base_propria || 0)}</b><span>SP, RJ e rotas próprias</span></div>
       <div class="kpi ${pend.length ? 'alerta' : 'neutro'}"><small>Pendentes</small><b>${fmtN(pend.reduce((a, r) => a + r.atendimentos, 0))}</b><span>${pend.length ? pend.length + ' cidades' : 'nenhum'}</span></div>
     </div>
-    ${pend.length ? `<p class="sub" style="margin:0">Cidades que nenhum parceiro atende na base. Ao vincular, a cidade fica salva para os próximos meses.</p>
+    ${pendM.length ? `<h2 style="font-size:15px;margin-top:6px">Malote com código fora da carteira</h2>
+    <p class="sub" style="margin:0">Pontos que o Umov atendeu e não estão no cadastro. Escolha o parceiro para cadastrar; os demais dados vêm do Umov e podem ser completados na Carteira de pontos.</p>
+    <div class="tabela"><table><thead><tr><th>Código</th><th>Cliente no Umov</th><th>Cidade</th><th class="n">Atend.</th><th>Parceiro</th><th></th></tr></thead><tbody>
+    ${pendM.map((r, i) => `<tr><td class="num">${esc(r.cod_int || '(sem código)')}</td><td style="font-size:13px">${esc(r.cliente || '')}</td><td style="font-size:13px">${esc(r.cidade || '')}</td><td class="n">${fmtN(r.atendimentos)}</td>
+      <td><select class="peq" id="selm${i}" ${r.cod_int ? '' : 'disabled'}><option value="">Escolha…</option>${opts}</select></td>
+      <td>${r.cod_int ? `<button class="btn peq" data-m="${i}">Cadastrar ponto</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${pend.length ? `<h2 style="font-size:15px;margin-top:6px">Kits sem parceiro</h2><p class="sub" style="margin:0">Cidades que nenhum parceiro atende na base. Ao vincular, a cidade fica salva para os próximos meses.</p>
     <div class="tabela"><table><thead><tr><th>Cidade</th><th>Rotas no Umov</th><th class="n">Atend.</th><th>Parceiro</th><th></th></tr></thead><tbody>
     ${pend.map((r, i) => `<tr><td>${esc(r.cidade_norm || '(sem cidade)')}${r.uf_norm ? ' - ' + esc(r.uf_norm) : ''}</td><td style="font-size:13px;color:var(--muted)">${esc(r.rotas)}</td><td class="n">${fmtN(r.atendimentos)}</td>
       <td><select class="peq" id="sel${i}"><option value="">Escolha…</option>${opts}</select></td>
       <td><button class="btn peq" data-i="${i}">Vincular cidade</button></td></tr>`).join('')}</tbody></table></div>` : ''}
   </section>`;
+  app.querySelectorAll('#rotas button[data-m]').forEach(b => b.onclick = async () => {
+    const r = pendM[+b.dataset.m], v = $(`#selm${b.dataset.m}`).value;
+    if (!v) return;
+    b.disabled = true;
+    try {
+      const x = (r.cidade || '').match(/^(.*?)[\s\-]+([A-Za-z]{2})\s*$/);
+      await q(sb.rpc('salvar_ponto', { p: { cod_int: r.cod_int, cliente: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null), parceiro_id: v }, p_motivo: 'Cadastrado a partir do Umov' }));
+      await umovAtivaEHist();
+    } catch (e) { b.disabled = false; alertaTopo(e.message); }
+  });
   app.querySelectorAll('#rotas button[data-i]').forEach(b => b.onclick = async () => {
     const r = pend[+b.dataset.i], v = $(`#sel${b.dataset.i}`).value;
     if (!v) return;
