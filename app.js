@@ -363,13 +363,25 @@ async function rotasSemParceiro(ativa) {
     <div class="tabela"><table><thead><tr><th>Código</th><th>Cliente no Umov</th><th>Cidade</th><th class="n">Atend.</th><th>Parceiro</th><th></th></tr></thead><tbody>
     ${pendM.map((r, i) => `<tr><td class="num">${esc(r.cod_int || '(sem código)')}</td><td style="font-size:13px">${esc(r.cliente || '')}</td><td style="font-size:13px">${esc(r.cidade || '')}</td><td class="n">${fmtN(r.atendimentos)}</td>
       <td><select class="peq" id="selm${i}" ${r.cod_int ? '' : 'disabled'}><option value="">Escolha…</option>${opts}</select></td>
-      <td>${r.cod_int ? `<button class="btn peq" data-m="${i}">Cadastrar ponto</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <td>${r.cod_int ? `<button class="btn peq" data-m="${i}">Cadastrar ponto</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+    ${(() => { const rc = {}; pendM.forEach(r => (r.rotas || '').split(', ').filter(Boolean).forEach(x => rc[x] = (rc[x] || 0) + r.atendimentos));
+      const lst = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 30);
+      return lst.length ? `<p class="sub" style="margin:4px 0 0">Se o atendimento é de uma base própria da GSM (SP ou RJ), marque a rota. Os pontos dessa rota fora da carteira deixam de aparecer como pendentes.</p>
+        <div class="linha">${lst.map(([r, n]) => `<span class="pill" style="display:inline-flex;gap:8px;align-items:center;padding:4px 6px 4px 10px">${esc(r)} · ${fmtN(n)} atend. <button class="btn sec peq" style="min-height:28px;padding:2px 8px" data-bp="${esc(r)}">Base própria</button></span>`).join('')}</div>` : ''; })()}` : ''}
     ${pend.length ? `<h2 style="font-size:15px;margin-top:6px">Kits sem parceiro</h2><p class="sub" style="margin:0">Cidades que nenhum parceiro atende na base. Ao vincular, a cidade fica salva para os próximos meses.</p>
     <div class="tabela"><table><thead><tr><th>Cidade</th><th>Rotas no Umov</th><th class="n">Atend.</th><th>Parceiro</th><th></th></tr></thead><tbody>
     ${pend.map((r, i) => `<tr><td>${esc(r.cidade_norm || '(sem cidade)')}${r.uf_norm ? ' - ' + esc(r.uf_norm) : ''}</td><td style="font-size:13px;color:var(--muted)">${esc(r.rotas)}</td><td class="n">${fmtN(r.atendimentos)}</td>
       <td><select class="peq" id="sel${i}"><option value="">Escolha…</option>${opts}</select></td>
       <td><button class="btn peq" data-i="${i}">Vincular cidade</button></td></tr>`).join('')}</tbody></table></div>` : ''}
   </section>`;
+  app.querySelectorAll('#rotas button[data-bp]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await q(sb.rpc('vincular_rota', { p_rota: b.dataset.bp, p_parceiro: null, p_base_propria: true }));
+      await q(sb.rpc('vincular_por_cidade', { p_importacao: ativa.id }));
+      await umovAtivaEHist();
+    } catch (e) { b.disabled = false; alertaTopo(e.message); }
+  });
   app.querySelectorAll('#rotas button[data-m]').forEach(b => b.onclick = async () => {
     const r = pendM[+b.dataset.m], v = $(`#selm${b.dataset.m}`).value;
     if (!v) return;
