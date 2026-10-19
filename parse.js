@@ -268,3 +268,68 @@ export function parseCarteira(sheets) {
   }
   return { movimentos: movs, porAba, duplicadas, semCodigo, ignoradas };
 }
+
+// ---------- Relatório do parceiro (modelo GSM-REL) ----------
+// Número digitado ou calculado. Vazio fica null (nunca vira zero sem regra).
+export function numBR(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  let s = String(v).trim().replace(/^R\$\s*/i, '').replace(/\s/g, '');
+  if (!s) return null;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = Number(s);
+  return isFinite(n) ? n : NaN;
+}
+const txt = v => { if (v == null) return null; const s = String(v).trim(); return s || null; };
+
+export function parseRelatorio(sheets) {
+  const erros = [], avisos = [];
+  const id = {};
+  (sheets._gsm || []).forEach(r => { if (r && r[0]) id[String(r[0]).trim()] = r[1] == null ? null : String(r[1]).trim(); });
+  if (!sheets._gsm) erros.push('Este arquivo não é o modelo GSM. Baixe o modelo do mês no portal, preencha e envie o mesmo arquivo.');
+  else if (!/^GSM-REL-/.test(id.modelo || '')) erros.push('A versão do modelo não foi reconhecida. Baixe o modelo de novo no portal.');
+  for (const aba of ['Malote', 'Kits-Spot', 'Fora do Umov']) if (!sheets[aba]) erros.push(`A aba "${aba}" não foi encontrada. Não mude o nome das abas.`);
+  if (erros.length) return { erros, avisos, id };
+
+  const ruim = (aba, linha, campo, v) => erros.push(`${aba}, linha ${linha}: "${campo}" não é um número (${String(v).slice(0, 30)}).`);
+  const num = (aba, linha, campo, v) => { const n = numBR(v); if (Number.isNaN(n)) { ruim(aba, linha, campo, v); return null; } return n; };
+
+  const malote = [];
+  sheets.Malote.slice(4).forEach((r, i) => {
+    const linha = i + 5; const cod = codigo(r[0]);
+    if (!cod) return;
+    const realizado = num('Malote', linha, 'Realizado', r[9]);
+    if (realizado != null && (realizado < 0 || !Number.isInteger(realizado))) erros.push(`Malote, linha ${linha}: "Realizado" precisa ser um número inteiro (${realizado}).`);
+    malote.push({ linha, cod_int: cod, v_unit: num('Malote', linha, 'V. Unit', r[8]), realizado, observacao: txt(r[11]) });
+  });
+
+  const kits = [];
+  sheets['Kits-Spot'].slice(4).forEach((r, i) => {
+    const linha = i + 5; const ref = codigo(r[0]);
+    const k = { linha, ref_umov: ref || null, data: brDate(r[1]), kit_cliente: txt(r[2]), destino: txt(r[3]), cidade: txt(r[4]),
+      volumes: num('Kits-Spot', linha, 'Volumes', r[6]), valor: num('Kits-Spot', linha, 'Valor', r[7]), comprovante: txt(r[8]), observacao: txt(r[9]) };
+    if (!ref && k.valor == null && k.volumes == null && !k.kit_cliente && !k.destino && !k.comprovante) return;
+    if (r[1] != null && r[1] !== '' && !k.data) avisos.push(`Kits-Spot, linha ${linha}: data não reconhecida (${String(r[1]).slice(0, 20)}).`);
+    if (k.volumes != null && !Number.isInteger(k.volumes)) erros.push(`Kits-Spot, linha ${linha}: "Volumes" precisa ser inteiro.`);
+    kits.push(k);
+  });
+
+  const fora = [];
+  sheets['Fora do Umov'].slice(4).forEach((r, i) => {
+    const linha = i + 5;
+    const f = { linha, data: brDate(r[0]), servico: txt(r[1]), descricao: txt(r[2]), quantidade: num('Fora do Umov', linha, 'Quantidade', r[3]),
+      valor_unit: num('Fora do Umov', linha, 'Valor unit.', r[4]), comprovante: txt(r[6]), observacao: txt(r[7]) };
+    if (!f.servico && !f.descricao && f.quantidade == null && f.valor_unit == null && !f.comprovante) return;
+    if (r[0] != null && r[0] !== '' && !f.data) avisos.push(`Fora do Umov, linha ${linha}: data não reconhecida.`);
+    fora.push(f);
+  });
+
+  const soma = (l, f) => l.reduce((a, x) => a + (f(x) || 0), 0);
+  const totais = {
+    malote_qtd: soma(malote, x => x.realizado), malote_atend: soma(malote, x => (x.realizado || 0) * (x.v_unit || 0)),
+    kits: soma(kits, x => x.valor), kits_qtd: kits.filter(x => x.valor).length,
+    fora: soma(fora, x => x.quantidade != null && x.valor_unit != null ? x.quantidade * x.valor_unit : 0), fora_qtd: fora.length,
+    vazios: malote.filter(x => x.realizado == null).length,
+  };
+  return { erros, avisos, id, malote, kits, fora, totais };
+}

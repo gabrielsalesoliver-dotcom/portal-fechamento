@@ -1,5 +1,5 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, norm } from './parse.js';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, norm } from './parse.js';
 import { gerarModelo } from './modelo.js';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
@@ -901,8 +901,13 @@ async function vParceiroInicio() {
       <div id="msgb"></div>
     </section>
     <section class="bloco"><h2>2. Envie o relatório preenchido</h2>
-      <p class="sub">O envio pelo portal abre na próxima etapa. Quando estiver disponível, o portal confere com o Umov na hora e mostra o que precisa de ajuste.</p>
-    </section>`;
+      <p class="sub">Envie o mesmo arquivo que você baixou, já preenchido. O portal confere com o Umov na hora e mostra o que precisa de ajuste. Pode enviar de novo quantas vezes precisar: vale sempre o último envio.</p>
+      ${c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
+      <div id="prevr"></div>
+    </section>
+    <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>`;
+  if ($('#arqr')) ligarZona('arqr', f => previaRelatorio(f, c));
+  situacaoParceiro(c);
   const b = $('#baixar');
   if (b) b.onclick = async () => {
     b.disabled = true; b.textContent = 'Gerando…';
@@ -914,6 +919,102 @@ async function vParceiroInicio() {
       $('#msgb').innerHTML = '<div class="msg ok">Modelo baixado. Confira a pasta de downloads.</div>';
     } catch (e) { $('#msgb').innerHTML = `<div class="msg erro">Não foi possível gerar o modelo: ${esc(e.message)}</div>`; }
     finally { b.disabled = false; b.textContent = `Baixar modelo de ${nomeMes(c.mes)}`; }
+  };
+}
+
+// ---------- Envio do relatório e conferência ----------
+async function previaRelatorio(file, c) {
+  const box = $('#prevr'); box.innerHTML = '<div class="carregando" style="padding:12px 0">Lendo o arquivo…</div>';
+  let r;
+  try { r = parseRelatorio(await lerPlanilha(file)); } catch (e) { box.innerHTML = `<div class="msg erro">Não foi possível ler o arquivo: ${esc(e.message)}</div>`; return; }
+  if (!r.erros.length && r.id.parceiro_id !== S.parc.id) r.erros.push('Este modelo foi gerado para outro parceiro. Baixe o seu modelo no passo 1.');
+  if (!r.erros.length && r.id.competencia_id !== c.id) r.erros.push(`Este modelo é de ${nomeMes(r.id.competencia || '')}, não de ${nomeMes(c.mes)}. Escolha a competência certa ou baixe o modelo deste mês.`);
+  if (r.erros.length) {
+    box.innerHTML = `<div class="msg erro"><b>O arquivo não pode ser enviado ainda.</b><ul style="margin:6px 0 0;padding-left:18px">${r.erros.slice(0, 12).map(e => `<li>${esc(e)}</li>`).join('')}</ul>${r.erros.length > 12 ? `<div>…e mais ${r.erros.length - 12}.</div>` : ''}</div>`;
+    return;
+  }
+  const t = r.totais;
+  box.innerHTML = `<div class="confirma">
+    <b>Confira antes de enviar · ${esc(file.name)}</b>
+    <div class="kpis" style="gap:12px">
+      <div class="kpi neutro"><small>Malote</small><b style="font-size:20px">${fmtN(t.malote_qtd)} atend.</b><span>${BRL2(t.malote_atend)} pelos atendimentos (sem o fixo)</span></div>
+      <div class="kpi neutro"><small>Kits/Spot</small><b style="font-size:20px">${BRL2(t.kits)}</b><span>${fmtN(t.kits_qtd)} kit(s) com valor</span></div>
+      <div class="kpi neutro"><small>Fora do Umov</small><b style="font-size:20px">${BRL2(t.fora)}</b><span>${fmtN(t.fora_qtd)} serviço(s)</span></div>
+    </div>
+    ${t.vazios ? `<div class="msg alerta">${fmtN(t.vazios)} ponto(s) com "Realizado" em branco. Se não houve atendimento, coloque 0.</div>` : ''}
+    ${r.avisos.length ? `<div class="msg alerta">${r.avisos.slice(0, 6).map(esc).join('<br>')}</div>` : ''}
+    <div class="linha"><button class="btn marca" id="enviarr">Enviar relatório</button><button class="btn sec" id="cancelr">Cancelar</button></div>
+    <span class="nota">O valor fixo do contrato é somado pela GSM. Nada é aprovado automaticamente: a GSM confere tudo antes do pagamento.</span></div>`;
+  $('#cancelr').onclick = () => { box.innerHTML = ''; $('#arqr').value = ''; };
+  $('#enviarr').onclick = async () => {
+    const b = $('#enviarr'); b.disabled = true; b.textContent = 'Enviando…';
+    try {
+      const path = `${S.parc.id}/${c.mes.slice(0, 7)}/${Date.now()}_${safeName(file.name)}`;
+      const up = await sb.storage.from('envios').upload(path, file, { upsert: false });
+      if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
+      const res = await q(sb.rpc('registrar_envio', { p_comp: c.id, p_arquivo: path, p_malote: r.malote, p_kits: r.kits, p_fora: r.fora }));
+      box.innerHTML = `<div class="msg ${res.precisa_acao ? 'alerta' : 'ok'}">Relatório recebido (envio ${res.versao}). ${res.precisa_acao ? `${res.precisa_acao} item(ns) precisam da sua ação. Veja abaixo.` : 'Nenhum item precisa da sua ação. A GSM vai conferir e aprovar.'}</div>`;
+      situacaoParceiro(c); $('#situacao').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) { box.insertAdjacentHTML('beforeend', `<div class="msg erro" style="margin-top:8px">${esc(e.message)}</div>`); b.disabled = false; b.textContent = 'Enviar relatório'; }
+  };
+}
+
+const BRL2 = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const SIT_ENVIO = { recebido: ['Recebido', ''], validado: ['Conferido, sem pendências', 'escuro'], com_divergencias: ['Com itens para você resolver', 'alerta'], aprovado: ['Aprovado pela GSM', 'escuro'], recusado: ['Devolvido pela GSM', 'marca'], substituido: ['Substituído', ''] };
+
+async function situacaoParceiro(c) {
+  const box = $('#sitr'); if (!box) return;
+  const envs = await q(sb.from('envios').select('id,versao,enviado_em,status,totais,arquivo_path').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('versao', { ascending: false }));
+  box.className = '';
+  if (!envs.length) { box.innerHTML = '<p class="nota">Nenhum relatório enviado para este mês.</p>'; return; }
+  const e = envs.find(x => x.status !== 'substituido') || envs[0]; const t = e.totais || {};
+  const [divs, acoes] = await Promise.all([
+    q(sb.from('divergencias').select('*').eq('envio_id', e.id).order('operacao').order('ref_linha')),
+    q(sb.from('acoes_parceiro').select('*').eq('parceiro_id', S.parc.id).order('criado_em')),
+  ]);
+  const acoesPor = {}; acoes.forEach(a => (acoesPor[a.divergencia_id] = acoesPor[a.divergencia_id] || []).push(a));
+  const grupos = [['precisa_acao', 'Precisam da sua ação', 'Envie um comprovante ou explique. Se o relatório estiver errado, corrija o arquivo e envie de novo.'],
+    ['em_analise', 'Em análise pela GSM', 'Você já respondeu ou o item depende da GSM.'], ['informativo', 'Para seu conhecimento', 'Não bloqueiam o pagamento.'], ['conferido', 'Conferidos pela GSM', '']];
+  const [rot, cls] = SIT_ENVIO[e.status] || [e.status, ''];
+  const difUmov = (Number(t.malote_qtd) || 0) - (Number(t.umov_qtd) || 0);
+  box.innerHTML = `
+    <div class="linha" style="justify-content:space-between"><span>Envio ${e.versao} · ${fmtDH(e.enviado_em)}</span><span class="pill ${cls}">${esc(rot)}</span></div>
+    <div class="kpis">
+      <div class="kpi"><small>Total informado</small><b>${BRL2(t.total)}</b><span>${t.malote_fixo ? `inclui fixo de ${BRL2(t.malote_fixo)}` : 'sem valor fixo'}</span></div>
+      <div class="kpi ${difUmov > 0 ? 'alerta' : ''}"><small>Malote: você x Umov</small><b>${fmtN(t.malote_qtd)} x ${fmtN(t.umov_qtd)}</b><span>${difUmov ? (difUmov > 0 ? '+' : '') + fmtN(difUmov) + ' atendimento(s)' : 'iguais'}</span></div>
+      <div class="kpi neutro"><small>Kits/Spot e fora do Umov</small><b>${BRL2((Number(t.kits) || 0) + (Number(t.fora) || 0))}</b><span>kits ${BRL2(t.kits)} · fora ${BRL2(t.fora)}</span></div>
+      <div class="kpi ${t.precisa_acao ? 'alerta' : 'neutro'}"><small>Pendências</small><b>${fmtN(divs.filter(d => d.situacao === 'precisa_acao').length)}</b><span>${fmtN(divs.filter(d => d.situacao === 'em_analise').length)} em análise na GSM</span></div>
+    </div>
+    ${grupos.map(([k, tit, sub]) => { const ls = divs.filter(d => d.situacao === k); if (!ls.length) return '';
+      return `<div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:8px 0 0;font-size:15px">${tit} (${ls.length})</h3>${sub ? `<p class="nota" style="margin:0">${sub}</p>` : ''}
+      <div class="tabela"><table><thead><tr><th>Operação</th><th>Item</th><th>O que foi encontrado</th><th class="n">Valor</th><th></th></tr></thead><tbody>
+      ${ls.map(d => `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td><td>${esc(d.descricao)}${(acoesPor[d.id] || []).map(a => `<div class="nota" style="margin-top:4px">Sua resposta (${fmtDH(a.criado_em)}): ${esc(a.texto || '')}${a.arquivo_path ? ' · comprovante anexado' : ''}${a.decisao !== 'pendente' ? ` · <b>GSM: ${esc(a.decisao)}</b>${a.comentario_gsm ? ' — ' + esc(a.comentario_gsm) : ''}` : ''}</div>`).join('')}</td>
+        <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${k === 'precisa_acao' || k === 'informativo' ? `<button class="btn sec peq" data-resp="${d.id}">Responder</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div></div>`; }).join('')}
+    ${!divs.length ? '<div class="msg ok">Tudo confere com o Umov. A GSM vai revisar e aprovar.</div>' : ''}
+    ${envs.length > 1 ? `<details><summary style="cursor:pointer;font-size:14px">Envios anteriores (${envs.length - 1})</summary><ul style="font-size:13px;margin:8px 0 0;padding-left:18px">${envs.filter(x => x.id !== e.id).map(x => `<li>Envio ${x.versao} · ${fmtDH(x.enviado_em)} · ${esc((SIT_ENVIO[x.status] || [x.status])[0])} · ${BRL2(x.totais?.total)}</li>`).join('')}</ul></details>` : ''}`;
+  box.querySelectorAll('[data-resp]').forEach(b => b.onclick = () => formResposta(b, c));
+}
+
+function formResposta(b, c) {
+  const tr = b.closest('tr'); const id = b.dataset.resp;
+  if (tr.nextElementSibling?.classList.contains('resp')) { tr.nextElementSibling.remove(); return; }
+  const linha = document.createElement('tr'); linha.className = 'resp';
+  linha.innerHTML = `<td colspan="5" style="background:var(--field)"><div style="display:flex;flex-direction:column;gap:8px;padding:6px 0">
+    <label class="campo">Explicação<textarea id="rt-${id}" style="font:inherit;font-size:14px;min-height:70px;padding:8px;border:1px solid var(--rule);border-radius:6px;text-transform:none;letter-spacing:normal;font-weight:400;color:var(--ink)" placeholder="Ex.: atendimento feito em 12/09, cliente assinou o protocolo"></textarea></label>
+    <label class="campo">Comprovante (opcional)<input type="file" id="rf-${id}" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.docx" style="font:inherit;font-size:13px"></label>
+    <div class="linha"><button class="btn peq" id="rs-${id}">Enviar resposta</button><span id="rm-${id}"></span></div></div></td>`;
+  tr.after(linha);
+  linha.querySelector(`#rs-${id}`).onclick = async ev => {
+    const btn = ev.currentTarget; const texto = linha.querySelector(`#rt-${id}`).value.trim(); const arq = linha.querySelector(`#rf-${id}`).files[0];
+    if (!texto && !arq) { linha.querySelector(`#rm-${id}`).innerHTML = '<span class="nota">Escreva uma explicação ou anexe um comprovante.</span>'; return; }
+    btn.disabled = true; btn.textContent = 'Enviando…';
+    try {
+      let path = null;
+      if (arq) { path = `${S.parc.id}/${c.mes.slice(0, 7)}/respostas/${id}_${Date.now()}_${safeName(arq.name)}`; const up = await sb.storage.from('envios').upload(path, arq); if (up.error) throw new Error(up.error.message); }
+      await q(sb.from('acoes_parceiro').insert({ divergencia_id: id, parceiro_id: S.parc.id, tipo: arq ? 'comprovante' : 'justificativa', texto: texto || null, arquivo_path: path, criado_por: S.user.id, decisao: 'pendente' }));
+      situacaoParceiro(c);
+    } catch (e) { linha.querySelector(`#rm-${id}`).innerHTML = `<span class="msg erro">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = 'Enviar resposta'; }
   };
 }
 
