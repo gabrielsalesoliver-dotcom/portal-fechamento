@@ -1,5 +1,5 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, norm } from './parse.js';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, norm } from './parse.js';
 import { gerarModelo } from './modelo.js';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
@@ -37,6 +37,7 @@ async function iniciar() {
   } catch (e) { S.perfil = null; }
   if (!S.perfil) return telaSemPerfil();
   if (S.perfil.papel === 'parceiro') return iniciarParceiro();
+  if (S.perfil.papel === 'diretoria' || S.perfil.papel === 'financeiro') return iniciarConsulta();
   if (S.perfil.papel !== 'admin') return telaEmBreve();
   await carregarBase();
   window.addEventListener('hashchange', rotear);
@@ -138,9 +139,10 @@ const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['acessos', 'Acessos e convites']]],
-  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Conferência e aprovação'], ['', 'Notas fiscais'], ['', 'Financeiro'], ['', 'Diretoria']]],
+  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
+  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Conferência e aprovação'], ['', 'Notas fiscais']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico() };
 
 function rotear() {
   const v = (location.hash || '#painel').slice(1);
@@ -902,6 +904,244 @@ async function vParceiroInicio() {
     } catch (e) { $('#msgb').innerHTML = `<div class="msg erro">Não foi possível gerar o modelo: ${esc(e.message)}</div>`; }
     finally { b.disabled = false; b.textContent = `Baixar modelo de ${nomeMes(c.mes)}`; }
   };
+}
+
+// ================= Diretoria e financeiro =================
+const BRL = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const BRLk = v => { const n = Number(v) || 0; return Math.abs(n) >= 1e6 ? 'R$ ' + (n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' mi' : 'R$ ' + Math.round(n / 1000).toLocaleString('pt-BR') + ' mil'; };
+const pct = v => (v == null || !isFinite(v)) ? '—' : (v > 0 ? '+' : '') + (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+const MES3 = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const OPS = { tudo: 'Tudo', malote: 'Malote', kits: 'Kits/Spot' };
+const fechado = r => r.valor_aprovado != null || /^ok/i.test(r.status || '');
+const valorOp = (r, op) => op === 'malote' ? Number(r.malote) || 0 : op === 'kits' ? Number(r.kits) || 0 : Number(r.valor_aprovado ?? r.valor_final) || 0;
+
+async function iniciarConsulta() {
+  app.innerHTML = `
+  <div style="min-height:100vh;display:flex;flex-direction:column">
+    <header style="background:var(--ink);color:#fff;border-left:8px solid var(--brand)">
+      <div style="max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
+        <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+          <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
+          <div><div class="eyebrow">Fechamento de última milha</div><div style="font-size:18px;font-weight:600">${S.perfil.papel === 'financeiro' ? 'Financeiro' : 'Diretoria'}</div></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span>${esc(S.user.email)}</span>
+          <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
+      </div>
+    </header>
+    <main id="main" style="max-width:1240px;width:100%;margin:0 auto"></main>
+  </div>`;
+  $('#sair').onclick = sair;
+  vDiretoria($('#main'));
+}
+
+async function vDiretoria(el) {
+  el.innerHTML = '<div class="carregando">Carregando…</div>';
+  const [comps, parcs, fech] = await Promise.all([
+    q(sb.from('competencias').select('id,mes,status').order('mes')),
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
+    todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,descontos,valor_final,valor_aprovado,adiantado,pago_em,data_pagamento')),
+  ]);
+  const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id));
+  if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
+  S.dir = S.dir || {};
+  const D = S.dir;
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech;
+  if (!D.compId || !comComDados.some(c => c.id === D.compId)) D.compId = comComDados[comComDados.length - 1].id;
+  D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
+  desenharDiretoria(el);
+}
+
+function desenharDiretoria(el) {
+  const D = S.dir; const op = D.op;
+  const idx = D.comps.findIndex(c => c.id === D.compId); const c = D.comps[idx]; const ant = D.comps[idx - 1];
+  const doMes = id => D.fech.filter(f => f.competencia_id === id);
+  const linhas = doMes(c.id); const linhasAnt = ant ? doMes(ant.id) : [];
+  const soma = (ls) => ls.reduce((a, r) => a + valorOp(r, op), 0);
+  const total = soma(linhas), totalAnt = ant ? soma(linhasAnt) : null;
+  const nFech = linhas.filter(fechado).length;
+  const vFech = linhas.filter(fechado).reduce((a, r) => a + valorOp(r, op), 0);
+  const desc = linhas.reduce((a, r) => a + (Number(r.descontos) || 0), 0);
+  const serie = D.comps.map(x => ({ c: x, v: soma(doMes(x.id)) }));
+  const pmap = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const antPor = Object.fromEntries(linhasAnt.map(r => [r.parceiro_id, valorOp(r, op)]));
+  let tab = linhas.map(r => { const p = pmap[r.parceiro_id] || {}; const v = valorOp(r, op);
+    return { id: r.parceiro_id, regiao: p.regiao || '—', nome: p.nome || '', tipo: p.tipo || '', malote: Number(r.malote) || 0, kits: Number(r.kits) || 0, desc: Number(r.descontos) || 0, total: v,
+      varr: antPor[r.parceiro_id] ? v / antPor[r.parceiro_id] - 1 : null, status: r.status || (r.valor_aprovado != null ? 'Aprovado' : '—'), fechado: fechado(r), dia: p.dia_pagamento || '—', pago: r.pago_em }; });
+  const [sk, sd] = D.sort;
+  tab.sort((a, b) => (typeof a[sk] === 'string' ? a[sk].localeCompare(b[sk]) : (a[sk] ?? -1e15) - (b[sk] ?? -1e15)) * sd);
+  if (D.filtro) { const f = norm(D.filtro); tab = tab.filter(t => norm(t.regiao + ' ' + t.nome).includes(f)); }
+
+  el.innerHTML = `
+  <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.</p></div>
+    <div class="linha">
+      <div class="alterna" role="group" aria-label="Operação" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff">
+        ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
+      </div>
+      <select id="dcomp" class="peq" style="min-height:44px;font-size:15px">${D.comps.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select>
+    </div></div>
+  <div class="kpis">
+    <div class="kpi"><small>${OPS[op]} · ${nomeMes(c.mes)}</small><b>${BRL(total)}</b><span>${ant ? `${pct(total / totalAnt - 1)} sobre ${MES3[+ant.mes.slice(5, 7) - 1]}` : ''}</span></div>
+    <div class="kpi ${nFech < linhas.length ? 'alerta' : ''}"><small>Parceiros fechados</small><b>${nFech} de ${linhas.length}</b><span>${Math.round(100 * nFech / Math.max(1, linhas.length))}% dos parceiros</span></div>
+    <div class="kpi ${vFech < total ? 'alerta' : ''}"><small>Valor fechado</small><b>${BRL(vFech)}</b><span>${total ? Math.round(100 * vFech / total) : 0}% do valor do mês</span></div>
+    <div class="kpi neutro"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
+  </div>
+  <section class="bloco"><h2>Evolução em 2026 · ${OPS[op]}</h2><div id="graf" style="position:relative"></div></section>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px">
+    <section class="bloco"><h2>Clientes de ${nomeMes(c.mes)}</h2><div id="dcli" class="carregando">Carregando…</div></section>
+    <section class="bloco"><h2>Pagamentos por data</h2><div id="dpag"></div></section>
+  </div>
+  <section class="bloco"><div class="linha" style="justify-content:space-between"><h2>Parceiros</h2>
+      <div class="linha"><input id="dfiltro" class="peq" placeholder="Filtrar parceiro" value="${esc(D.filtro || '')}" style="min-width:200px"><button class="btn sec peq" id="dcsv">Baixar tabela (CSV)</button></div></div>
+    <div class="tabela"><table id="dtab"><thead><tr>
+      ${[['regiao', 'Parceiro'], ['malote', 'Malote', 1], ['kits', 'Kits/Spot', 1], ['desc', 'Descontos', 1], ['total', OPS[op] === 'Tudo' ? 'Total' : OPS[op], 1], ['varr', 'Var. mês', 1], ['dia', 'Pagamento'], ['status', 'Situação']]
+        .map(([k, n, num]) => `<th class="${num ? 'n' : ''}" data-sort="${k}" style="cursor:pointer;white-space:nowrap">${n}${sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead>
+      <tbody>${tab.map(t => `<tr data-p="${t.id}" style="cursor:pointer">
+        <td><b>${esc(t.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(t.nome)}${t.tipo ? ' · ' + esc(t.tipo) : ''}</span></td>
+        <td class="n">${BRL(t.malote)}</td><td class="n">${BRL(t.kits)}</td><td class="n">${t.desc ? BRL(t.desc) : '—'}</td><td class="n"><b>${BRL(t.total)}</b></td>
+        <td class="n" style="color:${t.varr > 0.1 ? 'var(--brand-deep)' : 'var(--ink)'}">${pct(t.varr)}</td>
+        <td style="font-size:13px">${esc(t.dia)}${t.pago ? `<br><span class="pill escuro">Pago ${fmtD(t.pago)}</span>` : ''}</td>
+        <td><span class="pill ${t.fechado ? 'escuro' : 'alerta'}">${esc(t.fechado ? 'Fechado' : t.status)}</span></td></tr>`).join('')}
+      </tbody><tfoot><tr><td><b>Total (${tab.length})</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.malote, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.kits, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.desc, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.total, 0))}</b></td><td colspan="3"></td></tr></tfoot></table></div>
+    <p class="nota">Clique em um parceiro para ver a evolução e os clientes atendidos.</p>
+  </section>`;
+
+  grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
+  pagamentos($('#dpag'), tab);
+  clientesMes($('#dcli'), c.id, op, null);
+  el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
+  $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
+  el.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; D.sort = [k, D.sort[0] === k ? -D.sort[1] : (k === 'regiao' || k === 'dia' || k === 'status' ? 1 : -1)]; desenharDiretoria(el); });
+  $('#dfiltro').oninput = e => { D.filtro = e.target.value; clearTimeout(D.t); D.t = setTimeout(() => { desenharDiretoria(el); const i = $('#dfiltro'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 350); };
+  $('#dcsv').onclick = () => {
+    const linhasCsv = [['Regiao', 'Parceiro', 'Malote', 'Kits/Spot', 'Descontos', 'Total', 'Var mes', 'Pagamento', 'Situacao'].join(';'),
+      ...tab.map(t => [t.regiao, t.nome, t.malote, t.kits, t.desc, t.total, t.varr == null ? '' : (t.varr * 100).toFixed(1) + '%', t.dia, t.fechado ? 'Fechado' : t.status].map(v => typeof v === 'number' ? v.toFixed(2).replace('.', ',') : `"${String(v).replace(/"/g, '""')}"`).join(';'))];
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + linhasCsv.join('\n')], { type: 'text/csv' }));
+    a.download = `Fechamento_${c.mes.slice(0, 7)}_${op}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  };
+  el.querySelectorAll('#dtab tbody tr[data-p]').forEach(tr => tr.onclick = () => detalheParceiro(tr, tr.dataset.p, c, op));
+}
+
+// Barras verticais (um série, cor da marca; mês selecionado em destaque) com dica ao passar o mouse
+function grafico(box, pts) {
+  const W = 900, H = 260, L = 70, R = 12, T = 16, B = 34;
+  const max = Math.max(...pts.map(p => p.v), 1); const nice = Math.pow(10, Math.floor(Math.log10(max))); const top = Math.ceil(max / nice) * nice;
+  const bw = (W - L - R) / pts.length; const y = v => T + (H - T - B) * (1 - v / top);
+  const ticks = [0, top / 2, top];
+  box.innerHTML = `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px;height:auto;display:block" role="img" aria-label="Evolução mensal">
+    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3" stroke-width="1"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${pts.map((p, i) => { const x = L + i * bw + bw * 0.2, w = bw * 0.6, h = Math.max(0, y(0) - y(p.v));
+      return `<g data-i="${i}"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>
+        <path d="M${x},${y(0)} v${-(h - 4)} q0,-4 4,-4 h${w - 8} q4,0 4,4 v${h - 4} z" fill="${p.atual ? '#DB2242' : '#121112'}" opacity="${p.atual ? 1 : 0.82}"/>
+        <text x="${x + w / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.atual ? '#A3182F' : '#6E6E72'}" font-weight="${p.atual ? 600 : 400}" font-family="Poppins">${p.rot}</text></g>`; }).join('')}
+  </svg></div><div id="gtip" hidden style="position:absolute;pointer-events:none;background:#121112;color:#fff;font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
+  const tip = box.querySelector('#gtip'); const svg = box.querySelector('svg');
+  svg.querySelectorAll('g[data-i]').forEach(g => {
+    g.onmousemove = e => { const p = pts[+g.dataset.i]; const ant = pts[+g.dataset.i - 1]; tip.hidden = false;
+      tip.innerHTML = `<b>${p.rot}</b> · ${BRL(p.v)}${ant && ant.v ? `<br><span style="color:#B8B6B4">${pct(p.v / ant.v - 1)} sobre ${ant.rot}</span>` : ''}`;
+      const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 180) + 'px'; tip.style.top = (e.clientY - r.top - 50) + 'px'; };
+    g.onmouseleave = () => tip.hidden = true;
+    g.style.cursor = 'pointer';
+    g.onclick = () => { S.dir.compId = pts[+g.dataset.i].id; desenharDiretoria(box.closest('main') || $('#main')); };
+  });
+}
+
+function pagamentos(box, tab) {
+  const g = {}; tab.forEach(t => { const k = t.dia; const x = g[k] || (g[k] = { n: 0, v: 0, pagos: 0, vp: 0 }); x.n++; x.v += t.total; if (t.pago) { x.pagos++; x.vp += t.total; } });
+  const ord = ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal', '—'];
+  const lst = Object.entries(g).sort((a, b) => ord.indexOf(a[0]) - ord.indexOf(b[0]));
+  const tot = lst.reduce((a, [, x]) => a + x.v, 0);
+  box.innerHTML = `<div class="tabela"><table><thead><tr><th>Data</th><th class="n">Parceiros</th><th class="n">Valor</th><th class="n">Pago</th></tr></thead><tbody>
+    ${lst.map(([k, x]) => `<tr><td>${esc(k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}<div style="height:4px;background:#E9E7E3;border-radius:2px;margin-top:4px"><div style="height:4px;width:${tot ? 100 * x.v / tot : 0}%;background:#121112;border-radius:2px"></div></div></td><td class="n">${x.pagos ? `${x.pagos} · ${BRL(x.vp)}` : '—'}</td></tr>`).join('')}
+    </tbody></table></div><p class="nota">Datas fixas do cadastro de cada parceiro. Adiantamentos são tratados à parte.</p>`;
+}
+
+async function clientesMes(box, compId, op, parceiroId) {
+  let qr = sb.from(parceiroId ? 'historico_cliente' : 'dir_cliente_mes').select('cliente,operacao,valor,atendimentos,estimado').eq('competencia_id', compId);
+  if (parceiroId) qr = qr.eq('parceiro_id', parceiroId).eq('vigente', true);
+  if (op !== 'tudo') qr = qr.eq('operacao', op === 'malote' ? 'Malote' : 'Kits/Spot');
+  const rows = await todas(() => qr);
+  const g = {}; let est = false; rows.forEach(r => { const x = g[r.cliente] || (g[r.cliente] = { v: 0, a: 0 }); x.v += Number(r.valor) || 0; x.a += r.atendimentos || 0; est = est || r.estimado; });
+  const lst = Object.entries(g).sort((a, b) => b[1].v - a[1].v); const top = lst.slice(0, 12); const max = top[0]?.[1].v || 1;
+  const tot = lst.reduce((a, [, x]) => a + x.v, 0);
+  box.className = '';
+  box.innerHTML = lst.length ? `<div style="display:flex;flex-direction:column;gap:8px">${top.map(([n, x]) => `<div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n)}">${esc(n)}</span>
+      <span style="height:10px;background:#E9E7E3;border-radius:5px"><span style="display:block;height:10px;width:${100 * x.v / max}%;background:#DB2242;border-radius:5px"></span></span>
+      <span class="num" style="min-width:86px;text-align:right">${BRL(x.v)}</span></div>`).join('')}</div>
+    <p class="nota">${lst.length} clientes · ${BRL(tot)}. ${est ? 'Malote por cliente é estimado: o valor de cada parceiro é dividido pela proporção de atendimentos de cada cliente.' : ''}</p>`
+    : `<p class="nota">Sem detalhe por cliente para este mês. O administrador carrega em "Histórico por cliente".</p>`;
+}
+
+async function detalheParceiro(tr, pid, c, op) {
+  const prox = tr.nextElementSibling;
+  document.querySelectorAll('#dtab tr.det').forEach(x => x.remove());
+  if (prox && prox.classList.contains('det') && prox.dataset.p === pid) return;
+  const D = S.dir; const linha = document.createElement('tr'); linha.className = 'det'; linha.dataset.p = pid;
+  linha.innerHTML = `<td colspan="8" style="background:var(--field)"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px;padding:8px 4px">
+    <div><b style="font-size:13px">Evolução · ${OPS[op]}</b><div id="dg"></div></div><div><b style="font-size:13px">Clientes em ${nomeMes(c.mes)}</b><div id="dc" class="carregando">Carregando…</div></div></div></td>`;
+  tr.after(linha);
+  const pts = D.comps.map(x => { const r = D.fech.find(f => f.competencia_id === x.id && f.parceiro_id === pid); return { rot: MES3[+x.mes.slice(5, 7) - 1], v: r ? valorOp(r, op) : 0, atual: x.id === c.id, id: x.id }; });
+  const W = 420, H = 120, L = 22, R = 22, T = 20, B = 22; const max = Math.max(...pts.map(p => p.v), 1);
+  const x = i => L + i * (W - L - R) / Math.max(1, pts.length - 1); const y = v => T + (H - T - B) * (1 - v / max);
+  linha.querySelector('#dg').innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;display:block">
+    <path d="M${pts.map((p, i) => `${x(i)},${y(p.v)}`).join(' L')}" fill="none" stroke="#121112" stroke-width="2"/>
+    ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="${p.atual ? 5 : 3}" fill="${p.atual ? '#DB2242' : '#121112'}" stroke="#FBFAF8" stroke-width="2"><title>${p.rot}: ${BRL(p.v)}</title></circle>
+      <text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#6E6E72" font-family="Poppins">${p.rot}</text>`).join('')}
+    <text x="${x(pts.findIndex(p => p.atual))}" y="${y(pts.find(p => p.atual).v) - 9}" text-anchor="${pts.findIndex(p => p.atual) === pts.length - 1 ? 'end' : 'middle'}" font-size="12" font-weight="600" fill="#121112" font-family="Poppins">${BRLk(pts.find(p => p.atual).v)}</text></svg>`;
+  clientesMes(linha.querySelector('#dc'), c.id, op, pid);
+}
+
+// ---------- Histórico por cliente (carga das planilhas antigas) ----------
+async function vHistorico() {
+  const m = $('#main');
+  m.innerHTML = `<div class="topo"><div><h1>Histórico por cliente</h1><p>Carregue uma vez a planilha de fechamento de cada mês já fechado para a diretoria ver a evolução por cliente. Malote por cliente é estimado pela proporção de atendimentos; Kits/Spot vem da aba Extras.</p></div>${seletorComp(false)}</div>
+    <div id="hst" class="carregando">Carregando…</div>
+    ${zonaArquivo('arqh', 'Arraste a planilha de fechamento do mês selecionado', 'Excel (.xlsx) com as abas Atendimentos e Extras', '.xlsx,.xlsm')}
+    <div id="prevh"></div>`;
+  ligarSeletor(vHistorico);
+  ligarZona('arqh', previaHistorico);
+  const cont = await Promise.all(S.comps.map(async c => [c, await q(sb.from('historico_cliente').select('id', { count: 'exact', head: true }).eq('competencia_id', c.id).eq('vigente', true))]));
+  $('#hst').outerHTML = `<div class="linha">${cont.slice().sort((a, b) => a[0].mes.localeCompare(b[0].mes)).map(([c, n]) => `<span class="pill ${n ? 'escuro' : ''}">${MES3[+c.mes.slice(5, 7) - 1]}/${c.mes.slice(2, 4)} ${n ? '✓' : '—'}</span>`).join('')}</div>`;
+}
+
+function ultimaLinha(ws) { const d = ws['!data'] || ws; let n = 0; if (Array.isArray(d)) { for (let i = 0; i < d.length; i++) if (d[i] && d[i].some(c => c && c.v != null && c.v !== '')) n = i; return n + 1; } return XLSX.utils.decode_range(ws['!ref']).e.r + 1; }
+
+async function previaHistorico(file) {
+  $('#prevh').innerHTML = '<div class="carregando">Lendo a planilha (a aba Extras é grande, leva alguns segundos)…</div>';
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', sheets: ['Atendimentos', 'Extras'], dense: true });
+    if (!wb.Sheets.Atendimentos) throw new Error('Aba Atendimentos não encontrada.');
+    const rowsA = XLSX.utils.sheet_to_json(wb.Sheets.Atendimentos, { header: 1, raw: true, defval: null, range: `A1:Q${ultimaLinha(wb.Sheets.Atendimentos)}` });
+    const rowsE = wb.Sheets.Extras ? XLSX.utils.sheet_to_json(wb.Sheets.Extras, { header: 1, raw: true, defval: null, range: `A1:H${ultimaLinha(wb.Sheets.Extras)}` }) : null;
+    const nomeMap = {}; S.parceiros.forEach(p => nomeMap[norm(p.nome)] = p.id);
+    const r = parseHistorico(rowsA, rowsE, regiaoMap(), nomeMap);
+    if (r.erro) throw new Error(r.erro);
+    const fech = await q(sb.from('fechamento_parceiro').select('parceiro_id,malote,kits').eq('competencia_id', S.compId));
+    const linhas = []; let malDist = 0, malTot = 0, kitsPl = 0;
+    fech.forEach(f => {
+      const M = Number(f.malote) || 0; malTot += M; const at = r.atend[f.parceiro_id] || {}; const T = Object.values(at).reduce((a, n) => a + n, 0);
+      if (M && T) Object.entries(at).forEach(([cli, n]) => { if (n) { const v = M * n / T; malDist += v; linhas.push({ parceiro_id: f.parceiro_id, cliente: cli, operacao: 'Malote', valor: +v.toFixed(2), atendimentos: Math.round(n), estimado: true }); } });
+      else if (M) { malDist += M; linhas.push({ parceiro_id: f.parceiro_id, cliente: '(sem atendimentos na aba)', operacao: 'Malote', valor: M, atendimentos: null, estimado: true }); }
+    });
+    Object.entries(r.kits).forEach(([pid, cs]) => Object.entries(cs).forEach(([cli, v]) => { kitsPl += v; linhas.push({ parceiro_id: pid, cliente: cli, operacao: 'Kits/Spot', valor: +v.toFixed(2), atendimentos: null, estimado: false }); }));
+    const kitsFech = fech.reduce((a, f) => a + (Number(f.kits) || 0), 0);
+    S.histPrev = { file, linhas };
+    const sem = Object.entries(r.semParceiro);
+    $('#prevh').innerHTML = `<section class="bloco"><h2>Prévia: ${esc(file.name)} → ${nomeMes(comp().mes)}</h2>
+      <div class="kpis">
+        <div class="kpi"><small>Linhas cliente × parceiro</small><b>${fmtN(linhas.length)}</b><span>${fmtN(new Set(linhas.map(l => l.cliente)).size)} clientes</span></div>
+        <div class="kpi"><small>Malote distribuído</small><b>${BRL(malDist)}</b><span>de ${BRL(malTot)} no fechamento do portal</span></div>
+        <div class="kpi ${Math.abs(kitsPl - kitsFech) > 1 ? 'alerta' : ''}"><small>Kits/Spot por cliente</small><b>${BRL(kitsPl)}</b><span>${BRL(kitsFech)} no fechamento do portal</span></div>
+      </div>
+      ${sem.length ? `<div class="msg alerta">Regiões da aba Atendimentos sem parceiro no cadastro (ficam de fora do rateio): ${sem.map(([k, n]) => `${esc(k)} (${n})`).join(', ')}.</div>` : ''}
+      ${r.kitsSem ? `<div class="msg alerta">${BRL(r.kitsSem)} de extras com parceiro não reconhecido ficaram de fora.</div>` : ''}
+      <div class="linha"><button class="btn marca" id="gravarh">Gravar histórico de ${nomeMes(comp().mes)}</button></div><div id="progh"></div></section>`;
+    $('#gravarh').onclick = async e => {
+      e.target.disabled = true;
+      try { const n = await q(sb.rpc('carregar_historico_cliente', { p_comp: S.compId, p_linhas: S.histPrev.linhas })); S.histPrev = null; await vHistorico(); alertaOk(`Histórico de ${nomeMes(comp().mes)} gravado: ${fmtN(n)} linhas.`); }
+      catch (er) { $('#progh').innerHTML = `<div class="msg erro">${esc(er.message)}</div>`; e.target.disabled = false; }
+    };
+  } catch (e) { $('#prevh').innerHTML = `<div class="msg erro">Não consegui ler a planilha: ${esc(e.message)}</div>`; }
 }
 
 sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') telaLogin(); });

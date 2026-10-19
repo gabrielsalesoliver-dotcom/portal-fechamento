@@ -177,6 +177,42 @@ export function parseAtendimentos(rows, regiaoMap) {
   return { pontos, semRegiao, semCodigo, duplicados, cabecalho: hi + 1 };
 }
 
+// ---------- Histórico por cliente (planilha de fechamento de um mês) ----------
+// Atendimentos: Cliente, Total, Região -> peso de cada cliente no malote do parceiro
+// Extras: Tipo (Outros/Malotes = Kits/Spot), Cliente, Custo, Parceiro (nome)
+export function parseHistorico(atendRows, extrasRows, regiaoMap, nomeMap) {
+  const atend = {}; const kits = {}; const semParceiro = {}; let kitsSem = 0;
+  const hiA = atendRows.findIndex(r => r && r.map(norm).includes('cod. int') && r.map(norm).includes('regiao'));
+  if (hiA < 0) return { erro: 'Não encontrei o cabeçalho da aba Atendimentos.' };
+  const hA = atendRows[hiA].map(norm);
+  const ia = { cli: hA.indexOf('cliente'), tot: hA.indexOf('total'), reg: hA.indexOf('regiao') };
+  for (let i = hiA + 1; i < atendRows.length; i++) {
+    const r = atendRows[i]; if (!r) continue;
+    const reg = r[ia.reg]; const cli = String(r[ia.cli] ?? '').trim().toUpperCase(); const t = Number(r[ia.tot]) || 0;
+    if (!reg || !cli) continue;
+    const p = regiaoMap[norm(reg)];
+    if (!p) { semParceiro[reg] = (semParceiro[reg] || 0) + 1; continue; }
+    (atend[p] || (atend[p] = {}))[cli] = ((atend[p] || {})[cli] || 0) + t;
+  }
+  if (extrasRows) {
+    const hiE = extrasRows.findIndex(r => r && r.map(norm).includes('custo') && r.map(norm).includes('parceiro'));
+    if (hiE >= 0) {
+      const hE = extrasRows[hiE].map(norm);
+      const ie = { tipo: hE.indexOf('tipo'), cli: hE.indexOf('cliente'), custo: hE.indexOf('custo'), par: hE.indexOf('parceiro') };
+      for (let i = hiE + 1; i < extrasRows.length; i++) {
+        const r = extrasRows[i]; if (!r) continue;
+        const tipo = norm(r[ie.tipo]); const v = Number(r[ie.custo]) || 0;
+        if (!v || !(tipo === 'outros' || tipo === 'malotes')) continue;
+        const p = nomeMap[norm(r[ie.par])] || regiaoMap[norm(r[ie.par])];
+        if (!p) { kitsSem += v; continue; }
+        const cli = String(r[ie.cli] ?? '').trim().toUpperCase() || '(sem cliente)';
+        (kits[p] || (kits[p] = {}))[cli] = ((kits[p] || {})[cli] || 0) + v;
+      }
+    }
+  }
+  return { atend, kits, semParceiro, kitsSem };
+}
+
 // ---------- Inclusão e Cancelamento ----------
 const CART_COLS = {
   cod_int: c => c.startsWith('codigo de integra'),
