@@ -140,11 +140,11 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
   ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Pacote do financeiro e pagamento']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 async function vVerParceiro() {
@@ -1098,6 +1098,152 @@ function formResposta(b, c) {
       situacaoParceiro(c);
     } catch (e) { linha.querySelector(`#rm-${id}`).innerHTML = `<span class="msg erro">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = 'Enviar resposta'; }
   };
+}
+
+// ================= Cadastro de parceiros e rotas =================
+const OPC = {
+  tipo: ['Fechado', 'Unitário', 'Misto'],
+  dia_pagamento: ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal'],
+  limita_previsto: ['Sim', 'Não', 'Depende do caso', 'Não se aplica'],
+  fluxo: ['1 - Enviamos relatório para validação', '2 - Parceiro envia relatório', 'Pendente de definição'],
+};
+const selOpc = (id, lista, v) => `<select class="peq" id="${id}"><option value="">—</option>${lista.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+
+async function vCadastro() {
+  const m = $('#main'); S.cadAba = S.cadAba || 'parceiros';
+  m.innerHTML = `<div class="topo"><div><h1>Parceiros e rotas</h1><p>Cadastre e altere parceiros, o valor fixo do contrato e as rotas do Umov. Nada é apagado: parceiro sai por inativação e toda alteração fica no histórico.</p></div></div>
+    <nav class="abas">${[['parceiros', 'Parceiros'], ['rotas', 'Rotas do Umov'], ['hist', 'Histórico']].map(([k, n]) => `<button type="button" data-cab="${k}" class="${S.cadAba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+    <div id="cad" class="carregando">Carregando…</div>`;
+  m.querySelectorAll('[data-cab]').forEach(b => b.onclick = () => { S.cadAba = b.dataset.cab; vCadastro(); });
+  const [parcs, contr, rotas] = await Promise.all([
+    q(sb.from('parceiros').select('*').order('regiao')),
+    q(sb.from('contratos').select('*').order('inicio', { ascending: false })),
+    q(sb.from('rotas_depara').select('*').order('rota')),
+  ]);
+  S.rotas = {}; rotas.forEach(r => S.rotas[r.rota.toUpperCase().trim()] = r);
+  if (S.cadAba === 'parceiros') return cadParceiros(parcs, contr);
+  if (S.cadAba === 'rotas') return cadRotas(parcs, rotas);
+  return cadHistorico(parcs);
+}
+
+function formParceiro(p = {}, fixo) {
+  return `<div style="display:flex;flex-direction:column;gap:10px">
+    <div class="linha" style="align-items:flex-end">
+      <label class="campo" style="flex:1 1 200px">Região / rota<input class="peq" id="f-regiao" value="${esc(p.regiao || '')}" placeholder="ex.: SJRP - SP"></label>
+      <label class="campo" style="flex:1 1 200px">Nome (responsável)<input class="peq" id="f-nome" value="${esc(p.nome || '')}"></label>
+      <label class="campo" style="flex:1 1 240px">Razão social<input class="peq" id="f-razao" value="${esc(p.razao_social || '')}"></label>
+      <label class="campo" style="flex:0 1 190px">CNPJ<input class="peq" id="f-cnpj" value="${esc(fmtCNPJ(p.cnpj || ''))}"></label>
+    </div>
+    <div class="linha" style="align-items:flex-end">
+      <label class="campo">Tipo de contrato${selOpc('f-tipo', OPC.tipo, p.tipo)}</label>
+      <label class="campo">Pagamento${selOpc('f-dia', OPC.dia_pagamento, p.dia_pagamento)}</label>
+      <label class="campo">Limita ao previsto${selOpc('f-lim', OPC.limita_previsto, p.limita_previsto)}</label>
+      <label class="campo" style="flex:1 1 220px">Fluxo do relatório${selOpc('f-fluxo', OPC.fluxo, p.fluxo)}</label>
+      <label class="campo" style="flex:1 1 220px">E-mail de contato<input class="peq" id="f-email" type="email" value="${esc(p.email_contato || '')}"></label>
+    </div>
+    <div class="linha" style="align-items:flex-end">
+      <label class="campo">Valor fixo mensal (R$)<input class="peq" id="f-fixo" value="${fixo != null ? String(fixo).replace('.', ',') : ''}" placeholder="vazio = sem fixo" style="width:150px"></label>
+      <label class="campo">Vale a partir de<input class="peq" id="f-ini" type="month" value="${new Date().toISOString().slice(0, 7)}"></label>
+      <span class="nota" style="flex:1 1 260px">Mudar o valor fixo cria um novo período a partir do mês escolhido; o valor anterior fica guardado até o mês anterior.</span>
+    </div>
+    <div class="linha"><button class="btn peq" id="f-salvar">Salvar</button><button class="btn sec peq" id="f-cancelar">Cancelar</button></div><div id="f-msg"></div></div>`;
+}
+
+function cadParceiros(parcs, contr) {
+  const box = $('#cad'); S.cadFiltro = S.cadFiltro ?? ''; S.cadSit = S.cadSit || 'ativos';
+  const fixoAtual = id => { const hoje = new Date().toISOString().slice(0, 10); const c = contr.find(k => k.parceiro_id === id && k.inicio <= hoje && (!k.fim || k.fim >= hoje)); return c ? Number(c.valor_fixo) : null; };
+  const vis = parcs.filter(p => (S.cadSit === 'todos' || (S.cadSit === 'ativos' ? p.ativo !== false : p.ativo === false))
+    && (!S.cadFiltro || norm(`${p.codigo} ${p.regiao} ${p.nome} ${p.razao_social || ''} ${p.cnpj || ''}`).includes(norm(S.cadFiltro))));
+  box.className = '';
+  box.innerHTML = `<section class="bloco">
+    <div class="linha" style="justify-content:space-between"><div class="linha">${[['ativos', 'Ativos', parcs.filter(p => p.ativo !== false).length], ['inativos', 'Inativos', parcs.filter(p => p.ativo === false).length], ['todos', 'Todos', parcs.length]].map(([k, n, qq]) => `<button class="btn ${S.cadSit === k ? '' : 'sec'} peq" data-cs="${k}">${n} (${qq})</button>`).join('')}</div>
+      <div class="linha"><input id="cadf" class="peq" placeholder="Buscar região, nome, CNPJ" value="${esc(S.cadFiltro)}" style="min-width:240px"><button class="btn marca peq" id="novo">+ Novo parceiro</button></div></div>
+    <div id="novobox"></div>
+    <div class="tabela"><table id="cadtab"><thead><tr><th>Código</th><th>Região / rota</th><th>Razão social · CNPJ</th><th>Contrato</th><th class="n">Fixo vigente</th><th>Pagamento</th><th></th></tr></thead><tbody>
+    ${vis.map(p => `<tr data-id="${p.id}" style="${p.ativo === false ? 'opacity:.55' : ''}"><td class="num">${esc(p.codigo)}</td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td>
+      <td style="font-size:13px">${esc(p.razao_social || '—')}<br><span class="num" style="color:var(--muted)">${esc(fmtCNPJ(p.cnpj) || 'sem CNPJ')}</span></td><td>${esc(p.tipo || '—')}</td><td class="n">${fixoAtual(p.id) != null ? BRL2(fixoAtual(p.id)) : '—'}</td><td>${esc(p.dia_pagamento || '—')}</td>
+      <td style="white-space:nowrap"><button class="btn sec peq" data-alt="${p.id}">Alterar</button> ${p.ativo === false ? `<button class="btn peq" data-at="${p.id}" data-v="1">Reativar</button>` : `<button class="btn sec peq" data-at="${p.id}" data-v="0">Inativar</button>`}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nada encontrado.</td></tr>'}
+    </tbody></table></div></section>`;
+  box.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => { S.cadSit = b.dataset.cs; cadParceiros(parcs, contr); });
+  $('#cadf').oninput = e => { S.cadFiltro = e.target.value; clearTimeout(S.cadT); S.cadT = setTimeout(() => { cadParceiros(parcs, contr); const i = $('#cadf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
+  const ligarForm = (alvo, p) => {
+    alvo.querySelector('#f-cancelar').onclick = () => { alvo.closest('tr.extra') ? alvo.closest('tr.extra').remove() : (alvo.innerHTML = ''); };
+    alvo.querySelector('#f-salvar').onclick = async ev => {
+      const b = ev.currentTarget; const g = id => alvo.querySelector(id).value;
+      const dados = { id: p?.id || null, regiao: g('#f-regiao'), nome: g('#f-nome'), razao_social: g('#f-razao'), cnpj: g('#f-cnpj'), tipo: g('#f-tipo'), dia_pagamento: g('#f-dia'), limita_previsto: g('#f-lim'), fluxo: g('#f-fluxo'), email_contato: g('#f-email') };
+      const fixoTxt = g('#f-fixo').trim(); const fixo = fixoTxt === '' ? null : numBR(fixoTxt);
+      if (fixo != null && (Number.isNaN(fixo) || fixo < 0)) { alvo.querySelector('#f-msg').innerHTML = '<div class="msg erro">Valor fixo inválido.</div>'; return; }
+      b.disabled = true;
+      try {
+        const id = await q(sb.rpc('salvar_parceiro', { p: dados }));
+        const atual = p ? fixoAtual(p.id) : null;
+        if ((fixo ?? 0) !== (atual ?? 0)) await q(sb.rpc('definir_valor_fixo', { p_parceiro: id, p_valor: fixo ?? 0, p_inicio: g('#f-ini') + '-01' }));
+        S.parceiros = await q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo').order('codigo'));
+        vCadastro();
+      } catch (e) { b.disabled = false; alvo.querySelector('#f-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+    };
+  };
+  $('#novo').onclick = () => { const nb = $('#novobox'); if (nb.innerHTML) { nb.innerHTML = ''; return; } nb.innerHTML = `<div class="confirma"><b>Novo parceiro</b><span class="nota">O código (P075, P076…) é gerado sozinho. Depois de salvar, gere o acesso em "Acessos e convites" e cadastre as rotas do Umov.</span>${formParceiro()}</div>`; ligarForm(nb, null); };
+  box.querySelectorAll('[data-alt]').forEach(b => b.onclick = () => {
+    const p = parcs.find(x => x.id === b.dataset.alt); const tr = b.closest('tr');
+    box.querySelectorAll('tr.extra').forEach(x => x.remove());
+    const l = document.createElement('tr'); l.className = 'extra';
+    const hist = contr.filter(k => k.parceiro_id === p.id);
+    l.innerHTML = `<td colspan="7" style="background:var(--field)">${formParceiro(p, fixoAtual(p.id))}
+      ${hist.length ? `<div class="nota" style="margin-top:8px">Valores fixos: ${hist.map(k => `${BRL2(k.valor_fixo)} de ${fmtD(k.inicio).slice(3)}${k.fim ? ' até ' + fmtD(k.fim).slice(3) : ' em diante'}`).join(' · ')}</div>` : ''}</td>`;
+    tr.after(l); ligarForm(l.firstElementChild, p);
+  });
+  box.querySelectorAll('[data-at]').forEach(b => b.onclick = async () => {
+    const p = parcs.find(x => x.id === b.dataset.at); b.disabled = true;
+    try { await q(sb.rpc('salvar_parceiro', { p: { ...p, ativo: b.dataset.v === '1' } })); vCadastro(); } catch (e) { b.disabled = false; alertaTopo(e.message); }
+  });
+}
+
+function cadRotas(parcs, rotas) {
+  const box = $('#cad'); box.className = ''; S.rotFiltro = S.rotFiltro ?? '';
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
+  const ativos = parcs.filter(p => p.ativo !== false);
+  const vis = rotas.filter(r => !S.rotFiltro || norm(`${r.rota} ${pm[r.parceiro_id]?.regiao || ''} ${r.base_propria ? 'base propria' : ''}`).includes(norm(S.rotFiltro)));
+  const opcoes = v => `<option value="">— sem parceiro —</option><option value="__bp" ${v === '__bp' ? 'selected' : ''}>Base própria GSM</option>${ativos.map(p => `<option value="${p.id}" ${p.id === v ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}`;
+  box.innerHTML = `<section class="bloco">
+    <p class="sub" style="margin:0">A rota é o nome do motorista/rota como aparece no Umov. Ela liga os <b>kits</b> ao parceiro (o malote é ligado pelo código de integração do ponto). Ao salvar, o Umov do mês aberto é religado na hora.</p>
+    <div class="confirma"><b>Nova rota</b><div class="linha"><input class="peq" id="r-nome" placeholder="Nome da rota no Umov (ex.: SUL 23)" style="flex:1 1 220px"><select class="peq" id="r-parc" style="flex:1 1 260px">${opcoes('')}</select><button class="btn peq" id="r-add">Adicionar rota</button></div><div id="r-msg"></div></div>
+    <div class="linha" style="justify-content:space-between"><span>${rotas.length} rotas · ${rotas.filter(r => r.base_propria).length} de base própria · ${rotas.filter(r => !r.parceiro_id && !r.base_propria).length} sem parceiro</span><input id="rotf" class="peq" placeholder="Buscar rota ou parceiro" value="${esc(S.rotFiltro)}" style="min-width:240px"></div>
+    <div class="tabela"><table><thead><tr><th>Rota no Umov</th><th>Ligada a</th><th>Situação</th><th></th></tr></thead><tbody>
+    ${vis.map(r => `<tr><td class="num"><b>${esc(r.rota)}</b></td><td><select class="peq" data-rsel="${esc(r.rota)}" style="min-width:260px">${opcoes(r.base_propria ? '__bp' : r.parceiro_id || '')}</select></td>
+      <td>${r.confirmado ? '<span class="pill escuro">Confirmada</span>' : '<span class="pill alerta">Sugerida</span>'}</td><td><button class="btn sec peq" data-rsave="${esc(r.rota)}">Salvar</button> <span data-rok="${esc(r.rota)}"></span></td></tr>`).join('')}
+    </tbody></table></div></section>`;
+  $('#rotf').oninput = e => { S.rotFiltro = e.target.value; clearTimeout(S.rotT); S.rotT = setTimeout(() => { cadRotas(parcs, rotas); const i = $('#rotf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
+  const salvar = async (rota, v) => q(sb.rpc('vincular_rota', { p_rota: rota, p_parceiro: v && v !== '__bp' ? v : null, p_base_propria: v === '__bp' }));
+  $('#r-add').onclick = async () => {
+    const nome = $('#r-nome').value.trim(); const v = $('#r-parc').value;
+    if (!nome) return ($('#r-msg').innerHTML = '<div class="msg erro">Informe o nome da rota.</div>');
+    if (!v) return ($('#r-msg').innerHTML = '<div class="msg erro">Escolha o parceiro ou base própria.</div>');
+    if (rotas.some(r => r.rota.toUpperCase().trim() === nome.toUpperCase())) return ($('#r-msg').innerHTML = '<div class="msg erro">Essa rota já existe. Altere na lista abaixo.</div>');
+    try { const n = await salvar(nome, v); vCadastro(); alertaOk(`Rota ${nome.toUpperCase()} cadastrada. ${n} atendimento(s) do Umov religado(s).`); } catch (e) { $('#r-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+  };
+  box.querySelectorAll('[data-rsave]').forEach(b => b.onclick = async () => {
+    const rota = b.dataset.rsave; const v = box.querySelector(`[data-rsel="${CSS.escape(rota)}"]`).value; const ok = box.querySelector(`[data-rok="${CSS.escape(rota)}"]`);
+    if (!v) { ok.innerHTML = '<span class="nota">Escolha um parceiro ou base própria.</span>'; return; }
+    b.disabled = true;
+    try { const n = await salvar(rota, v); ok.innerHTML = `<span class="pill escuro">Salvo · ${n} religado(s)</span>`; } catch (e) { ok.innerHTML = `<span class="msg erro">${esc(e.message)}</span>`; } finally { b.disabled = false; }
+  });
+}
+
+async function cadHistorico(parcs) {
+  const box = $('#cad'); box.className = '';
+  const log = await q(sb.from('cadastro_log').select('*').order('feito_em', { ascending: false }).limit(150));
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
+  const CAMPOS = { regiao: 'Região', nome: 'Nome', razao_social: 'Razão social', cnpj: 'CNPJ', tipo: 'Tipo', fluxo: 'Fluxo', limita_previsto: 'Limita previsto', dia_pagamento: 'Pagamento', email_contato: 'E-mail', ativo: 'Ativo', valor_fixo: 'Valor fixo', inicio: 'Início', fim: 'Fim', parceiro_id: 'Parceiro', base_propria: 'Base própria', confirmado: 'Confirmada' };
+  const val = (k, v) => v == null ? '—' : k === 'parceiro_id' ? (pm[v]?.regiao || v) : typeof v === 'boolean' ? (v ? 'sim' : 'não') : String(v);
+  const desc = g => {
+    const alvo = g.tabela === 'parceiros' ? (g.depois?.regiao || g.antes?.regiao) : g.tabela === 'contratos' ? `Contrato de ${pm[(g.depois || g.antes)?.parceiro_id]?.regiao || '—'}` : `Rota ${g.chave}`;
+    if (g.acao === 'insert') return `<b>${esc(alvo)}</b> · criado`;
+    const mud = Object.keys(CAMPOS).filter(k => g.antes && g.depois && JSON.stringify(g.antes[k]) !== JSON.stringify(g.depois[k]));
+    return `<b>${esc(alvo)}</b> · ${mud.map(k => `${CAMPOS[k]}: ${esc(val(k, g.antes[k]))} → ${esc(val(k, g.depois[k]))}`).join(' · ') || 'alterado'}`;
+  };
+  box.innerHTML = `<section class="bloco"><div class="tabela"><table><tbody>${log.map(g => `<tr><td style="font-size:13px;white-space:nowrap">${fmtDH(g.feito_em)}</td><td style="font-size:14px">${desc(g)}</td></tr>`).join('') || '<tr><td class="nota">Nenhuma alteração registrada ainda.</td></tr>'}</tbody></table></div>
+    <p class="nota">Mostra as últimas 150 alterações em parceiros, valores fixos e rotas.</p></section>`;
 }
 
 // ================= Notas fiscais =================
