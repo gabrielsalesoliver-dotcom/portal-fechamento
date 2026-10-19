@@ -1261,17 +1261,18 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
-  const [comps, parcs, fech, prev] = await Promise.all([
+  const [comps, parcs, fech, prev, efic] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,descontos,valor_final,valor_aprovado,adiantado,pago_em,data_pagamento')),
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
+    todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
   ]);
   const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
   if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev;
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.aba = D.aba || 'resumo';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) D.compId = comComDados[comComDados.length - 1].id;
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
   desenharDiretoria(el);
@@ -1318,14 +1319,20 @@ function desenharDiretoria(el) {
     ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi neutro"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
+  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
+  <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
   <section class="bloco"><h2>Evolução em 2026 · ${OPS[op]}</h2><div id="graf" style="position:relative"></div></section>
+  <section class="bloco"><h2>Clientes de ${nomeMes(c.mes)}</h2><div id="dcli" class="carregando">Carregando…</div></section>
+  </div>
+  <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
+  <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
+  <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
+  <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
     <p class="sub">Previsto = valor fixo do contrato + atendimentos calendarizados de cada ponto × valor unitário. Realizado = malote fechado do parceiro. Kits/Spot não entram na previsão.</p>
-    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px">
-    <section class="bloco"><h2>Clientes de ${nomeMes(c.mes)}</h2><div id="dcli" class="carregando">Carregando…</div></section>
-    <section class="bloco"><h2>Pagamentos por data</h2><div id="dpag"></div></section>
-  </div>
+    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section></div>
+  <div data-sec="parceiros" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><div class="linha" style="justify-content:space-between"><h2>Parceiros</h2>
       <div class="linha"><input id="dfiltro" class="peq" placeholder="Filtrar parceiro" value="${esc(D.filtro || '')}" style="min-width:200px"><button class="btn sec peq" id="dcsv">Baixar tabela (CSV)</button></div></div>
     <div class="tabela"><table id="dtab"><thead><tr>
@@ -1340,10 +1347,15 @@ function desenharDiretoria(el) {
         <td><span class="pill ${t.fechado ? 'escuro' : t.sem ? '' : 'alerta'}">${esc(t.fechado ? 'Fechado' : t.status)}</span></td></tr>`).join('')}
       </tbody><tfoot><tr><td><b>Total (${tab.length})</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + (t.prev || 0), 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.malote, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + (t.dif || 0), 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.kits, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.desc, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.total, 0))}</b></td><td colspan="3"></td></tr></tfoot></table></div>
     <p class="nota">Clique em um parceiro para ver a evolução e os clientes atendidos.</p>
-  </section>`;
+  </section></div>`;
+  el.querySelectorAll('[data-sec]').forEach(x => x.style.display = x.dataset.sec === D.aba ? 'flex' : 'none');
+  el.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => { D.aba = b.dataset.aba; desenharDiretoria(el); });
+  blocoAno($('#dano'), D, c);
+  ponte($('#dponte'), D, c, ant);
+  eficiencia($('#defic'), D, c);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
-  pagamentos($('#dpag'), tab.filter(t => !t.sem));
+  pagamentos($('#dpag'), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, pago: r.pago_em, fechado: fechado(r) })));
   graficoPrev($('#gprev'), $('#tprev'), serieP, c.id);
   clientesMes($('#dcli'), c.id, op, null);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
@@ -1424,14 +1436,118 @@ function graficoPrev(box, tbox, pts, atualId) {
     <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base).</p>`;
 }
 
-function pagamentos(box, tab) {
-  const g = {}; tab.forEach(t => { const k = t.dia; const x = g[k] || (g[k] = { n: 0, v: 0, pagos: 0, vp: 0 }); x.n++; x.v += t.total; if (t.pago) { x.pagos++; x.vp += t.total; } });
+const ABAS_DIR = [['resumo', 'Resumo'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+
+// Acumulado do ano e projeção: realizado dos meses fechados + previsto (calendarizado) dos que faltam
+function blocoAno(box, D, c) {
+  const ano = c.mes.slice(0, 4);
+  const real = {}; const prevM = {};
+  D.fech.forEach(f => { const x = D.comps.find(k => k.id === f.competencia_id); if (!x || x.mes.slice(0, 4) !== ano) return; const m = +x.mes.slice(5, 7); real[m] = (real[m] || 0) + valorOp(f, 'tudo'); });
+  D.prev.forEach(f => { const x = D.comps.find(k => k.id === f.competencia_id); if (!x || f.previsto == null || x.mes.slice(0, 4) !== ano) return; const m = +x.mes.slice(5, 7); prevM[m] = (prevM[m] || 0) + Number(f.previsto); });
+  const mesSel = +c.mes.slice(5, 7);
+  const ate = Object.entries(real).filter(([m]) => +m <= mesSel); const acum = ate.reduce((a, [, v]) => a + v, 0);
+  const prevAte = Object.entries(prevM).filter(([m]) => +m <= mesSel && real[m] != null).reduce((a, [, v]) => a + v, 0);
+  const malAte = D.fech.filter(f => { const x = D.comps.find(k => k.id === f.competencia_id); return x && x.mes.slice(0, 4) === ano && +x.mes.slice(5, 7) <= mesSel; }).reduce((a, f) => a + (Number(f.malote) || 0), 0);
+  const fechados = Object.keys(real).map(Number); const ultimoReal = Math.max(...fechados);
+  const ultPrev = Object.keys(prevM).map(Number).sort((a, b) => b - a)[0];
+  let futuro = 0; const base = []; for (let m = ultimoReal + 1; m <= 12; m++) { const v = prevM[m] ?? prevM[ultPrev] ?? 0; futuro += v; base.push(`${MES3[m - 1]} ${prevM[m] != null ? 'calendarizado do mês' : `repete ${MES3[ultPrev - 1]}`}`); }
+  const realAno = Object.values(real).reduce((a, v) => a + v, 0); const proj = realAno + futuro;
+  box.innerHTML = `<div class="kpis">
+    <div class="kpi"><small>Acumulado ${MES3[0]}–${MES3[mesSel - 1]}</small><b>${BRL(acum)}</b><span>${ate.length} mês(es) com fechamento</span></div>
+    <div class="kpi neutro"><small>Média mensal</small><b>${BRL(ate.length ? acum / ate.length : 0)}</b><span>${BRLk((ate.length ? acum / ate.length : 0) * 12)} em 12 meses neste ritmo</span></div>
+    <div class="kpi ${malAte > prevAte ? 'alerta' : 'neutro'}"><small>Malote acumulado x previsto</small><b>${prevAte ? pct(malAte / prevAte - 1) : '—'}</b><span>${BRLk(malAte)} realizado · ${BRLk(prevAte)} previsto</span></div>
+    <div class="kpi"><small>Projeção de ${ano}</small><b>${BRL(proj)}</b><span>${BRLk(realAno)} realizado + ${BRLk(futuro)} previsto</span></div>
+  </div>
+  <p class="nota">Projeção = valor realizado de ${MES3[0]} a ${MES3[ultimoReal - 1]} + calendarizado dos meses seguintes (${base.join(', ') || 'nenhum'}). O calendarizado cobre o malote; kits/spot e descontos dos meses futuros não entram até acontecerem.</p>`;
+}
+
+// Ponte de variação entre dois meses (Tudo)
+function ponte(box, D, c, ant) {
+  const cur = D.fech.filter(f => f.competencia_id === c.id); const prv = ant ? D.fech.filter(f => f.competencia_id === ant.id) : [];
+  if (!ant || !cur.length || !prv.length) { box.innerHTML = `<p class="nota">${!cur.length ? 'Este mês ainda não tem fechamento.' : 'Não há mês anterior para comparar.'}</p>`; return; }
+  const n = v => Number(v) || 0; const tot = r => valorOp(r, 'tudo');
+  const pA = Object.fromEntries(prv.map(r => [r.parceiro_id, r])); const pC = Object.fromEntries(cur.map(r => [r.parceiro_id, r]));
+  const cont = cur.filter(r => pA[r.parceiro_id]);
+  const comp = { malote: 0, kits: 0, desc: 0, outros: 0 };
+  cont.forEach(r => { const a = pA[r.parceiro_id];
+    comp.malote += n(r.malote) - n(a.malote); comp.kits += n(r.kits) - n(a.kits); comp.desc += n(r.descontos) - n(a.descontos);
+    comp.outros += (tot(r) - n(r.malote) - n(r.kits) - n(r.descontos)) - (tot(a) - n(a.malote) - n(a.kits) - n(a.descontos)); });
+  const novos = cur.filter(r => !pA[r.parceiro_id]); const sairam = prv.filter(r => !pC[r.parceiro_id]);
+  const vA = prv.reduce((a, r) => a + tot(r), 0), vC = cur.reduce((a, r) => a + tot(r), 0);
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const passos = [['Malote', comp.malote], ['Kits/Spot', comp.kits], ['Descontos', comp.desc], ['Outros ajustes', comp.outros], [`Parceiros novos (${novos.length})`, novos.reduce((a, r) => a + tot(r), 0)], [`Parceiros que saíram (${sairam.length})`, -sairam.reduce((a, r) => a + tot(r), 0)]].filter(x => Math.abs(x[1]) >= 0.5);
+  const barras = [{ rot: MES3[+ant.mes.slice(5, 7) - 1], ini: 0, fim: vA, tipo: 'total' }]; let acc = vA;
+  passos.forEach(([r, v]) => { barras.push({ rot: r, ini: acc, fim: acc + v, tipo: v >= 0 ? 'sobe' : 'desce', v }); acc += v; });
+  barras.push({ rot: MES3[+c.mes.slice(5, 7) - 1], ini: 0, fim: vC, tipo: 'total' });
+  const lo = Math.min(...barras.filter(b => b.tipo !== 'total').map(b => Math.min(b.ini, b.fim)), vA, vC) * 0.97;
+  const hi = Math.max(...barras.map(b => Math.max(b.ini, b.fim))) * 1.01;
+  const W = 900, H = 280, L = 70, R = 12, T = 24, B = 54; const bw = (W - L - R) / barras.length; const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const cor = { total: '#121112', sobe: '#DB2242', desce: '#6E6E72' };
+  box.innerHTML = `<p class="sub" style="margin:0">Variação total: <b>${(vC - vA > 0 ? '+' : '') + BRL(vC - vA)}</b> (${pct(vC / vA - 1)}). Vermelho aumenta o custo; cinza reduz. O eixo começa em ${BRLk(lo)} para mostrar as diferenças.</p>
+  <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:620px;height:auto;display:block" role="img" aria-label="Ponte de variação">
+    ${[lo, (lo + hi) / 2, hi].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${barras.map((b, i) => { const x = L + i * bw + bw * 0.18, w = bw * 0.64; const top = y(Math.max(b.ini, b.fim)), bot = b.tipo === 'total' ? y(lo) : y(Math.min(b.ini, b.fim));
+      const lbl = b.tipo === 'total' ? BRLk(b.fim) : (b.v > 0 ? '+' : '') + BRLk(b.v);
+      return `<rect x="${x}" y="${top}" width="${w}" height="${Math.max(2, bot - top)}" rx="3" fill="${cor[b.tipo]}"><title>${esc(b.rot)}: ${b.tipo === 'total' ? BRL(b.fim) : BRL(b.v)}</title></rect>
+        ${i < barras.length - 1 ? `<line x1="${x + w}" x2="${x + bw}" y1="${y(b.fim)}" y2="${y(b.fim)}" stroke="#B8B6B4" stroke-dasharray="3 3"/>` : ''}
+        <text x="${x + w / 2}" y="${top - 6}" text-anchor="middle" font-size="12" font-weight="600" fill="#121112" font-family="Poppins">${lbl}</text>
+        <foreignObject x="${L + i * bw}" y="${H - B + 6}" width="${bw}" height="${B - 6}"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12px Poppins,sans-serif;color:#6E6E72;text-align:center;line-height:1.2">${esc(b.rot)}</div></foreignObject>`; }).join('')}
+  </svg></div>
+  ${(() => { const dif = cont.map(r => ({ p: pm[r.parceiro_id] || {}, d: tot(r) - tot(pA[r.parceiro_id]) })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 8);
+    return `<div class="tabela"><table><thead><tr><th>Maiores variações por parceiro</th><th class="n">${MES3[+ant.mes.slice(5, 7) - 1]}</th><th class="n">${MES3[+c.mes.slice(5, 7) - 1]}</th><th class="n">Diferença</th></tr></thead><tbody>
+    ${dif.map(x => `<tr><td>${esc(x.p.regiao || '—')}</td><td class="n">${BRL(tot(pA[x.p.id]))}</td><td class="n">${BRL(tot(pC[x.p.id]))}</td><td class="n" style="color:${x.d > 0 ? 'var(--brand-deep)' : 'var(--ink)'}">${(x.d > 0 ? '+' : '') + BRL(x.d)}</td></tr>`).join('')}
+    ${novos.map(r => `<tr><td>${esc((pm[r.parceiro_id] || {}).regiao || '—')} <span class="pill">novo</span></td><td class="n">—</td><td class="n">${BRL(tot(r))}</td><td class="n">+${BRL(tot(r))}</td></tr>`).join('')}
+    ${sairam.map(r => `<tr><td>${esc((pm[r.parceiro_id] || {}).regiao || '—')} <span class="pill">saiu</span></td><td class="n">${BRL(tot(r))}</td><td class="n">—</td><td class="n">−${BRL(tot(r))}</td></tr>`).join('')}
+    </tbody></table></div>`; })()}`;
+}
+
+// Custo por atendimento e execução do calendarizado (meses com Umov no portal)
+function eficiencia(box, D, c) {
+  const ef = D.efic.filter(e => e.competencia_id === c.id);
+  if (!ef.length) { box.innerHTML = '<p class="nota">Disponível nos meses com Umov e carteira carregados no portal (a partir de Setembro/2026).</p>'; return; }
+  const fe = Object.fromEntries(D.fech.filter(f => f.competencia_id === c.id).map(f => [f.parceiro_id, f]));
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const ls = ef.map(e => { const f = fe[e.parceiro_id]; const mal = f ? Number(f.malote) || 0 : null; const p = pm[e.parceiro_id] || {};
+    return { p, mal, pontos: e.pontos, prev: Number(e.atend_previstos), umov: Number(e.atend_umov), exec: e.atend_previstos ? e.atend_umov / e.atend_previstos : null,
+      cAt: mal != null && e.atend_umov ? mal / e.atend_umov : null, cPt: mal != null && e.pontos ? mal / e.pontos : null }; }).filter(x => x.pontos || x.umov);
+  const comV = ls.filter(x => x.mal != null);
+  const sMal = comV.reduce((a, x) => a + x.mal, 0), sUm = comV.reduce((a, x) => a + x.umov, 0), sPt = comV.reduce((a, x) => a + x.pontos, 0), sPrev = comV.reduce((a, x) => a + x.prev, 0);
+  D.efSort = D.efSort || ['exec', 1];
+  const [k, d] = D.efSort; ls.sort((a, b) => ((a[k] ?? 1e15) - (b[k] ?? 1e15)) * d);
+  const fechados = comV.filter(x => /fechad/i.test(x.p.tipo || '') && x.exec != null).sort((a, b) => a.exec - b.exec).slice(0, 6);
+  box.innerHTML = `<div class="kpis">
+      <div class="kpi"><small>Custo médio por atendimento</small><b>${BRL2(sUm ? sMal / sUm : 0)}</b><span>malote ÷ atendimentos retornados no Umov</span></div>
+      <div class="kpi neutro"><small>Custo médio por ponto</small><b>${BRL2(sPt ? sMal / sPt : 0)}</b><span>${fmtN(sPt)} pontos na carteira</span></div>
+      <div class="kpi ${sPrev && sUm / sPrev < 1 ? 'alerta' : 'neutro'}"><small>Execução do calendarizado</small><b>${sPrev ? pct(sUm / sPrev).replace('+', '') : '—'}</b><span>${fmtN(sUm)} feitos de ${fmtN(sPrev)} previstos</span></div>
+    </div>
+    ${fechados.length ? `<div class="msg alerta"><b>Contratos fechados com menor execução</b> (pagam o mesmo valor mesmo com menos atendimentos):<br>${fechados.map(x => `${esc(x.p.regiao)} ${pct(x.exec).replace('+', '')} (${fmtN(x.umov)} de ${fmtN(x.prev)}, ${BRL(x.mal)})`).join(' · ')}</div>` : ''}
+    <div class="tabela"><table id="eftab"><thead><tr>${[['regiao', 'Parceiro'], ['mal', 'Malote', 1], ['pontos', 'Pontos', 1], ['prev', 'Previstos', 1], ['umov', 'Feitos (Umov)', 1], ['exec', 'Execução', 1], ['cAt', 'R$/atend.', 1], ['cPt', 'R$/ponto', 1]]
+      .map(([kk, nn, num]) => `<th class="${num ? 'n' : ''}" ${kk !== 'regiao' ? `data-es="${kk}" style="cursor:pointer;white-space:nowrap"` : ''}>${nn}${k === kk ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>
+    ${ls.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.tipo || '')}</span></td><td class="n">${x.mal == null ? '—' : BRL(x.mal)}</td><td class="n">${fmtN(x.pontos)}</td><td class="n">${fmtN(x.prev)}</td><td class="n">${fmtN(x.umov)}</td>
+      <td class="n" style="color:${x.exec != null && x.exec < 0.9 ? 'var(--alert)' : 'var(--ink)'}">${x.exec == null ? '—' : pct(x.exec).replace('+', '')}</td><td class="n">${x.cAt == null ? '—' : BRL2(x.cAt)}</td><td class="n">${x.cPt == null ? '—' : BRL2(x.cPt)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="nota">Feitos = atendimentos de malote retornados de campo no Umov e ligados ao parceiro pelo código de integração. Previstos = calendarizado da carteira do mês. O malote inclui o valor fixo do contrato. Pontos de base própria não entram.</p>`;
+  box.querySelectorAll('[data-es]').forEach(th => th.onclick = () => { const kk = th.dataset.es; D.efSort = [kk, D.efSort[0] === kk ? -D.efSort[1] : (kk === 'exec' ? 1 : -1)]; eficiencia(box, D, c); });
+}
+
+// Caixa: o que vence em cada data, adiantamentos e saldo
+function pagamentos(box, ls) {
+  const g = {}; ls.forEach(t => { const x = g[t.dia] || (g[t.dia] = { n: 0, v: 0, adi: 0, pagos: 0, vp: 0, aberto: 0 }); x.n++; x.v += t.total; x.adi += t.adi; if (!t.fechado) x.aberto++; if (t.pago) { x.pagos++; x.vp += t.total - t.adi; } });
   const ord = ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal', '—'];
-  const lst = Object.entries(g).sort((a, b) => ord.indexOf(a[0]) - ord.indexOf(b[0]));
-  const tot = lst.reduce((a, [, x]) => a + x.v, 0);
-  box.innerHTML = `<div class="tabela"><table><thead><tr><th>Data</th><th class="n">Parceiros</th><th class="n">Valor</th><th class="n">Pago</th></tr></thead><tbody>
-    ${lst.map(([k, x]) => `<tr><td>${esc(k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}<div style="height:4px;background:#E9E7E3;border-radius:2px;margin-top:4px"><div style="height:4px;width:${tot ? 100 * x.v / tot : 0}%;background:#121112;border-radius:2px"></div></div></td><td class="n">${x.pagos ? `${x.pagos} · ${BRL(x.vp)}` : '—'}</td></tr>`).join('')}
-    </tbody></table></div><p class="nota">Datas fixas do cadastro de cada parceiro. Adiantamentos são tratados à parte.</p>`;
+  const lst = Object.entries(g).sort((a, b) => (ord.indexOf(a[0]) + 99) % 99 - (ord.indexOf(b[0]) + 99) % 99);
+  const T = lst.reduce((a, [, x]) => ({ n: a.n + x.n, v: a.v + x.v, adi: a.adi + x.adi, vp: a.vp + x.vp, aberto: a.aberto + x.aberto }), { n: 0, v: 0, adi: 0, vp: 0, aberto: 0 });
+  const saldo = T.v - T.adi - T.vp;
+  box.innerHTML = `<div class="kpis">
+      <div class="kpi"><small>Valor do mês</small><b>${BRL(T.v)}</b><span>${T.n} parceiros${T.aberto ? ` · ${T.aberto} ainda não fechados` : ''}</span></div>
+      <div class="kpi neutro"><small>Adiantamentos já pagos</small><b>${BRL(T.adi)}</b><span>${T.v ? pct(T.adi / T.v).replace('+', '') : '—'} do mês</span></div>
+      <div class="kpi neutro"><small>Pago no fechamento</small><b>${BRL(T.vp)}</b><span>registrado no portal</span></div>
+      <div class="kpi ${saldo > 0 ? 'alerta' : ''}"><small>Saldo a pagar</small><b>${BRL(saldo)}</b><span>valor − adiantado − pago</span></div>
+    </div>
+    <div class="tabela"><table><thead><tr><th>Data de pagamento</th><th class="n">Parceiros</th><th class="n">Valor</th><th class="n">Adiantado</th><th class="n">Pago</th><th class="n">Saldo a pagar</th></tr></thead><tbody>
+    ${lst.map(([k, x]) => { const sd = x.v - x.adi - x.vp; return `<tr><td>${esc(k === '—' ? 'Sem data cadastrada' : k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}</td><td class="n">${x.adi ? BRL(x.adi) : '—'}</td><td class="n">${x.vp ? BRL(x.vp) : '—'}</td>
+      <td class="n"><b>${BRL(sd)}</b><div style="height:4px;background:#E9E7E3;border-radius:2px;margin-top:4px"><div style="height:4px;width:${T.v ? Math.max(0, 100 * sd / T.v) : 0}%;background:#121112;border-radius:2px"></div></div></td></tr>`; }).join('')}
+    </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${T.n}</b></td><td class="n"><b>${BRL(T.v)}</b></td><td class="n"><b>${BRL(T.adi)}</b></td><td class="n"><b>${BRL(T.vp)}</b></td><td class="n"><b>${BRL(saldo)}</b></td></tr></tfoot></table></div>
+    <p class="nota">Datas fixas do cadastro de cada parceiro. Valores com descontos. "Pago" passa a aparecer quando o pagamento for registrado no portal (etapa do financeiro).</p>`;
 }
 
 async function clientesMes(box, compId, op, parceiroId) {
