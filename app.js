@@ -136,7 +136,7 @@ async function carregarBase() {
 // ---------- casca ----------
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
-  ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Pontos do mês'], ['competencias', 'Liberar competência']]],
+  ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['acessos', 'Acessos e convites']]],
   ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Conferência e aprovação'], ['', 'Notas fiscais'], ['', 'Financeiro'], ['', 'Diretoria']]],
 ];
@@ -373,6 +373,7 @@ async function rotasSemParceiro(ativa) {
   });
 }
 
+function alertaOk(t) { const d = document.createElement('div'); d.className = 'msg ok'; d.textContent = t; $('#main').prepend(d); }
 function alertaTopo(t) { const d = document.createElement('div'); d.className = 'msg erro'; d.textContent = t; $('#main').prepend(d); }
 
 // ---------- Passo 2: Inclusão e cancelamento ----------
@@ -526,17 +527,129 @@ async function todas(montar) {
 }
 const regiaoMap = () => { const m = {}; S.parceiros.forEach(p => m[norm(p.regiao)] = p.id); return m; };
 
-// ---------- Pontos do mês (aba Atendimentos) ----------
+// ---------- Carteira de pontos (cadastro permanente) ----------
 async function vPontos() {
   const m = $('#main');
-  m.innerHTML = `
-    <div class="topo"><div><h1>Pontos do mês</h1><p>Suba a planilha de fechamento do mês. O portal lê a aba Atendimentos (cliente, código, loja, cidade, frequência, previsto e V. Unit) e liga cada ponto ao parceiro pela coluna Região. É essa lista que vai no modelo de cada parceiro.</p></div>${seletorComp()}</div>
+  m.innerHTML = `<div class="topo"><div><h1>Carteira de pontos</h1><p>O cadastro de pontos fica no portal: cliente, loja, cidade, frequência, parceiro e valor unitário. Ele é atualizado pela planilha de inclusão e cancelamento e pelos seus ajustes, e todo mês o portal gera a base de pontos a partir dele.</p></div>${seletorComp()}</div>
+    <div id="cart-corpo" class="carregando">Carregando…</div>`;
+  ligarSeletor(vPontos);
+  const res = await q(sb.from('cadastro_resumo').select('*'));
+  const tot = res.reduce((a, r) => a + r.pontos, 0);
+  if (!tot) return cargaInicial();
+  const g = k => res.find(r => r.situacao === k) || { pontos: 0, pendencias: 0, parceiros: 0 };
+  const [hist, ult] = await Promise.all([
+    q(sb.from('pontos_importacoes').select('*').eq('competencia_id', S.compId).eq('status', 'ativa').maybeSingle()),
+    q(sb.from('carteira_importacoes').select('importado_em').order('importado_em', { ascending: false }).limit(1)),
+  ]);
+  const c = comp();
+  $('#cart-corpo').outerHTML = `
+    <div class="kpis">
+      <div class="kpi"><small>Pontos ativos</small><b>${fmtN(g('Ativo').pontos)}</b><span>${fmtN(g('Ativo').parceiros)} parceiros</span></div>
+      <div class="kpi neutro"><small>Cancelados</small><b>${fmtN(g('Cancelado').pontos)}</b><span></span></div>
+      <div class="kpi neutro"><small>Suspensos</small><b>${fmtN(g('Suspenso').pontos)}</b><span></span></div>
+      <div class="kpi ${g('Ativo').pendencias ? 'alerta' : 'neutro'}"><small>Pendências</small><b>${fmtN(g('Ativo').pendencias)}</b><span>pontos ativos sem parceiro, preço ou dia</span></div>
+    </div>
+    <section class="bloco"><h2>Rotina do mês</h2>
+      <div class="linha" style="align-items:flex-start">
+        <div style="flex:1 1 300px;display:flex;flex-direction:column;gap:8px">
+          <b>1. Aplicar inclusões e cancelamentos</b>
+          <span class="sub" style="margin:0">Leva para o cadastro os movimentos da última planilha importada${ult[0] ? ` (${fmtD(ult[0].importado_em)})` : ''}: pontos novos, cancelamentos, suspensões, reativações e mudanças de frequência.</span>
+          <div><button class="btn sec" id="aplicar">Aplicar movimentos</button></div><div id="msg-aplicar"></div>
+        </div>
+        <div style="flex:1 1 300px;display:flex;flex-direction:column;gap:8px">
+          <b>2. Gerar a base de ${nomeMes(c.mes)}</b>
+          <span class="sub" style="margin:0">${hist ? `Base atual: ${esc(hist.arquivo)}, ${fmtDH(hist.importado_em)} · ${fmtN(hist.pontos)} pontos. Gerar de novo substitui (a anterior fica guardada).` : 'Ainda não há base para este mês.'} O previsto é calculado pela frequência, pelos dias úteis do mês (sem feriados) e pelas datas de entrada e saída de cada ponto.</span>
+          <div><button class="btn marca" id="gerar">Gerar base de ${nomeMes(c.mes)}</button></div><div id="msg-gerar"></div>
+        </div>
+      </div>
+    </section>
+    <section class="bloco"><h2>Pendências</h2><div id="pend" class="carregando">Carregando…</div></section>
+    <section class="bloco"><h2>Buscar e ajustar pontos</h2>
+      <div class="linha">
+        <input type="text" id="busca" placeholder="Cliente, loja, cidade ou código" style="flex:2 1 260px">
+        <select id="fparc" style="flex:1 1 220px"><option value="">Todos os parceiros</option>${S.parceiros.map(p => `<option value="${p.id}">${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('')}</select>
+        <select id="fsit" style="flex:0 1 150px"><option value="">Todas</option><option>Ativo</option><option>Cancelado</option><option>Suspenso</option></select>
+        <button class="btn sec" id="buscar">Buscar</button><button class="btn sec" id="novo">Novo ponto</button>
+      </div>
+      <div id="res"></div>
+    </section>`;
+  $('#aplicar').onclick = async e => {
+    e.target.disabled = true;
+    try { const r = await q(sb.rpc('aplicar_movimentos_cadastro')); $('#msg-aplicar').innerHTML = `<div class="msg ok">${fmtN(r.novos)} pontos novos, ${fmtN(r.situacao)} mudanças de situação e ${fmtN(r.frequencia)} de frequência. ${fmtN(r.pendencias)} pendências para revisar.</div>`; carregarPend(); }
+    catch (er) { $('#msg-aplicar').innerHTML = `<div class="msg erro">${esc(er.message)}</div>`; } finally { e.target.disabled = false; }
+  };
+  $('#gerar').onclick = async e => {
+    e.target.disabled = true;
+    try { const r = await q(sb.rpc('gerar_base_mes', { p_comp: S.compId })); $('#msg-gerar').innerHTML = `<div class="msg ok">Base de ${nomeMes(c.mes)} gerada: ${fmtN(r.pontos)} pontos.${r.sem_parceiro ? ` ${fmtN(r.sem_parceiro)} pontos ativos ficaram de fora por não ter parceiro.` : ''}</div>`; }
+    catch (er) { $('#msg-gerar').innerHTML = `<div class="msg erro">${esc(er.message)}</div>`; } finally { e.target.disabled = false; }
+  };
+  $('#buscar').onclick = buscarPontos;
+  $('#busca').onkeydown = e => { if (e.key === 'Enter') buscarPontos(); };
+  $('#novo').onclick = () => { $('#res').innerHTML = `<div class="tabela"><table><tbody>${linhaPonto({ cod_int: '', situacao: 'Ativo' }, true)}</tbody></table></div>`; ligarLinhas(); };
+  carregarPend();
+}
+
+const optsParc = sel => `<option value="">Sem parceiro</option>` + S.parceiros.filter(p => p.ativo || p.id === sel).map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('');
+function linhaPonto(p, novo = false) {
+  const k = novo ? 'novo' : p.cod_int;
+  return `<tr data-cod="${esc(k)}">
+    <td style="min-width:200px">${novo ? `<input class="peq" data-f="cod_int" placeholder="Código" style="width:120px">` : `<b class="num">${esc(p.cod_int)}</b>`}
+      <div><input class="peq" data-f="cliente" value="${esc(p.cliente || '')}" placeholder="Cliente" style="width:200px;margin-top:4px"></div>
+      <div><input class="peq" data-f="loja" value="${esc(p.loja || '')}" placeholder="Loja" style="width:200px;margin-top:4px"></div></td>
+    <td><input class="peq" data-f="cidade" value="${esc(p.cidade || '')}" placeholder="Cidade" style="width:130px"> <input class="peq" data-f="uf" value="${esc(p.uf || '')}" placeholder="UF" style="width:46px"></td>
+    <td><select class="peq" data-f="parceiro_id" style="max-width:210px">${optsParc(p.parceiro_id)}</select></td>
+    <td><input class="peq" data-f="frequencia" value="${esc(p.frequencia || '')}" placeholder="SEG, QUA" style="width:120px"></td>
+    <td><input class="peq num" data-f="v_unit" value="${p.v_unit == null ? '' : p.v_unit}" placeholder="R$" style="width:80px"></td>
+    <td><select class="peq" data-f="situacao">${['Ativo', 'Cancelado', 'Suspenso'].map(s => `<option ${s === p.situacao ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      ${p.pendencia ? `<div><span class="pill alerta" style="margin-top:4px;white-space:normal;max-width:180px">${esc(p.pendencia)}</span></div>` : ''}</td>
+    <td style="white-space:nowrap"><button class="btn peq" data-salvar>Salvar</button> ${novo ? '' : '<button class="btn sec peq" data-hist>Histórico</button>'}</td></tr>`;
+}
+const CAB_PONTOS = '<thead><tr><th>Ponto</th><th>Cidade</th><th>Parceiro</th><th>Frequência</th><th>V. Unit</th><th>Situação</th><th></th></tr></thead>';
+function ligarLinhas() {
+  document.querySelectorAll('#main [data-salvar]').forEach(b => b.onclick = async () => {
+    const tr = b.closest('tr'); const p = {};
+    tr.querySelectorAll('[data-f]').forEach(i => { const v = i.value.trim(); p[i.dataset.f] = i.dataset.f === 'v_unit' ? v.replace(',', '.') : v; });
+    if (tr.dataset.cod !== 'novo') p.cod_int = tr.dataset.cod;
+    b.disabled = true;
+    try { await q(sb.rpc('salvar_ponto', { p })); b.textContent = 'Salvo'; setTimeout(() => { b.textContent = 'Salvar'; b.disabled = false; }, 1500); carregarPend(); }
+    catch (e) { alertaTopo(e.message); b.disabled = false; }
+  });
+  document.querySelectorAll('#main [data-hist]').forEach(b => b.onclick = async () => {
+    const tr = b.closest('tr'); const cod = tr.dataset.cod;
+    if (tr.nextElementSibling?.classList.contains('hist')) { tr.nextElementSibling.remove(); return; }
+    const h = await q(sb.from('cadastro_pontos_hist').select('*').eq('cod_int', cod).order('feito_em', { ascending: false }).limit(50));
+    const nomeP = v => S.parceiros.find(x => x.id === v) ? parcNome(v) : v;
+    const linha = document.createElement('tr'); linha.className = 'hist';
+    linha.innerHTML = `<td colspan="7" style="background:var(--field)">${h.length ? h.map(x => `<div style="font-size:13px">${fmtDH(x.feito_em)} · <b>${esc(x.campo)}</b>: ${esc(x.campo === 'parceiro_id' ? nomeP(x.de) : x.de ?? '—')} → ${esc(x.campo === 'parceiro_id' ? nomeP(x.para) : x.para ?? '—')} <span class="nota">${esc(x.motivo || '')}</span></div>`).join('') : '<span class="nota">Sem alterações registradas.</span>'}</td>`;
+    tr.after(linha);
+  });
+}
+async function carregarPend() {
+  const el = $('#pend'); if (!el) return;
+  const p = await q(sb.from('cadastro_pontos').select('*').eq('situacao', 'Ativo').not('pendencia', 'is', null).order('cidade').limit(300));
+  el.className = '';
+  el.innerHTML = p.length ? `<p class="sub" style="margin:0 0 8px">Pontos ativos que precisam de uma decisão. Sem parceiro, o ponto fica fora da base do mês. Sem preço, entra com valor zero. Frequência sem dia (ex.: "1X SEMANA") não gera previsto; informe o dia.</p>
+    <div class="tabela"><table>${CAB_PONTOS}<tbody>${p.map(x => linhaPonto(x)).join('')}</tbody></table></div>${p.length === 300 ? '<p class="nota">Mostrando 300.</p>' : ''}` : '<div class="msg ok">Nenhuma pendência.</div>';
+  ligarLinhas();
+}
+async function buscarPontos() {
+  const t = $('#busca').value.trim(); let qr = sb.from('cadastro_pontos').select('*').order('cliente').limit(200);
+  if (t) qr = qr.or(['cliente', 'loja', 'cidade', 'cod_int'].map(c => `${c}.ilike.*${t.replace(/[,()*]/g, ' ')}*`).join(','));
+  if ($('#fparc').value) qr = qr.eq('parceiro_id', $('#fparc').value);
+  if ($('#fsit').value) qr = qr.eq('situacao', $('#fsit').value);
+  const r = await q(qr);
+  $('#res').innerHTML = r.length ? `<div class="tabela"><table>${CAB_PONTOS}<tbody>${r.map(x => linhaPonto(x)).join('')}</tbody></table></div>${r.length === 200 ? '<p class="nota">Mostrando os 200 primeiros. Refine a busca.</p>' : ''}` : '<div class="msg alerta">Nenhum ponto encontrado.</div>';
+  ligarLinhas();
+}
+
+// Carga inicial: só quando o cadastro está vazio. Usa a planilha de fechamento uma única vez.
+function cargaInicial() {
+  $('#cart-corpo').outerHTML = `<div class="msg alerta"><b>A carteira ainda está vazia.</b> Faça a carga inicial uma única vez com a planilha de fechamento do mês selecionado (aba Atendimentos). Depois disso, o cadastro passa a ser mantido aqui e não precisa mais subir a planilha.</div>
     <div id="pativa"></div>
     ${zonaArquivo('arqp', 'Arraste a planilha de fechamento ou clique para escolher', 'Excel (.xlsx) com a aba Atendimentos', '.xlsx,.xlsm')}
     <div id="prevp"></div><div id="porparc"></div>`;
-  ligarSeletor(vPontos);
   ligarZona('arqp', previaPontos);
-  await pontosAtiva();
+  pontosAtiva();
   if (S.pontosPrev) desenharPreviaPontos();
 }
 
@@ -614,9 +727,11 @@ async function gravarPontos() {
       await q(sb.from('pontos').insert(p.pontos.slice(i, i + L).map(x => ({ ...x, competencia_id: c.id, importacao_id: impId }))));
     }
     await q(sb.rpc('ativar_importacao_pontos', { p_id: impId }));
+    passo('Criando a carteira de pontos…', 98);
+    const n = await q(sb.rpc('carga_inicial_cadastro', { p_importacao: impId }));
     S.pontosPrev = null;
-    $('#prevp').innerHTML = `<div class="msg ok">Pontos de ${nomeMes(c.mes)} gravados: ${fmtN(p.pontos.length)}.</div>`;
-    await pontosAtiva();
+    await vPontos();
+    alertaOk(`Carteira criada com ${fmtN(n)} pontos a partir da planilha de ${nomeMes(c.mes)}. A base de ${nomeMes(c.mes)} também já está pronta.`);
   } catch (e) {
     if (impId) await sb.from('pontos_importacoes').update({ status: 'falhou', observacao: e.message.slice(0, 200) }).eq('id', impId);
     prog.innerHTML = `<div class="msg erro">A gravação parou: ${esc(e.message)}. Os pontos ativos anteriores (se havia) continuam valendo.</div>`;

@@ -29,6 +29,7 @@ a{color:var(--brand-deep)}a:hover{color:var(--ink)}
 label.campo{display:flex;flex-direction:column;gap:6px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;font-weight:600;color:var(--muted)}
 input[type=text],input[type=email],input[type=password],select{font:inherit;font-size:16px;padding:12px 14px;min-height:48px;border:1px solid var(--rule);border-radius:6px;background:var(--field);color:var(--ink);letter-spacing:normal;text-transform:none;font-weight:400}
 select.peq{font-size:14px;min-height:40px;padding:8px 10px}
+input.peq,select.peq{font:inherit;font-size:13px;min-height:34px;padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--field);color:var(--ink)}
 .btn{font:inherit;font-size:15px;font-weight:600;min-height:46px;padding:10px 18px;border-radius:6px;border:0;background:var(--ink);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
 .btn:hover{background:#2a282a}
 .btn.sec{background:var(--field);color:var(--ink);border:1px solid var(--rule);font-weight:500}
