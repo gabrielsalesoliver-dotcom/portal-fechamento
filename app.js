@@ -1,5 +1,5 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, norm } from './parse.js';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js';
 import { gerarModelo } from './modelo.js';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
@@ -139,11 +139,11 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
-  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Conferência e aprovação'], ['', 'Notas fiscais']]],
+  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Notas fiscais']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia() };
 
 function rotear() {
   const v = (location.hash || '#painel').slice(1);
@@ -964,7 +964,7 @@ const SIT_ENVIO = { recebido: ['Recebido', ''], validado: ['Conferido, sem pend�
 
 async function situacaoParceiro(c) {
   const box = $('#sitr'); if (!box) return;
-  const envs = await q(sb.from('envios').select('id,versao,enviado_em,status,totais,arquivo_path').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('versao', { ascending: false }));
+  const envs = await q(sb.from('envios').select('id,versao,enviado_em,status,totais,arquivo_path,comentario_gsm').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('versao', { ascending: false }));
   box.className = '';
   if (!envs.length) { box.innerHTML = '<p class="nota">Nenhum relatório enviado para este mês.</p>'; return; }
   const e = envs.find(x => x.status !== 'substituido') || envs[0]; const t = e.totais || {};
@@ -979,6 +979,7 @@ async function situacaoParceiro(c) {
   const difUmov = (Number(t.malote_qtd) || 0) - (Number(t.umov_qtd) || 0);
   box.innerHTML = `
     <div class="linha" style="justify-content:space-between"><span>Envio ${e.versao} · ${fmtDH(e.enviado_em)}</span><span class="pill ${cls}">${esc(rot)}</span></div>
+    ${e.comentario_gsm ? `<div class="msg ${e.status === 'recusado' ? 'erro' : 'ok'}"><b>GSM:</b> ${esc(e.comentario_gsm)}${e.status === 'recusado' ? '<br>Corrija o relatório e envie de novo no passo 2.' : ''}</div>` : ''}
     <div class="kpis">
       <div class="kpi"><small>Total informado</small><b>${BRL2(t.total)}</b><span>${t.malote_fixo ? `inclui fixo de ${BRL2(t.malote_fixo)}` : 'sem valor fixo'}</span></div>
       <div class="kpi ${difUmov > 0 ? 'alerta' : ''}"><small>Malote: você x Umov</small><b>${fmtN(t.malote_qtd)} x ${fmtN(t.umov_qtd)}</b><span>${difUmov ? (difUmov > 0 ? '+' : '') + fmtN(difUmov) + ' atendimento(s)' : 'iguais'}</span></div>
@@ -988,7 +989,7 @@ async function situacaoParceiro(c) {
     ${grupos.map(([k, tit, sub]) => { const ls = divs.filter(d => d.situacao === k); if (!ls.length) return '';
       return `<div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:8px 0 0;font-size:15px">${tit} (${ls.length})</h3>${sub ? `<p class="nota" style="margin:0">${sub}</p>` : ''}
       <div class="tabela"><table><thead><tr><th>Operação</th><th>Item</th><th>O que foi encontrado</th><th class="n">Valor</th><th></th></tr></thead><tbody>
-      ${ls.map(d => `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td><td>${esc(d.descricao)}${(acoesPor[d.id] || []).map(a => `<div class="nota" style="margin-top:4px">Sua resposta (${fmtDH(a.criado_em)}): ${esc(a.texto || '')}${a.arquivo_path ? ' · comprovante anexado' : ''}${a.decisao !== 'pendente' ? ` · <b>GSM: ${esc(a.decisao)}</b>${a.comentario_gsm ? ' — ' + esc(a.comentario_gsm) : ''}` : ''}</div>`).join('')}</td>
+      ${ls.map(d => `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td><td>${esc(d.descricao)}${d.decisao ? `<div class="nota" style="margin-top:4px"><b>GSM: ${d.decisao === 'aceita' ? 'aceito' : 'glosado ' + BRL2(d.valor_glosa)}</b>${d.comentario_gsm ? ' — ' + esc(d.comentario_gsm) : ''}</div>` : ''}${(acoesPor[d.id] || []).map(a => `<div class="nota" style="margin-top:4px">Sua resposta (${fmtDH(a.criado_em)}): ${esc(a.texto || '')}${a.arquivo_path ? ' · comprovante anexado' : ''}${a.decisao !== 'pendente' ? ` · <b>GSM: ${esc(a.decisao)}</b>${a.comentario_gsm ? ' — ' + esc(a.comentario_gsm) : ''}` : ''}</div>`).join('')}</td>
         <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${k === 'precisa_acao' || k === 'informativo' ? `<button class="btn sec peq" data-resp="${d.id}">Responder</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></div>`; }).join('')}
     ${!divs.length ? '<div class="msg ok">Tudo confere com o Umov. A GSM vai revisar e aprovar.</div>' : ''}
@@ -1016,6 +1017,139 @@ function formResposta(b, c) {
       situacaoParceiro(c);
     } catch (e) { linha.querySelector(`#rm-${id}`).innerHTML = `<span class="msg erro">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = 'Enviar resposta'; }
   };
+}
+
+// ================= Conferência e aprovação (admin) =================
+const ST_ENV = { recebido: ['Recebido', ''], validado: ['Sem pendências', 'escuro'], com_divergencias: ['Com pendências do parceiro', 'alerta'], aprovado: ['Aprovado', 'escuro'], recusado: ['Devolvido', 'marca'], substituido: ['Substituído', ''] };
+async function vConferencia() {
+  const m = $('#main');
+  if (S.confParc) return detalheConferencia();
+  m.innerHTML = `<div class="topo"><div><h1>Conferência e aprovação</h1><p>Relatórios enviados pelos parceiros, já conferidos com o Umov. Decida cada item em aberto, registre ajustes e aprove o valor do mês. Nada é aprovado com item sem decisão.</p></div>${seletorComp(false)}</div><div id="conf" class="carregando">Carregando…</div>`;
+  ligarSeletor(vConferencia);
+  const c = comp();
+  const [envs, fech, divs] = await Promise.all([
+    todas(() => sb.from('envios').select('id,parceiro_id,versao,enviado_em,status,totais').eq('competencia_id', c.id).neq('status', 'substituido').order('versao', { ascending: false })),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,status,valor_aprovado,valor_final').eq('competencia_id', c.id)),
+    todas(() => sb.from('divergencias').select('envio_id,situacao').eq('competencia_id', c.id).in('situacao', ['precisa_acao', 'em_analise'])),
+  ]);
+  const ult = {}; envs.forEach(e => { if (!ult[e.parceiro_id]) ult[e.parceiro_id] = e; });
+  const fPor = Object.fromEntries(fech.map(f => [f.parceiro_id, f]));
+  const pend = {}; divs.forEach(d => { const x = pend[d.envio_id] || (pend[d.envio_id] = { acao: 0, analise: 0 }); d.situacao === 'precisa_acao' ? x.acao++ : x.analise++; });
+  const linhas = S.parceiros.filter(p => p.ativo !== false || ult[p.id]).map(p => {
+    const e = ult[p.id]; const pd = e ? (pend[e.id] || { acao: 0, analise: 0 }) : null;
+    const grupo = !e ? 'sem' : e.status === 'aprovado' ? 'aprovado' : e.status === 'recusado' ? 'devolvido' : (pd.acao + pd.analise) ? 'pendente' : 'pronto';
+    return { p, e, pd, grupo, f: fPor[p.id] };
+  });
+  const cont = k => linhas.filter(l => l.grupo === k).length;
+  S.confFiltro = S.confFiltro || 'todos';
+  const filtros = [['todos', 'Todos', linhas.length], ['pronto', 'Prontos para aprovar', cont('pronto')], ['pendente', 'Com itens em aberto', cont('pendente')], ['devolvido', 'Devolvidos', cont('devolvido')], ['sem', 'Sem envio', cont('sem')], ['aprovado', 'Aprovados', cont('aprovado')]];
+  const vis = linhas.filter(l => S.confFiltro === 'todos' || l.grupo === S.confFiltro).sort((a, b) => a.p.regiao.localeCompare(b.p.regiao));
+  const totAprov = linhas.filter(l => l.grupo === 'aprovado').reduce((a, l) => a + (Number(l.f?.valor_aprovado) || 0), 0);
+  $('#conf').outerHTML = `
+    <div class="kpis">
+      <div class="kpi"><small>Relatórios recebidos</small><b>${linhas.length - cont('sem')} de ${linhas.length}</b><span>${cont('sem')} parceiro(s) sem envio</span></div>
+      <div class="kpi ${cont('pendente') ? 'alerta' : 'neutro'}"><small>Com itens em aberto</small><b>${cont('pendente')}</b><span>${linhas.reduce((a, l) => a + (l.pd?.analise || 0), 0)} item(ns) aguardam sua decisão</span></div>
+      <div class="kpi"><small>Prontos para aprovar</small><b>${cont('pronto')}</b><span>sem item em aberto</span></div>
+      <div class="kpi"><small>Aprovados</small><b>${cont('aprovado')}</b><span>${BRL2(totAprov)}</span></div>
+    </div>
+    <section class="bloco"><div class="linha">${filtros.map(([k, n, q]) => `<button class="btn ${S.confFiltro === k ? '' : 'sec'} peq" data-f="${k}">${n} (${q})</button>`).join('')}</div>
+    <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Envio</th><th>Situação</th><th class="n">Informado</th><th class="n">Malote: parceiro x Umov</th><th class="n">Em aberto</th><th></th></tr></thead><tbody>
+    ${vis.map(({ p, e, pd, f }) => { const t = e?.totais || {}; const [rot, cls] = e ? ST_ENV[e.status] || [e.status, ''] : ['Sem envio', ''];
+      return `<tr><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.codigo)} · ${esc(p.nome)}</span></td>
+      <td style="font-size:13px">${e ? `Envio ${e.versao}<br>${fmtDH(e.enviado_em)}` : '—'}</td>
+      <td><span class="pill ${cls}">${esc(rot)}</span>${f?.valor_aprovado != null && e?.status === 'aprovado' ? `<br><span class="nota">${BRL2(f.valor_aprovado)}</span>` : ''}</td>
+      <td class="n">${e ? BRL2(t.total) : '—'}</td>
+      <td class="n">${e ? `${fmtN(t.malote_qtd)} x ${fmtN(t.umov_qtd)}` : '—'}</td>
+      <td class="n">${pd && (pd.acao + pd.analise) ? `${pd.acao ? `<span class="pill alerta">${pd.acao} com o parceiro</span> ` : ''}${pd.analise ? `<span class="pill marca">${pd.analise} com a GSM</span>` : ''}` : '—'}</td>
+      <td>${e ? `<button class="btn ${e.status === 'aprovado' ? 'sec' : ''} peq" data-abrir="${p.id}">${e.status === 'aprovado' ? 'Ver' : 'Conferir'}</button>` : ''}</td></tr>`; }).join('')}
+    </tbody></table></div></section>`;
+  m.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { S.confFiltro = b.dataset.f; vConferencia(); });
+  m.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => { S.confParc = b.dataset.abrir; detalheConferencia(); });
+}
+
+async function linkArquivo(path) { const { data } = await sb.storage.from('envios').createSignedUrl(path, 600); return data?.signedUrl; }
+
+async function detalheConferencia() {
+  const m = $('#main'); const c = comp(); const p = S.parceiros.find(x => x.id === S.confParc);
+  m.innerHTML = '<div class="carregando">Carregando…</div>';
+  const envs = await q(sb.from('envios').select('*').eq('competencia_id', c.id).eq('parceiro_id', p.id).order('versao', { ascending: false }));
+  const e = envs.find(x => x.status !== 'substituido') || envs[0];
+  const [divs, acoes, ajs, res] = await Promise.all([
+    todas(() => sb.from('divergencias').select('*').eq('envio_id', e.id).order('operacao').order('ref_linha')),
+    todas(() => sb.from('acoes_parceiro').select('*').eq('parceiro_id', p.id).order('criado_em')),
+    q(sb.from('ajustes').select('*').eq('competencia_id', c.id).eq('parceiro_id', p.id).order('criado_em')),
+    q(sb.rpc('resumo_aprovacao', { p_envio: e.id })),
+  ]);
+  const acPor = {}; acoes.forEach(a => (acPor[a.divergencia_id] = acPor[a.divergencia_id] || []).push(a));
+  const t = e.totais || {}; const aberto = !['aprovado', 'recusado', 'substituido'].includes(e.status) && c.status !== 'fechada';
+  const [rot, cls] = ST_ENV[e.status] || [e.status, ''];
+  const desc = (Number(res.ajustes) || 0) - (Number(res.glosas) || 0);
+  const final = (Number(res.malote) || 0) + (Number(res.kits) || 0) + (Number(res.fora) || 0) + desc;
+  const ativos = divs.filter(d => d.situacao !== 'informativo'); const info = divs.filter(d => d.situacao === 'informativo');
+  const linhaDiv = d => { const ac = acPor[d.id] || []; const pend = ['precisa_acao', 'em_analise'].includes(d.situacao);
+    return `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td>
+      <td>${esc(d.descricao)}${ac.map(a => `<div style="margin-top:6px;padding:6px 8px;background:#fff;border-left:3px solid var(--brand);font-size:13px"><b>Parceiro, ${fmtDH(a.criado_em)}:</b> ${esc(a.texto || '')}${a.arquivo_path ? ` <a href="#" data-arq="${esc(a.arquivo_path)}">abrir comprovante</a>` : ''}</div>`).join('')}
+        ${d.decisao ? `<div class="nota" style="margin-top:4px">GSM: <b>${d.decisao === 'aceita' ? 'aceito' : 'glosado ' + BRL2(d.valor_glosa)}</b>${d.comentario_gsm ? ' — ' + esc(d.comentario_gsm) : ''}</div>` : ''}</td>
+      <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td>
+      <td>${pend ? `<span class="pill ${d.situacao === 'precisa_acao' ? 'alerta' : 'marca'}">${d.situacao === 'precisa_acao' ? 'Sem resposta' : 'Respondido'}</span>` : `<span class="pill escuro">Decidido</span>`}</td>
+      <td style="white-space:nowrap">${aberto ? (pend ? `<button class="btn peq" data-ac="${d.id}">Aceitar</button> <button class="btn sec peq" data-gl="${d.id}" data-v="${Math.max(0, Number(d.valor) || 0)}">Glosar</button>` : `<button class="btn sec peq" data-re="${d.id}">Desfazer</button>`) : ''}</td></tr>`; };
+  m.innerHTML = `
+    <div class="topo"><div><a href="#conferencia" id="voltar" style="font-size:14px">← Todos os parceiros</a><h1>${esc(p.regiao)} · ${nomeMes(c.mes)}</h1><p>${esc(p.codigo)} · ${esc(p.nome)} · Envio ${e.versao} em ${fmtDH(e.enviado_em)} · <span class="pill ${cls}">${esc(rot)}</span></p></div>
+      <div class="linha">${e.arquivo_path ? `<button class="btn sec peq" data-arq="${esc(e.arquivo_path)}">Baixar relatório do parceiro</button>` : ''}</div></div>
+    ${e.comentario_gsm ? `<div class="msg ${e.status === 'recusado' ? 'erro' : 'ok'}">${esc(e.comentario_gsm)}</div>` : ''}
+    <div class="kpis">
+      <div class="kpi"><small>Malote informado</small><b>${BRL2(res.malote)}</b><span>fixo ${BRL2(t.malote_fixo)} + atendimentos ${BRL2(t.malote_atend)}</span></div>
+      <div class="kpi ${(t.malote_qtd || 0) > (t.umov_qtd || 0) ? 'alerta' : 'neutro'}"><small>Atendimentos: parceiro x Umov</small><b>${fmtN(t.malote_qtd)} x ${fmtN(t.umov_qtd)}</b><span>Umov vale ${BRL2(t.umov_valor)} em atendimentos</span></div>
+      <div class="kpi neutro"><small>Kits/Spot</small><b>${BRL2(res.kits)}</b><span>${fmtN(t.kits_qtd)} kit(s)</span></div>
+      <div class="kpi neutro"><small>Fora do Umov</small><b>${BRL2(res.fora)}</b><span>serviços avulsos</span></div>
+    </div>
+    <section class="bloco"><h2>Itens para decidir (${ativos.length})</h2>
+      <p class="sub">Aceitar mantém o valor informado. Glosar tira o valor que você indicar e vira desconto, com o motivo que o parceiro vai ler.</p>
+      ${ativos.length ? `<div class="tabela"><table><thead><tr><th>Operação</th><th>Item</th><th>O que foi encontrado</th><th class="n">Valor</th><th>Situação</th><th></th></tr></thead><tbody>${ativos.map(linhaDiv).join('')}</tbody></table></div>` : '<div class="msg ok">Nenhum item para decidir: o relatório confere com o Umov.</div>'}
+      ${info.length ? `<details><summary style="cursor:pointer;font-size:14px">Itens informativos (${info.length}) · não bloqueiam a aprovação</summary><div class="tabela"><table><tbody>${info.map(linhaDiv).join('')}</tbody></table></div></details>` : ''}
+    </section>
+    <section class="bloco"><h2>Ajustes e descontos</h2>
+      <p class="sub">Descontos ou acréscimos que não vêm do relatório (ex.: multa contratual, devolução). Cada um fica registrado com o motivo.</p>
+      ${ajs.length ? `<div class="tabela"><table><thead><tr><th>Data</th><th>Operação</th><th>Tipo</th><th>Motivo</th><th class="n">Valor</th></tr></thead><tbody>${ajs.map(a => `<tr><td>${fmtD(a.criado_em)}</td><td>${esc(a.operacao)}</td><td>${esc(a.tipo)}</td><td>${esc(a.motivo || '')}</td><td class="n">${BRL2(a.valor)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${aberto ? `<div class="linha"><select id="aj-op" class="peq"><option>Desconto</option><option>Malote</option><option>Kits/Spot</option><option>Fora do Umov</option></select>
+        <select id="aj-tipo" class="peq"><option value="desconto">Desconto (−)</option><option value="acrescimo">Acréscimo (+)</option></select>
+        <input id="aj-valor" class="peq" placeholder="Valor (R$)" style="width:120px"><input id="aj-motivo" class="peq" placeholder="Motivo" style="min-width:260px;flex:1"><button class="btn sec peq" id="aj-add">Registrar ajuste</button></div>` : ''}
+    </section>
+    <section class="bloco"><h2>Valor do mês</h2>
+      <div class="tabela" style="max-width:560px"><table><tbody>
+        <tr><td>Malote (fixo + atendimentos)</td><td class="n">${BRL2(res.malote)}</td></tr><tr><td>Kits/Spot</td><td class="n">${BRL2(res.kits)}</td></tr><tr><td>Fora do Umov</td><td class="n">${BRL2(res.fora)}</td></tr>
+        <tr><td>Glosas</td><td class="n">${BRL2(-(Number(res.glosas) || 0))}</td></tr><tr><td>Ajustes</td><td class="n">${BRL2(res.ajustes)}</td></tr>
+        <tr><td><b>Valor a aprovar</b></td><td class="n"><b style="font-size:18px">${BRL2(final)}</b></td></tr></tbody></table></div>
+      ${aberto ? `${res.pendentes ? `<div class="msg alerta">Faltam ${res.pendentes} item(ns) sem decisão. A aprovação libera quando todos forem decididos.</div>` : ''}
+        <label class="campo" style="max-width:560px">Comentário para o parceiro (opcional na aprovação, obrigatório na devolução)<input type="text" id="ap-com"></label>
+        <div class="linha"><button class="btn marca" id="aprovar" ${res.pendentes ? 'disabled' : ''}>Aprovar ${BRL2(final)}</button><button class="btn sec" id="devolver">Devolver ao parceiro</button></div>`
+      : e.status === 'aprovado' && c.status !== 'fechada' ? `<div class="linha"><input type="text" id="re-mot" class="peq" placeholder="Motivo da reabertura" style="min-width:320px"><button class="btn sec peq" id="reabrir">Reabrir aprovação</button></div>` : ''}
+      <div id="ap-msg"></div>
+    </section>
+    ${envs.length > 1 ? `<details><summary style="cursor:pointer;font-size:14px">Envios anteriores (${envs.length - 1})</summary><ul style="font-size:13px">${envs.filter(x => x.id !== e.id).map(x => `<li>Envio ${x.versao} · ${fmtDH(x.enviado_em)} · ${esc((ST_ENV[x.status] || [x.status])[0])} · ${BRL2(x.totais?.total)}${x.arquivo_path ? ` · <a href="#" data-arq="${esc(x.arquivo_path)}">arquivo</a>` : ''}</li>`).join('')}</ul></details>` : ''}`;
+  const erro = (alvo, msg) => { $('#ap-msg').innerHTML = `<div class="msg erro">${esc(msg)}</div>`; };
+  const rodar = async (b, fn) => { b.disabled = true; try { await fn(); await detalheConferencia(); } catch (x) { b.disabled = false; erro(b, x.message); } };
+  $('#voltar').onclick = ev => { ev.preventDefault(); S.confParc = null; vConferencia(); };
+  m.querySelectorAll('[data-arq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const u = await linkArquivo(a.dataset.arq); if (u) window.open(u, '_blank'); else erro(a, 'Arquivo não encontrado.'); });
+  m.querySelectorAll('[data-ac]').forEach(b => b.onclick = () => rodar(b, () => q(sb.rpc('decidir_divergencia', { p_div: b.dataset.ac, p_decisao: 'aceita' }))));
+  m.querySelectorAll('[data-re]').forEach(b => b.onclick = () => rodar(b, () => q(sb.rpc('decidir_divergencia', { p_div: b.dataset.re, p_decisao: 'reabrir' }))));
+  m.querySelectorAll('[data-gl]').forEach(b => b.onclick = () => {
+    const tr = b.closest('tr'); if (tr.nextElementSibling?.classList.contains('glosa')) { tr.nextElementSibling.remove(); return; }
+    const l = document.createElement('tr'); l.className = 'glosa';
+    l.innerHTML = `<td colspan="6" style="background:var(--field)"><div class="linha"><label class="campo">Valor a glosar<input class="peq" id="gv" value="${String(b.dataset.v).replace('.', ',')}" style="width:130px"></label>
+      <label class="campo" style="flex:1;min-width:260px">Motivo (o parceiro vê)<input class="peq" id="gm"></label><button class="btn peq" id="gok" style="align-self:flex-end">Confirmar glosa</button></div></td>`;
+    tr.after(l);
+    l.querySelector('#gok').onclick = ev => { const v = numBR(l.querySelector('#gv').value); if (v == null || Number.isNaN(v) || v < 0) return erro(null, 'Valor da glosa inválido.');
+      rodar(ev.currentTarget, () => q(sb.rpc('decidir_divergencia', { p_div: b.dataset.gl, p_decisao: 'glosada', p_comentario: l.querySelector('#gm').value, p_glosa: v }))); };
+  });
+  const add = $('#aj-add');
+  if (add) add.onclick = () => { const v = numBR($('#aj-valor').value); const mot = $('#aj-motivo').value.trim(); const tipo = $('#aj-tipo').value;
+    if (v == null || Number.isNaN(v) || v <= 0) return erro(null, 'Informe o valor do ajuste (positivo; o tipo define o sinal).');
+    if (!mot) return erro(null, 'Informe o motivo do ajuste.');
+    rodar(add, () => q(sb.from('ajustes').insert({ competencia_id: c.id, parceiro_id: p.id, operacao: $('#aj-op').value, tipo, valor: tipo === 'desconto' ? -v : v, motivo: mot, criado_por: S.user.id }))); };
+  const ap = $('#aprovar'); if (ap) ap.onclick = () => rodar(ap, async () => { await q(sb.rpc('aprovar_envio', { p_envio: e.id, p_comentario: $('#ap-com').value })); });
+  const dv = $('#devolver'); if (dv) dv.onclick = () => rodar(dv, () => q(sb.rpc('devolver_envio', { p_envio: e.id, p_comentario: $('#ap-com').value })));
+  const rb = $('#reabrir'); if (rb) rb.onclick = () => rodar(rb, () => q(sb.rpc('reabrir_envio', { p_envio: e.id, p_motivo: $('#re-mot').value })));
 }
 
 // ================= Diretoria e financeiro =================
