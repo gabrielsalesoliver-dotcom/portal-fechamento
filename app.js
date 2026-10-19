@@ -140,11 +140,11 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
-  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Notas fiscais']]],
+  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Pacote do financeiro e pagamento']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 async function vVerParceiro() {
@@ -983,9 +983,11 @@ async function vParceiroInicio() {
       ${c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
       <div id="prevr"></div>
     </section>
-    <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>`;
+    <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>
+    <section class="bloco" id="secnf"><h2>4. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>`;
   if ($('#arqr')) ligarZona('arqr', f => previaRelatorio(f, c));
   situacaoParceiro(c);
+  secaoNF(c);
   const b = $('#baixar');
   if (b) b.onclick = async () => {
     b.disabled = true; b.textContent = 'Gerando…';
@@ -1096,6 +1098,142 @@ function formResposta(b, c) {
       situacaoParceiro(c);
     } catch (e) { linha.querySelector(`#rm-${id}`).innerHTML = `<span class="msg erro">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = 'Enviar resposta'; }
   };
+}
+
+// ================= Notas fiscais =================
+const digitos = t => String(t || '').replace(/\D/g, '');
+const fmtCNPJ = t => { const d = digitos(t); return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : (t || ''); };
+async function textoPDF(file) {
+  if (!window.pdfjsLib) return '';
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  let t = '';
+  for (let i = 1; i <= Math.min(pdf.numPages, 4); i++) { const pg = await pdf.getPage(i); const c = await pg.getTextContent(); t += c.items.map(x => x.str).join(' ') + '\n'; }
+  return t;
+}
+// Lê o que der do PDF; o que não achar fica para a pessoa preencher. Nada é inventado.
+function lerNF(texto, cnpjParceiro, esperado) {
+  const t = texto.replace(/\s+/g, ' ');
+  const cnpjs = [...new Set((t.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g) || []).map(digitos))];
+  const valores = [...new Set((t.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).map(v => Number(v.replace(/\./g, '').replace(',', '.'))))].filter(v => v > 0);
+  const m = t.match(/(?:N[úu]mero|N[º°o]\.?)\s*(?:da\s*)?(?:NFS-?e|Nota(?:\s*Fiscal)?)?\s*[:\-]?\s*(\d{1,15})/i);
+  const vl = t.match(/Valor\s+L[íi]quido[^\d]{0,40}(\d{1,3}(?:\.\d{3})*,\d{2})/i) || t.match(/Valor\s+(?:Total|do\s+Servi[çc]o|dos\s+Servi[çc]os)[^\d]{0,40}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+  const dt = t.match(/(?:Emiss[ãa]o|Compet[êe]ncia)[^\d]{0,30}(\d{2}\/\d{2}\/\d{4})/i);
+  return {
+    texto: t.trim().length > 40, cnpj_parceiro_no_pdf: !!cnpjParceiro && cnpjs.includes(digitos(cnpjParceiro)),
+    numero: m ? m[1] : '', valor: vl ? Number(vl[1].replace(/\./g, '').replace(',', '.')) : null,
+    esperado_no_pdf: esperado != null && valores.some(v => Math.abs(v - esperado) < 0.01),
+    data: dt ? dt[1].split('/').reverse().join('-') : '',
+  };
+}
+const ST_NF = { recebida: ['A conferir', 'alerta'], conferida: ['Conferida', 'escuro'], recusada: ['Recusada', 'marca'], cancelada: ['Cancelada', ''], substituida: ['Substituída', ''] };
+const SIT_NF = { aguardando: ['Aguardando NF', ''], a_conferir: ['NF a conferir', 'alerta'], faltando: ['Soma diferente do esperado', 'marca'], conferida: ['NF conferida', 'escuro'] };
+
+async function secaoNF(c) {
+  const box = $('#nfp'); if (!box) return;
+  const [res, nfs] = await Promise.all([
+    q(sb.from('nf_resumo').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).maybeSingle()),
+    q(sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('enviado_em')),
+  ]);
+  box.className = '';
+  if (!res) { box.innerHTML = '<p class="nota">A NF é enviada aqui depois que a GSM aprovar o valor do mês.</p>'; return; }
+  const esp = Number(res.valor_esperado), env = Number(res.valor_nfs), falta = esp - env;
+  const [rot, cls] = SIT_NF[res.situacao] || [res.situacao, ''];
+  box.innerHTML = `<div class="linha" style="justify-content:space-between"><span>Emita a NF pelo valor líquido. Pode dividir em mais de uma NF, desde que a soma bata.</span><span class="pill ${cls}">${rot}</span></div>
+    <div class="kpis">
+      <div class="kpi"><small>Valor aprovado</small><b>${BRL2(res.valor_aprovado)}</b><span>aprovado pela GSM</span></div>
+      <div class="kpi neutro"><small>Adiantamento</small><b>${BRL2(res.adiantado)}</b><span>já pago no mês</span></div>
+      <div class="kpi"><small>Valor da NF (líquido)</small><b>${BRL2(esp)}</b><span>aprovado − adiantamento</span></div>
+      <div class="kpi ${Math.abs(falta) > 0.009 ? 'alerta' : 'neutro'}"><small>${falta >= 0 ? 'Falta emitir' : 'Enviado a mais'}</small><b>${BRL2(Math.abs(falta))}</b><span>${fmtN(res.nfs)} NF(s) enviada(s): ${BRL2(env)}</span></div>
+    </div>
+    ${nfs.length ? `<div class="tabela"><table><thead><tr><th>NF</th><th>Emissão</th><th>CNPJ emitente</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
+      ${nfs.map(n => { const [r, k] = ST_NF[n.status] || [n.status, '']; return `<tr><td><b>${esc(n.numero)}</b>${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">PDF</a>` : ''}</td><td>${fmtD(n.data_emissao)}</td><td class="num">${esc(fmtCNPJ(n.cnpj_emitente))}</td><td class="n">${BRL2(n.valor)}</td>
+        <td><span class="pill ${k}">${r}</span>${n.motivo_recusa ? `<div class="nota">GSM: ${esc(n.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
+    ${res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste o PDF da NF aqui ou clique para escolher', 'O portal lê o número, o valor e o CNPJ quando o PDF tem texto. Confira antes de enviar.', '.pdf')}<div id="nfform"></div>` : ''}`;
+  box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
+  if ($('#arqnf')) ligarZona('arqnf', f => formNF(f, c, falta > 0.009 ? falta : esp));
+}
+
+async function formNF(file, c, sugerido) {
+  const box = $('#nfform');
+  if (!/\.pdf$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie o PDF da nota fiscal.</div>'; return; }
+  box.innerHTML = '<div class="carregando" style="padding:10px 0">Lendo o PDF…</div>';
+  let lido = { texto: false };
+  try { lido = lerNF(await textoPDF(file), S.parc.cnpj, sugerido); } catch (e) { lido = { texto: false }; }
+  const valorIni = lido.valor ?? (lido.esperado_no_pdf ? sugerido : null);
+  box.innerHTML = `<div class="confirma">
+    <b>Confira os dados da NF · ${esc(file.name)}</b>
+    <span>${lido.texto ? `Lido do PDF: ${[lido.numero && 'número', lido.valor != null && 'valor', lido.data && 'data'].filter(Boolean).join(', ') || 'nada reconhecido'}. ${lido.cnpj_parceiro_no_pdf ? 'O CNPJ do parceiro aparece no PDF.' : '<b>O CNPJ cadastrado do parceiro não foi encontrado no PDF.</b>'}` : 'O PDF não tem texto legível (pode ser imagem). Preencha os campos.'}</span>
+    <div class="linha" style="align-items:flex-end">
+      <label class="campo">Número<input class="peq" id="nf-num" value="${esc(lido.numero || '')}" style="width:140px"></label>
+      <label class="campo">Emissão<input class="peq" id="nf-dt" type="date" value="${esc(lido.data || '')}"></label>
+      <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(S.parc.cnpj || ''))}" style="width:190px"></label>
+      <label class="campo">Valor (R$)<input class="peq" id="nf-val" value="${valorIni != null ? valorIni.toFixed(2).replace('.', ',') : ''}" style="width:130px"></label>
+    </div>
+    <span class="nota">Valor que falta emitir: ${BRL2(sugerido)}.</span>
+    <div class="linha"><button class="btn marca" id="nf-env">Enviar NF</button><button class="btn sec" id="nf-canc">Cancelar</button></div><div id="nf-msg"></div></div>`;
+  $('#nf-canc').onclick = () => { box.innerHTML = ''; $('#arqnf').value = ''; };
+  $('#nf-env').onclick = async () => {
+    const b = $('#nf-env'); const v = numBR($('#nf-val').value);
+    if (v == null || Number.isNaN(v)) { $('#nf-msg').innerHTML = '<div class="msg erro">Valor inválido.</div>'; return; }
+    b.disabled = true; b.textContent = 'Enviando…';
+    try {
+      const path = `${S.parc.id}/${c.mes.slice(0, 7)}/nf/${Date.now()}_${safeName(file.name)}`;
+      const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o PDF: ' + up.error.message);
+      await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: $('#nf-num').value, p_cnpj: digitos($('#nf-cnpj').value), p_valor: v, p_data: $('#nf-dt').value || null,
+        p_checagens: { texto: !!lido.texto, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, numero_lido: lido.numero || null, valor_lido: lido.valor ?? null, valor_confere_pdf: lido.valor != null ? Math.abs(lido.valor - v) < 0.01 : null } }));
+      secaoNF(c);
+    } catch (e) { $('#nf-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF'; }
+  };
+}
+
+async function vNotas() {
+  const m = $('#main');
+  m.innerHTML = `<div class="topo"><div><h1>Notas fiscais</h1><p>NFs dos parceiros com valor aprovado. A NF sai pelo valor líquido (aprovado − adiantamento) e pode ser dividida em várias, desde que a soma bata. Confira cada uma; quando a soma conferida bater, o parceiro passa para "NF conferida".</p></div>${seletorComp(false)}</div><div id="nfs" class="carregando">Carregando…</div>`;
+  ligarSeletor(vNotas);
+  const c = comp();
+  const [res, nfs, parcs] = await Promise.all([
+    todas(() => sb.from('nf_resumo').select('*').eq('competencia_id', c.id)),
+    todas(() => sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).order('enviado_em')),
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,cnpj')),
+  ]);
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
+  S.nfFiltro = S.nfFiltro || 'todos';
+  const cont = k => res.filter(r => r.situacao === k).length;
+  const vis = res.filter(r => S.nfFiltro === 'todos' || r.situacao === S.nfFiltro).sort((a, b) => (pm[a.parceiro_id]?.regiao || '').localeCompare(pm[b.parceiro_id]?.regiao || ''));
+  const soma = (k, f = () => true) => res.filter(f).reduce((a, r) => a + Number(r[k] || 0), 0);
+  $('#nfs').outerHTML = res.length ? `
+    <div class="kpis">
+      <div class="kpi"><small>Valor líquido esperado</small><b>${BRL(soma('valor_esperado'))}</b><span>${res.length} parceiros aprovados</span></div>
+      <div class="kpi ${cont('a_conferir') ? 'alerta' : 'neutro'}"><small>NFs a conferir</small><b>${cont('a_conferir')}</b><span>parceiros com NF nova</span></div>
+      <div class="kpi ${cont('aguardando') ? 'alerta' : 'neutro'}"><small>Aguardando NF</small><b>${cont('aguardando')}</b><span>${BRL(soma('valor_esperado', r => r.situacao === 'aguardando'))}</span></div>
+      <div class="kpi"><small>NF conferida</small><b>${cont('conferida')}</b><span>${BRL(soma('valor_conferido'))}</span></div>
+    </div>
+    <section class="bloco"><div class="linha">${[['todos', 'Todos', res.length], ['a_conferir', 'A conferir', cont('a_conferir')], ['aguardando', 'Aguardando NF', cont('aguardando')], ['faltando', 'Soma diferente', cont('faltando')], ['conferida', 'Conferidas', cont('conferida')]]
+      .map(([k, n, qq]) => `<button class="btn ${S.nfFiltro === k ? '' : 'sec'} peq" data-nf="${k}">${n} (${qq})</button>`).join('')}</div>
+    <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th class="n">NFs enviadas</th><th class="n">Diferença</th><th>Situação</th></tr></thead><tbody>
+    ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
+      const minhas = nfs.filter(n => n.parceiro_id === r.parceiro_id);
+      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b></td>
+        <td class="n">${r.nfs ? `${BRL2(r.valor_nfs)}<br><span class="nota">${r.nfs} NF(s)</span>` : '—'}</td><td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td></tr>
+      ${minhas.map(n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, '']; const sinais = [
+          ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '<span class="pill">CNPJ confere</span>',
+          ck.texto ? (ck.cnpj_no_pdf ? '<span class="pill">CNPJ no PDF</span>' : '<span class="pill alerta">CNPJ não achado no PDF</span>') : '<span class="pill alerta">PDF sem texto: conferir visualmente</span>',
+          ck.valor_confere_pdf === false ? `<span class="pill alerta">PDF mostra ${BRL2(ck.valor_lido)}</span>` : ''].join(' ');
+        return `<tr style="background:var(--field)"><td colspan="3" style="padding-left:24px;font-size:13px">NF <b>${esc(n.numero)}</b> · emissão ${fmtD(n.data_emissao)} · enviada ${fmtDH(n.enviado_em)}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}<div style="margin-top:4px">${sinais}</div>${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</td>
+          <td class="n">${BRL2(n.valor)}</td><td colspan="2"><span class="pill ${k2}">${r2}</span></td>
+          <td style="white-space:nowrap">${c.status === 'fechada' ? '' : n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}</td></tr>`; }).join('')}`; }).join('')}
+    </tbody></table></div></section>` : '<div class="msg alerta">Nenhum parceiro com valor aprovado neste mês. A NF entra depois da aprovação em "Conferência e aprovação".</div>';
+  m.querySelectorAll('[data-nf]').forEach(b => b.onclick = () => { S.nfFiltro = b.dataset.nf; vNotas(); });
+  m.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const u = await linkArquivo(a.dataset.nfarq); if (u) window.open(u, '_blank'); });
+  const run = async (b, args) => { b.disabled = true; try { await q(sb.rpc('conferir_nf', args)); vNotas(); } catch (e) { b.disabled = false; alertaTopo(e.message); } };
+  m.querySelectorAll('[data-ok]').forEach(b => b.onclick = () => run(b, { p_nf: b.dataset.ok, p_decisao: 'conferida' }));
+  m.querySelectorAll('[data-reab]').forEach(b => b.onclick = () => run(b, { p_nf: b.dataset.reab, p_decisao: 'reabrir' }));
+  m.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
+    const tr = b.closest('tr'); if (tr.nextElementSibling?.classList.contains('extra')) { tr.nextElementSibling.remove(); return; }
+    const l = document.createElement('tr'); l.className = 'extra';
+    l.innerHTML = `<td colspan="7" style="background:var(--field)"><div class="linha"><input class="peq" id="rec-m" placeholder="Motivo da recusa (o parceiro vê)" style="flex:1;min-width:280px"><button class="btn peq" id="rec-ok">Recusar NF</button></div></td>`;
+    tr.after(l); l.querySelector('#rec-ok').onclick = ev => run(ev.currentTarget, { p_nf: b.dataset.rec, p_decisao: 'recusada', p_motivo: l.querySelector('#rec-m').value });
+  });
 }
 
 // ================= Conferência e aprovação (admin) =================
@@ -1237,7 +1375,7 @@ const BRLk = v => { const n = Number(v) || 0; return Math.abs(n) >= 1e6 ? 'R$ ' 
 const pct = v => (v == null || !isFinite(v)) ? '—' : (v > 0 ? '+' : '') + (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
 const MES3 = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const OPS = { tudo: 'Tudo', malote: 'Malote', kits: 'Kits/Spot' };
-const fechado = r => r.status ? /^(ok|aprovado|pago)/i.test(r.status) : r.valor_aprovado != null;
+const fechado = r => r.status ? /^(ok|aprovado|pago|nf conferida)/i.test(r.status) : r.valor_aprovado != null;
 const valorOp = (r, op) => op === 'malote' ? Number(r.malote) || 0 : op === 'kits' ? Number(r.kits) || 0 : Number(r.valor_aprovado ?? r.valor_final) || 0;
 
 async function iniciarConsulta() {
