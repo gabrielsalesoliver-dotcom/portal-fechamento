@@ -36,6 +36,7 @@ async function iniciar() {
     S.perfil = await q(sb.from('perfis').select('*').eq('id', S.user.id).maybeSingle());
   } catch (e) { S.perfil = null; }
   if (!S.perfil) return telaSemPerfil();
+  if (S.perfil.ativo === false) return telaSimples('Acesso bloqueado', 'Seu login está bloqueado no portal. Fale com o Fechamento GSM.');
   if (S.perfil.papel === 'parceiro') return iniciarParceiro();
   if (S.perfil.papel === 'diretoria' || S.perfil.papel === 'financeiro') return iniciarConsulta();
   if (S.perfil.papel !== 'admin') return telaEmBreve();
@@ -139,7 +140,7 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['verparceiro', 'Ver portal do parceiro'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
   ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Notas fiscais']]],
 ];
@@ -150,9 +151,9 @@ async function vVerParceiro() {
   const m = $('#main');
   const ativos = S.parceiros.filter(p => p.ativo !== false);
   S.previaParc = S.previaParc || ativos[0]?.id;
-  m.innerHTML = `<div class="topo"><div><h1>Ver portal do parceiro</h1><p>É a mesma tela que o parceiro vê ao entrar, com os dados dele. Aqui é só consulta: envio e respostas ficam desligados.</p></div>
+  m.innerHTML = `<div class="topo"><div><h1>Portal do parceiro</h1><p>A mesma tela que o parceiro vê, com os dados dele. Como gestor, você pode baixar o modelo, enviar o relatório e responder itens em nome do parceiro. Tudo fica registrado como feito pela GSM.</p></div>
     <label class="campo" style="min-width:300px">Parceiro<select id="pvp">${ativos.map(p => `<option value="${p.id}" ${p.id === S.previaParc ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select></label></div>
-    <div class="msg alerta">Visualização do administrador. O parceiro só enxerga meses liberados; aqui aparecem todos.</div>
+    <div class="msg alerta">Acesso do gestor: você vê todos os meses, inclusive os ainda não liberados para o parceiro.</div>
     <div id="pvcorpo" style="display:flex;flex-direction:column;gap:22px;border:1px dashed var(--rule);border-radius:10px;padding:20px;background:#fff"><div class="carregando">Carregando…</div></div>`;
   $('#pvp').onchange = e => { S.previaParc = e.target.value; S.compPId = null; vVerParceiro(); };
   S.previa = true;
@@ -791,34 +792,63 @@ async function gravarPontos() {
 }
 
 // ---------- Acessos e convites ----------
+const PAPEIS = { admin: 'Administrador', diretoria: 'Diretoria', financeiro: 'Financeiro', parceiro: 'Parceiro' };
+const ST_AC = { ativo: ['Ativo', 'escuro'], bloqueado: ['Bloqueado', 'marca'], excluido: ['Excluído', ''], convite: ['Convite pendente', 'alerta'], cancelado: ['Convite cancelado', ''] };
 async function vAcessos() {
   const m = $('#main');
-  m.innerHTML = `<div class="topo"><div><h1>Acessos e convites</h1><p>Gere um código para cada parceiro e envie junto com o endereço do portal. No primeiro acesso ele informa o e-mail, o código e escolhe a senha. O código vale uma vez e trava após 5 tentativas erradas. Gerar de novo substitui o código anterior.</p></div></div>
+  m.innerHTML = `<div class="topo"><div><h1>Acessos e convites</h1><p>Todos os logins do portal. Em cada um você pode alterar nome, perfil e parceiro, gerar código de nova senha, bloquear, desbloquear ou excluir. Novos acessos entram por convite: gere o código e envie junto com o endereço do portal.</p></div></div>
     <div id="acs" class="carregando">Carregando…</div>`;
-  const [parcs, conv] = await Promise.all([
-    q(sb.from('parceiros').select('id,codigo,regiao,nome,email_contato,ativo').eq('ativo', true).order('codigo')),
-    q(sb.from('convites_lista').select('*')),
+  const [parcs, lista, logs] = await Promise.all([
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,email_contato,ativo').order('regiao')),
+    q(sb.rpc('listar_acessos')),
+    q(sb.from('acessos_log').select('*').order('feito_em', { ascending: false }).limit(30)),
   ]);
-  const deParc = id => conv.filter(c => c.parceiro_id === id).sort((a, b) => b.criado_em.localeCompare(a.criado_em))[0];
-  const internos = conv.filter(c => c.papel !== 'parceiro');
+  const pNome = id => { const p = parcs.find(x => x.id === id); return p ? `${p.regiao} · ${p.nome}` : ''; };
+  const comLogin = new Set(lista.filter(l => l.user_id && l.situacao !== 'excluido' && l.parceiro_id).map(l => l.parceiro_id));
+  const comConvite = new Set(lista.filter(l => l.situacao === 'convite' && l.parceiro_id).map(l => l.parceiro_id));
+  const semAcesso = parcs.filter(p => p.ativo !== false && !comLogin.has(p.id));
+  S.acFiltro = S.acFiltro ?? ''; S.acSit = S.acSit || 'todos';
+  const filtrar = l => (S.acSit === 'todos' ? l.situacao !== 'excluido' : l.situacao === S.acSit)
+    && (!S.acFiltro || norm(`${l.email} ${l.nome || ''} ${pNome(l.parceiro_id)} ${PAPEIS[l.papel] || ''}`).includes(norm(S.acFiltro)));
+  const vis = lista.filter(filtrar).sort((a, b) => (a.papel === 'parceiro') - (b.papel === 'parceiro') || a.email.localeCompare(b.email));
+  const cont = k => lista.filter(l => l.situacao === k).length;
+  const acoes = l => {
+    if (l.situacao === 'ativo') return `<button class="btn sec peq" data-ed="${l.user_id}">Alterar</button> <button class="btn sec peq" data-senha="${esc(l.email)}">Nova senha</button> <button class="btn sec peq" data-sa="bloquear" data-u="${l.user_id}">Bloquear</button> <button class="btn sec peq" data-ex="${l.user_id}">Excluir</button>`;
+    if (l.situacao === 'bloqueado') return `<button class="btn sec peq" data-ed="${l.user_id}">Alterar</button> <button class="btn peq" data-sa="desbloquear" data-u="${l.user_id}">Desbloquear</button> <button class="btn sec peq" data-ex="${l.user_id}">Excluir</button>`;
+    if (l.situacao === 'excluido') return `<button class="btn sec peq" data-sa="restaurar" data-u="${l.user_id}">Restaurar</button>`;
+    return `<button class="btn peq" data-novo="${esc(l.email)}">Novo código</button>${l.situacao === 'convite' ? ` <button class="btn sec peq" data-canc="${esc(l.email)}">Cancelar convite</button>` : ''}`;
+  };
   $('#acs').outerHTML = `
-  <section class="bloco"><h2>Diretoria, financeiro e administradores</h2>
+  <section class="bloco"><div class="linha" style="justify-content:space-between"><h2>Logins e convites</h2>
+      <input id="acf" class="peq" placeholder="Buscar e-mail, nome ou parceiro" value="${esc(S.acFiltro)}" style="min-width:260px"></div>
+    <div class="linha">${[['todos', 'Todos', lista.length - cont('excluido')], ['ativo', 'Ativos', cont('ativo')], ['bloqueado', 'Bloqueados', cont('bloqueado')], ['convite', 'Convites pendentes', cont('convite')], ['excluido', 'Excluídos', cont('excluido')], ['cancelado', 'Convites cancelados', cont('cancelado')]]
+      .map(([k, n, q]) => `<button class="btn ${S.acSit === k ? '' : 'sec'} peq" data-sit="${k}">${n} (${q})</button>`).join('')}</div>
+    <div class="tabela"><table id="actab"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead><tbody>
+    ${vis.map(l => { const [rot, cls] = ST_AC[l.situacao] || [l.situacao, '']; const eu = l.user_id === S.user.id;
+      return `<tr data-row="${l.user_id || esc(l.email)}"><td><b>${esc(l.email)}</b>${eu ? ' <span class="pill">você</span>' : ''}</td><td>${esc(l.nome || '')}</td>
+      <td>${esc(PAPEIS[l.papel] || l.papel)}${l.parceiro_id ? `<br><span style="font-size:12px;color:var(--muted)">${esc(pNome(l.parceiro_id))}</span>` : ''}</td>
+      <td><span class="pill ${cls}">${rot}</span>${l.tentativas ? ` <span class="nota">${l.tentativas} tentativa(s) errada(s)</span>` : ''}</td>
+      <td style="font-size:13px">${l.ultimo_acesso ? fmtDH(l.ultimo_acesso) : '—'}</td>
+      <td style="white-space:nowrap">${eu ? `<button class="btn sec peq" data-ed="${l.user_id}">Alterar</button> <button class="btn sec peq" data-senha="${esc(l.email)}">Nova senha</button>` : acoes(l)}</td></tr>`; }).join('') || '<tr><td colspan="6" class="nota">Nada encontrado.</td></tr>'}
+    </tbody></table></div></section>
+  <section class="bloco"><h2>Novo acesso</h2>
+    <p class="sub">O convidado entra em "Primeiro acesso" com o e-mail e o código e escolhe a senha. O código vale uma vez e trava após 5 tentativas erradas.</p>
     <div class="linha">
       <input type="email" id="int-email" placeholder="e-mail" style="flex:1 1 240px">
       <input type="text" id="int-nome" placeholder="nome" style="flex:1 1 180px">
-      <select id="int-papel" style="flex:0 1 180px"><option value="diretoria">Diretoria (consulta)</option><option value="financeiro">Financeiro (consulta)</option><option value="admin">Administrador</option></select>
+      <select id="int-papel" style="flex:0 1 180px"><option value="parceiro">Parceiro</option><option value="diretoria">Diretoria (consulta)</option><option value="financeiro">Financeiro (consulta)</option><option value="admin">Administrador</option></select>
+      <select id="int-parc" style="flex:1 1 220px"><option value="">Parceiro…</option>${parcs.filter(p => p.ativo !== false).map(p => `<option value="${p.id}">${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select>
       <button class="btn" id="int-gerar">Gerar código</button>
     </div><div id="int-cod"></div>
-    ${internos.length ? `<div class="tabela"><table><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th></tr></thead><tbody>
-      ${internos.map(c => `<tr><td>${esc(c.email)}</td><td>${esc(c.nome || '')}</td><td>${esc(c.papel)}</td><td>${c.usado ? `<span class="pill escuro">Acesso criado ${fmtD(c.usado_em)}</span> <button class="btn sec peq" data-senha="${esc(c.email)}">Código de nova senha</button>` : '<span class="pill alerta">Convite pendente</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${semAcesso.length ? `<details><summary style="cursor:pointer;font-size:14px">Parceiros ativos sem login (${semAcesso.length})</summary>
+      <div class="tabela"><table><tbody>${semAcesso.map(p => `<tr><td>${esc(p.regiao)}<br><span style="font-size:12px;color:var(--muted)">${esc(p.codigo)} · ${esc(p.nome)}</span></td><td>${comConvite.has(p.id) ? '<span class="pill alerta">Convite pendente</span>' : '<span class="pill">Sem convite</span>'}</td>
+        <td><input type="email" class="peq" id="em-${p.id}" value="${esc(p.email_contato || '')}" placeholder="e-mail do parceiro" style="width:100%"></td><td><button class="btn peq" data-p="${p.id}">Gerar código</button></td></tr>`).join('')}</tbody></table></div></details>` : ''}
   </section>
-  <section class="bloco"><h2>Parceiros</h2>
-    <div class="tabela"><table><thead><tr><th>Parceiro</th><th>E-mail de acesso</th><th>Situação</th><th></th></tr></thead><tbody>
-    ${parcs.map(p => { const c = deParc(p.id); return `<tr><td>${esc(p.codigo + ' · ' + p.regiao)}<br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td>
-      <td><input type="email" class="peq" id="em-${p.id}" value="${esc(c?.email || p.email_contato || '')}" placeholder="e-mail do parceiro" style="min-height:38px;font-size:14px;width:100%" ${c?.usado ? 'disabled' : ''}></td>
-      <td id="st-${p.id}">${c ? (c.usado ? `<span class="pill escuro">Acesso criado ${fmtD(c.usado_em)}</span>` : `<span class="pill alerta">Convite pendente</span>${c.tentativas ? ` <span class="nota">${c.tentativas} tentativa(s) errada(s)</span>` : ''}`) : '<span class="pill">Sem convite</span>'}</td>
-      <td>${c?.usado ? `<button class="btn sec peq" data-senha="${esc(c.email)}">Código de nova senha</button>` : `<button class="btn peq" data-p="${p.id}">${c ? 'Gerar novo código' : 'Gerar código'}</button>`}</td></tr>`; }).join('')}
-    </tbody></table></div></section>`;
+  ${logs.length ? `<section class="bloco"><h2>Histórico de alterações</h2><div class="tabela"><table><tbody>${logs.map(g => `<tr><td style="font-size:13px;white-space:nowrap">${fmtDH(g.feito_em)}</td><td>${esc(g.alvo_email || '')}</td><td>${esc(g.acao)}</td><td style="font-size:13px;color:var(--muted)">${esc(g.detalhe || '')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
+
+  const tab = $('#actab');
+  const abaixo = (tr, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="6" style="background:var(--field)">${html}</td>`; tr.after(l); return l; };
+  const falha = (alvo, e) => { (alvo.querySelector('.am') || alvo).insertAdjacentHTML('beforeend', `<div class="msg erro" style="margin-top:6px">${esc(e.message)}</div>`); };
   const mostrarCodigo = (alvo, email, cod) => {
     const link = location.origin + location.pathname;
     const texto = `Portal de Fechamento GSM\n${link}\nPrimeiro acesso: e-mail ${email} e código ${cod}`;
@@ -826,33 +856,62 @@ async function vAcessos() {
       <span>Ele aparece só agora. Copie e envie ao destinatário.</span>
       <textarea readonly style="font:inherit;font-size:13px;min-height:70px;padding:8px;border:1px solid var(--rule);border-radius:6px">${esc(texto)}</textarea>
       <div><button class="btn peq">Copiar mensagem</button></div></div>`;
-    const ta = alvo.querySelector('textarea');
-    alvo.querySelector('button').onclick = async () => { try { await navigator.clipboard.writeText(texto); alvo.querySelector('button').textContent = 'Copiado'; } catch (e) { ta.select(); } };
+    alvo.querySelector('button').onclick = async () => { try { await navigator.clipboard.writeText(texto); alvo.querySelector('button').textContent = 'Copiado'; } catch (e) { alvo.querySelector('textarea').select(); } };
   };
+  $('#acf').oninput = e => { S.acFiltro = e.target.value; clearTimeout(S.acT); S.acT = setTimeout(() => { vAcessos().then(() => { const i = $('#acf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 400); };
+  m.querySelectorAll('[data-sit]').forEach(b => b.onclick = () => { S.acSit = b.dataset.sit; vAcessos(); });
+  const papelSel = $('#int-papel'); const parcSel = $('#int-parc');
+  const ajusta = () => { parcSel.style.display = papelSel.value === 'parceiro' ? '' : 'none'; }; papelSel.onchange = ajusta; ajusta();
   $('#int-gerar').onclick = async () => {
     const email = $('#int-email').value.trim(); if (!email.includes('@')) return alertaTopo('Informe um e-mail válido.');
-    try { const cod = await q(sb.rpc('criar_convite', { p_email: email, p_papel: $('#int-papel').value, p_nome: $('#int-nome').value.trim() || null })); mostrarCodigo($('#int-cod'), email, cod); }
+    if (papelSel.value === 'parceiro' && !parcSel.value) return alertaTopo('Escolha o parceiro deste login.');
+    try { const cod = await q(sb.rpc('criar_convite', { p_email: email, p_papel: papelSel.value, p_parceiro: papelSel.value === 'parceiro' ? parcSel.value : null, p_nome: $('#int-nome').value.trim() || null })); mostrarCodigo($('#int-cod'), email, cod); }
     catch (e) { alertaTopo(e.message); }
   };
-  app.querySelectorAll('#main button[data-senha]').forEach(b => b.onclick = async () => {
-    b.disabled = true;
-    try {
-      const email = b.dataset.senha; const cod = await q(sb.rpc('criar_codigo_senha', { p_email: email }));
-      const tr = b.closest('tr'); const linha = document.createElement('tr'); linha.innerHTML = '<td colspan="4"></td>'; tr.after(linha);
-      const link = location.origin + location.pathname;
-      const texto = `Portal de Fechamento GSM\n${link}\nNova senha: aba "Nova senha", e-mail ${email} e código ${cod} (vale 2 dias)`;
-      linha.firstElementChild.innerHTML = `<div class="confirma"><b>Código de nova senha de ${esc(email)}: <span class="num" style="font-size:18px;letter-spacing:.12em">${esc(cod)}</span></b><textarea readonly style="font:inherit;font-size:13px;min-height:60px;padding:8px;border:1px solid var(--rule);border-radius:6px">${esc(texto)}</textarea></div>`;
-    } catch (e) { alertaTopo(e.message); } finally { b.disabled = false; }
-  });
-  app.querySelectorAll('#main button[data-p]').forEach(b => b.onclick = async () => {
+  m.querySelectorAll('button[data-p]').forEach(b => b.onclick = async () => {
     const id = b.dataset.p; const email = $(`#em-${id}`).value.trim(); const p = parcs.find(x => x.id === id);
     if (!email.includes('@')) return alertaTopo('Informe o e-mail do parceiro antes de gerar o código.');
     b.disabled = true;
+    try { const cod = await q(sb.rpc('criar_convite', { p_email: email, p_papel: 'parceiro', p_parceiro: id, p_nome: p.nome }));
+      const tr = b.closest('tr'); const l = document.createElement('tr'); l.innerHTML = '<td colspan="4"></td>'; tr.after(l); mostrarCodigo(l.firstElementChild, email, cod); }
+    catch (e) { alertaTopo(e.message); } finally { b.disabled = false; }
+  });
+  tab.querySelectorAll('[data-novo]').forEach(b => b.onclick = async () => {
+    const l = lista.find(x => x.email === b.dataset.novo); b.disabled = true;
+    try { const cod = await q(sb.rpc('criar_convite', { p_email: l.email, p_papel: l.papel, p_parceiro: l.parceiro_id, p_nome: l.nome })); mostrarCodigo(abaixo(b.closest('tr'), '<div></div>').firstElementChild, l.email, cod); }
+    catch (e) { alertaTopo(e.message); } finally { b.disabled = false; }
+  });
+  tab.querySelectorAll('[data-canc]').forEach(b => b.onclick = () => {
+    const l = abaixo(b.closest('tr'), `<div class="linha am"><span>Cancelar o convite de <b>${esc(b.dataset.canc)}</b>? O código deixa de funcionar.</span><button class="btn peq" id="okc">Sim, cancelar</button><button class="btn sec peq" id="noc">Voltar</button></div>`);
+    l.querySelector('#noc').onclick = () => l.remove();
+    l.querySelector('#okc').onclick = async () => { try { await q(sb.rpc('cancelar_convite', { p_email: b.dataset.canc })); vAcessos(); } catch (e) { falha(l, e); } };
+  });
+  tab.querySelectorAll('[data-sa]').forEach(b => b.onclick = async () => { b.disabled = true; try { await q(sb.rpc('situacao_acesso', { p_user: b.dataset.u, p_acao: b.dataset.sa })); vAcessos(); } catch (e) { b.disabled = false; alertaTopo(e.message); } });
+  tab.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => {
+    const u = lista.find(x => x.user_id === b.dataset.ex);
+    const l = abaixo(b.closest('tr'), `<div class="linha am"><span>Excluir o login <b>${esc(u.email)}</b>? A pessoa deixa de entrar no portal. O histórico do que ela fez (envios, aprovações) é mantido, e dá para restaurar depois em "Excluídos".</span><button class="btn marca peq" id="oke">Sim, excluir</button><button class="btn sec peq" id="noe">Voltar</button></div>`);
+    l.querySelector('#noe').onclick = () => l.remove();
+    l.querySelector('#oke').onclick = async () => { try { await q(sb.rpc('situacao_acesso', { p_user: u.user_id, p_acao: 'excluir' })); vAcessos(); } catch (e) { falha(l, e); } };
+  });
+  tab.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => {
+    const u = lista.find(x => x.user_id === b.dataset.ed);
+    const l = abaixo(b.closest('tr'), `<div class="linha am" style="align-items:flex-end">
+      <label class="campo" style="flex:1 1 180px">Nome<input type="text" class="peq" id="ed-n" value="${esc(u.nome || '')}"></label>
+      <label class="campo">Perfil<select class="peq" id="ed-p">${Object.entries(PAPEIS).map(([k, n]) => `<option value="${k}" ${k === u.papel ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label class="campo" style="flex:1 1 220px" id="ed-pw">Parceiro<select class="peq" id="ed-pc"><option value="">—</option>${parcs.map(p => `<option value="${p.id}" ${p.id === u.parceiro_id ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select></label>
+      <button class="btn peq" id="ed-ok">Salvar</button><button class="btn sec peq" id="ed-no">Cancelar</button></div>
+      <p class="nota" style="margin:6px 0 0">O e-mail de login não muda por aqui. Para trocar o e-mail, exclua este login e convide o novo e-mail.</p>`);
+    const ps = l.querySelector('#ed-p'); const aj = () => l.querySelector('#ed-pw').style.display = ps.value === 'parceiro' ? '' : 'none'; ps.onchange = aj; aj();
+    l.querySelector('#ed-no').onclick = () => l.remove();
+    l.querySelector('#ed-ok').onclick = async () => { try { await q(sb.rpc('alterar_acesso', { p_user: u.user_id, p_nome: l.querySelector('#ed-n').value, p_papel: ps.value, p_parceiro: l.querySelector('#ed-pc').value || null })); vAcessos(); } catch (e) { falha(l, e); } };
+  });
+  tab.querySelectorAll('[data-senha]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
     try {
-      const cod = await q(sb.rpc('criar_convite', { p_email: email, p_papel: 'parceiro', p_parceiro: id, p_nome: p.nome }));
-      const tr = b.closest('tr'); const linha = document.createElement('tr'); linha.innerHTML = '<td colspan="4"></td>'; tr.after(linha);
-      mostrarCodigo(linha.firstElementChild, email, cod);
-      $(`#st-${id}`).innerHTML = '<span class="pill alerta">Convite pendente</span>';
+      const email = b.dataset.senha; const cod = await q(sb.rpc('criar_codigo_senha', { p_email: email }));
+      const link = location.origin + location.pathname;
+      const texto = `Portal de Fechamento GSM\n${link}\nNova senha: aba "Nova senha", e-mail ${email} e código ${cod} (vale 2 dias)`;
+      abaixo(b.closest('tr'), `<div class="confirma"><b>Código de nova senha de ${esc(email)}: <span class="num" style="font-size:18px;letter-spacing:.12em">${esc(cod)}</span></b><textarea readonly style="font:inherit;font-size:13px;min-height:60px;padding:8px;border:1px solid var(--rule);border-radius:6px">${esc(texto)}</textarea></div>`);
     } catch (e) { alertaTopo(e.message); } finally { b.disabled = false; }
   });
 }
@@ -920,7 +979,8 @@ async function vParceiroInicio() {
     </section>
     <section class="bloco"><h2>2. Envie o relatório preenchido</h2>
       <p class="sub">Envie o mesmo arquivo que você baixou, já preenchido. O portal confere com o Umov na hora e mostra o que precisa de ajuste. Pode enviar de novo quantas vezes precisar: vale sempre o último envio.</p>
-      ${S.previa ? `<div class="msg ok">Aqui o parceiro arrasta o relatório preenchido. ${c.liberada_parceiros ? 'Mês liberado para ele.' : 'Este mês ainda não está liberado para ele.'}</div>` : c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
+      ${S.previa && c.status !== 'fechada' ? `<div class="msg alerta">Envio em nome de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>. ${c.liberada_parceiros ? 'Mês liberado para o parceiro.' : 'Este mês ainda não está liberado para o parceiro.'}</div>` : ''}
+      ${c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
       <div id="prevr"></div>
     </section>
     <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>`;
@@ -970,7 +1030,8 @@ async function previaRelatorio(file, c) {
       const path = `${S.parc.id}/${c.mes.slice(0, 7)}/${Date.now()}_${safeName(file.name)}`;
       const up = await sb.storage.from('envios').upload(path, file, { upsert: false });
       if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
-      const res = await q(sb.rpc('registrar_envio', { p_comp: c.id, p_arquivo: path, p_malote: r.malote, p_kits: r.kits, p_fora: r.fora }));
+      const args = { p_comp: c.id, p_arquivo: path, p_malote: r.malote, p_kits: r.kits, p_fora: r.fora };
+      const res = await q(S.previa ? sb.rpc('registrar_envio_gsm', { p_parceiro: S.parc.id, ...args }) : sb.rpc('registrar_envio', args));
       box.innerHTML = `<div class="msg ${res.precisa_acao ? 'alerta' : 'ok'}">Relatório recebido (envio ${res.versao}). ${res.precisa_acao ? `${res.precisa_acao} item(ns) precisam da sua ação. Veja abaixo.` : 'Nenhum item precisa da sua ação. A GSM vai conferir e aprovar.'}</div>`;
       situacaoParceiro(c); $('#situacao').scrollIntoView({ behavior: 'smooth' });
     } catch (e) { box.insertAdjacentHTML('beforeend', `<div class="msg erro" style="margin-top:8px">${esc(e.message)}</div>`); b.disabled = false; b.textContent = 'Enviar relatório'; }
@@ -996,7 +1057,7 @@ async function situacaoParceiro(c) {
   const [rot, cls] = SIT_ENVIO[e.status] || [e.status, ''];
   const difUmov = (Number(t.malote_qtd) || 0) - (Number(t.umov_qtd) || 0);
   box.innerHTML = `
-    <div class="linha" style="justify-content:space-between"><span>Envio ${e.versao} · ${fmtDH(e.enviado_em)}</span><span class="pill ${cls}">${esc(rot)}</span></div>
+    <div class="linha" style="justify-content:space-between"><span>Envio ${e.versao} · ${fmtDH(e.enviado_em)}${t.enviado_pela_gsm ? ' · enviado pela GSM' : ''}</span><span class="pill ${cls}">${esc(rot)}</span></div>
     ${e.comentario_gsm ? `<div class="msg ${e.status === 'recusado' ? 'erro' : 'ok'}"><b>GSM:</b> ${esc(e.comentario_gsm)}${e.status === 'recusado' ? '<br>Corrija o relatório e envie de novo no passo 2.' : ''}</div>` : ''}
     <div class="kpis">
       <div class="kpi"><small>Total informado</small><b>${BRL2(t.total)}</b><span>${t.malote_fixo ? `inclui fixo de ${BRL2(t.malote_fixo)}` : 'sem valor fixo'}</span></div>
@@ -1008,10 +1069,10 @@ async function situacaoParceiro(c) {
       return `<div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:8px 0 0;font-size:15px">${tit} (${ls.length})</h3>${sub ? `<p class="nota" style="margin:0">${sub}</p>` : ''}
       <div class="tabela"><table><thead><tr><th>Operação</th><th>Item</th><th>O que foi encontrado</th><th class="n">Valor</th><th></th></tr></thead><tbody>
       ${ls.map(d => `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td><td>${esc(d.descricao)}${d.decisao ? `<div class="nota" style="margin-top:4px"><b>GSM: ${d.decisao === 'aceita' ? 'aceito' : 'glosado ' + BRL2(d.valor_glosa)}</b>${d.comentario_gsm ? ' — ' + esc(d.comentario_gsm) : ''}</div>` : ''}${(acoesPor[d.id] || []).map(a => `<div class="nota" style="margin-top:4px">Sua resposta (${fmtDH(a.criado_em)}): ${esc(a.texto || '')}${a.arquivo_path ? ' · comprovante anexado' : ''}${a.decisao !== 'pendente' ? ` · <b>GSM: ${esc(a.decisao)}</b>${a.comentario_gsm ? ' — ' + esc(a.comentario_gsm) : ''}` : ''}</div>`).join('')}</td>
-        <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${!S.previa && (k === 'precisa_acao' || k === 'informativo') ? `<button class="btn sec peq" data-resp="${d.id}">Responder</button>` : ''}</td></tr>`).join('')}
+        <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${k === 'precisa_acao' || k === 'informativo' ? `<button class="btn sec peq" data-resp="${d.id}">${S.previa ? 'Responder pelo parceiro' : 'Responder'}</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></div>`; }).join('')}
     ${!divs.length ? '<div class="msg ok">Tudo confere com o Umov. A GSM vai revisar e aprovar.</div>' : ''}
-    ${envs.length > 1 ? `<details><summary style="cursor:pointer;font-size:14px">Envios anteriores (${envs.length - 1})</summary><ul style="font-size:13px;margin:8px 0 0;padding-left:18px">${envs.filter(x => x.id !== e.id).map(x => `<li>Envio ${x.versao} · ${fmtDH(x.enviado_em)} · ${esc((SIT_ENVIO[x.status] || [x.status])[0])} · ${BRL2(x.totais?.total)}</li>`).join('')}</ul></details>` : ''}`;
+    ${envs.length > 1 ? `<details><summary style="cursor:pointer;font-size:14px">Envios anteriores (${envs.length - 1})</summary><ul style="font-size:13px;margin:8px 0 0;padding-left:18px">${envs.filter(x => x.id !== e.id).map(x => `<li>Envio ${x.versao} · ${fmtDH(x.enviado_em)}${x.totais?.enviado_pela_gsm ? ' (pela GSM)' : ''} · ${esc((SIT_ENVIO[x.status] || [x.status])[0])} · ${BRL2(x.totais?.total)}</li>`).join('')}</ul></details>` : ''}`;
   box.querySelectorAll('[data-resp]').forEach(b => b.onclick = () => formResposta(b, c));
 }
 
