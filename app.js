@@ -139,14 +139,32 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['conferencia', 'Conferência e aprovação'], ['verparceiro', 'Ver portal do parceiro'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
   ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Notas fiscais']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro() };
+
+// Admin vê exatamente a tela do parceiro escolhido, só para consulta
+async function vVerParceiro() {
+  const m = $('#main');
+  const ativos = S.parceiros.filter(p => p.ativo !== false);
+  S.previaParc = S.previaParc || ativos[0]?.id;
+  m.innerHTML = `<div class="topo"><div><h1>Ver portal do parceiro</h1><p>É a mesma tela que o parceiro vê ao entrar, com os dados dele. Aqui é só consulta: envio e respostas ficam desligados.</p></div>
+    <label class="campo" style="min-width:300px">Parceiro<select id="pvp">${ativos.map(p => `<option value="${p.id}" ${p.id === S.previaParc ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select></label></div>
+    <div class="msg alerta">Visualização do administrador. O parceiro só enxerga meses liberados; aqui aparecem todos.</div>
+    <div id="pvcorpo" style="display:flex;flex-direction:column;gap:22px;border:1px dashed var(--rule);border-radius:10px;padding:20px;background:#fff"><div class="carregando">Carregando…</div></div>`;
+  $('#pvp').onchange = e => { S.previaParc = e.target.value; S.compPId = null; vVerParceiro(); };
+  S.previa = true;
+  S.parc = await q(sb.from('parceiros').select('*').eq('id', S.previaParc).single());
+  S.compsP = S.comps.slice().sort((a, b) => b.mes.localeCompare(a.mes));
+  if (!S.compPId || !S.compsP.some(c => c.id === S.compPId)) S.compPId = (S.compsP.find(c => c.liberada_parceiros) || S.compsP.find(c => c.status === 'aberta') || S.compsP[0])?.id;
+  vParceiroInicio();
+}
 
 function rotear() {
   const v = (location.hash || '#painel').slice(1);
+  S.previa = false;
   S.view = VIEWS[v] ? v : 'painel';
   casca();
   VIEWS[S.view]();
@@ -870,7 +888,7 @@ function telaParceiro() {
 }
 
 async function vParceiroInicio() {
-  const m = $('#main');
+  const m = S.previa && $('#pvcorpo') ? $('#pvcorpo') : $('#main');
   if (!S.compsP.length) {
     m.innerHTML = `<div class="bloco"><h2>Nenhum mês liberado</h2><p class="sub" style="margin:0">Assim que a GSM liberar a competência, o modelo do relatório aparece aqui.</p></div>`;
     return;
@@ -902,7 +920,7 @@ async function vParceiroInicio() {
     </section>
     <section class="bloco"><h2>2. Envie o relatório preenchido</h2>
       <p class="sub">Envie o mesmo arquivo que você baixou, já preenchido. O portal confere com o Umov na hora e mostra o que precisa de ajuste. Pode enviar de novo quantas vezes precisar: vale sempre o último envio.</p>
-      ${c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
+      ${S.previa ? `<div class="msg ok">Aqui o parceiro arrasta o relatório preenchido. ${c.liberada_parceiros ? 'Mês liberado para ele.' : 'Este mês ainda não está liberado para ele.'}</div>` : c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
       <div id="prevr"></div>
     </section>
     <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>`;
@@ -990,7 +1008,7 @@ async function situacaoParceiro(c) {
       return `<div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:8px 0 0;font-size:15px">${tit} (${ls.length})</h3>${sub ? `<p class="nota" style="margin:0">${sub}</p>` : ''}
       <div class="tabela"><table><thead><tr><th>Operação</th><th>Item</th><th>O que foi encontrado</th><th class="n">Valor</th><th></th></tr></thead><tbody>
       ${ls.map(d => `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td><td>${esc(d.descricao)}${d.decisao ? `<div class="nota" style="margin-top:4px"><b>GSM: ${d.decisao === 'aceita' ? 'aceito' : 'glosado ' + BRL2(d.valor_glosa)}</b>${d.comentario_gsm ? ' — ' + esc(d.comentario_gsm) : ''}</div>` : ''}${(acoesPor[d.id] || []).map(a => `<div class="nota" style="margin-top:4px">Sua resposta (${fmtDH(a.criado_em)}): ${esc(a.texto || '')}${a.arquivo_path ? ' · comprovante anexado' : ''}${a.decisao !== 'pendente' ? ` · <b>GSM: ${esc(a.decisao)}</b>${a.comentario_gsm ? ' — ' + esc(a.comentario_gsm) : ''}` : ''}</div>`).join('')}</td>
-        <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${k === 'precisa_acao' || k === 'informativo' ? `<button class="btn sec peq" data-resp="${d.id}">Responder</button>` : ''}</td></tr>`).join('')}
+        <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td><td>${!S.previa && (k === 'precisa_acao' || k === 'informativo') ? `<button class="btn sec peq" data-resp="${d.id}">Responder</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></div>`; }).join('')}
     ${!divs.length ? '<div class="msg ok">Tudo confere com o Umov. A GSM vai revisar e aprovar.</div>' : ''}
     ${envs.length > 1 ? `<details><summary style="cursor:pointer;font-size:14px">Envios anteriores (${envs.length - 1})</summary><ul style="font-size:13px;margin:8px 0 0;padding-left:18px">${envs.filter(x => x.id !== e.id).map(x => `<li>Envio ${x.versao} · ${fmtDH(x.enviado_em)} · ${esc((SIT_ENVIO[x.status] || [x.status])[0])} · ${BRL2(x.totais?.total)}</li>`).join('')}</ul></details>` : ''}`;
