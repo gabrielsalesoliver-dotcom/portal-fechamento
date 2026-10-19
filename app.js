@@ -531,7 +531,7 @@ async function vCompetencias() {
         <tr id="conf-${c.id}" hidden><td colspan="5"></td></tr>`;
     }).join('')}</tbody></table></div></section>`;
   $('#evt').innerHTML = evts.length ? `<section class="bloco"><h2>Registro</h2><div class="tabela"><table><thead><tr><th>Quando</th><th>Competência</th><th>O que aconteceu</th></tr></thead><tbody>
-    ${evts.map(e => `<tr><td>${fmtDH(e.feito_em)}</td><td>${nomeMes(S.comps.find(c => c.id === e.competencia_id)?.mes)}</td><td>${e.evento === 'liberada' ? 'Liberada aos parceiros' : 'Bloqueada para os parceiros'}</td></tr>`).join('')}</tbody></table></div></section>` : '';
+    ${evts.map(e => `<tr><td>${fmtDH(e.feito_em)}</td><td>${nomeMes(S.comps.find(c => c.id === e.competencia_id)?.mes)}</td><td>${({ liberada: 'Liberada aos parceiros', bloqueada: 'Bloqueada para os parceiros', fechada: 'Competência fechada' })[e.evento] || esc(e.evento)}${e.detalhe ? ` <span class="nota">${esc(e.detalhe)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></section>` : '';
   app.querySelectorAll('[data-acao]').forEach(b => b.onclick = () => {
     const c = S.comps.find(x => x.id === b.dataset.id); const lib = b.dataset.acao === 'liberar';
     const tr = $(`#conf-${c.id}`); tr.hidden = false;
@@ -923,7 +923,7 @@ const BRLk = v => { const n = Number(v) || 0; return Math.abs(n) >= 1e6 ? 'R$ ' 
 const pct = v => (v == null || !isFinite(v)) ? '—' : (v > 0 ? '+' : '') + (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
 const MES3 = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const OPS = { tudo: 'Tudo', malote: 'Malote', kits: 'Kits/Spot' };
-const fechado = r => r.valor_aprovado != null || /^ok/i.test(r.status || '');
+const fechado = r => r.status ? /^(ok|aprovado|pago)/i.test(r.status) : r.valor_aprovado != null;
 const valorOp = (r, op) => op === 'malote' ? Number(r.malote) || 0 : op === 'kits' ? Number(r.kits) || 0 : Number(r.valor_aprovado ?? r.valor_final) || 0;
 
 async function iniciarConsulta() {
