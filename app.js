@@ -947,16 +947,17 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
-  const [comps, parcs, fech] = await Promise.all([
+  const [comps, parcs, fech, prev] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,descontos,valor_final,valor_aprovado,adiantado,pago_em,data_pagamento')),
+    todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
   ]);
-  const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id));
+  const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
   if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech;
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev;
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) D.compId = comComDados[comComDados.length - 1].id;
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
   desenharDiretoria(el);
@@ -966,7 +967,12 @@ function desenharDiretoria(el) {
   const D = S.dir; const op = D.op;
   const idx = D.comps.findIndex(c => c.id === D.compId); const c = D.comps[idx]; const ant = D.comps[idx - 1];
   const doMes = id => D.fech.filter(f => f.competencia_id === id);
-  const linhas = doMes(c.id); const linhasAnt = ant ? doMes(ant.id) : [];
+  const prevMes = id => D.prev.filter(f => f.competencia_id === id && f.previsto != null);
+  const prevPor = Object.fromEntries(prevMes(c.id).map(r => [r.parceiro_id, r]));
+  const somaPrev = id => prevMes(id).reduce((a, r) => a + Number(r.previsto), 0);
+  const realMal = id => doMes(id).reduce((a, r) => a + (Number(r.malote) || 0), 0);
+  const serieP = D.comps.map(x => ({ c: x, p: somaPrev(x.id), r: doMes(x.id).length ? realMal(x.id) : null, origem: (prevMes(x.id)[0] || {}).origem_previsao }));
+  const linhas = doMes(c.id).concat(prevMes(c.id).filter(r => !D.fech.some(f => f.competencia_id === c.id && f.parceiro_id === r.parceiro_id)).map(r => ({ parceiro_id: r.parceiro_id, status: 'Sem fechamento', malote: null, kits: null, descontos: null, valor_final: null, sem: true }))); const linhasAnt = ant ? doMes(ant.id) : [];
   const soma = (ls) => ls.reduce((a, r) => a + valorOp(r, op), 0);
   const total = soma(linhas), totalAnt = ant ? soma(linhasAnt) : null;
   const nFech = linhas.filter(fechado).length;
@@ -977,7 +983,8 @@ function desenharDiretoria(el) {
   const antPor = Object.fromEntries(linhasAnt.map(r => [r.parceiro_id, valorOp(r, op)]));
   let tab = linhas.map(r => { const p = pmap[r.parceiro_id] || {}; const v = valorOp(r, op);
     return { id: r.parceiro_id, regiao: p.regiao || '—', nome: p.nome || '', tipo: p.tipo || '', malote: Number(r.malote) || 0, kits: Number(r.kits) || 0, desc: Number(r.descontos) || 0, total: v,
-      varr: antPor[r.parceiro_id] ? v / antPor[r.parceiro_id] - 1 : null, status: r.status || (r.valor_aprovado != null ? 'Aprovado' : '—'), fechado: fechado(r), dia: p.dia_pagamento || '—', pago: r.pago_em }; });
+      varr: antPor[r.parceiro_id] && !r.sem ? v / antPor[r.parceiro_id] - 1 : null,
+      prev: prevPor[r.parceiro_id] ? Number(prevPor[r.parceiro_id].previsto) : null, dif: prevPor[r.parceiro_id] && !r.sem ? (Number(r.malote) || 0) - Number(prevPor[r.parceiro_id].previsto) : null, status: r.status || (r.valor_aprovado != null ? 'Aprovado' : '—'), fechado: fechado(r), dia: p.dia_pagamento || '—', pago: r.pago_em }; });
   const [sk, sd] = D.sort;
   tab.sort((a, b) => (typeof a[sk] === 'string' ? a[sk].localeCompare(b[sk]) : (a[sk] ?? -1e15) - (b[sk] ?? -1e15)) * sd);
   if (D.filtro) { const f = norm(D.filtro); tab = tab.filter(t => norm(t.regiao + ' ' + t.nome).includes(f)); }
@@ -991,12 +998,16 @@ function desenharDiretoria(el) {
       <select id="dcomp" class="peq" style="min-height:44px;font-size:15px">${D.comps.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select>
     </div></div>
   <div class="kpis">
-    <div class="kpi"><small>${OPS[op]} · ${nomeMes(c.mes)}</small><b>${BRL(total)}</b><span>${ant ? `${pct(total / totalAnt - 1)} sobre ${MES3[+ant.mes.slice(5, 7) - 1]}` : ''}</span></div>
+    <div class="kpi"><small>${OPS[op]} · ${nomeMes(c.mes)}</small><b>${BRL(total)}</b><span>${ant && total ? `${pct(total / totalAnt - 1)} sobre ${MES3[+ant.mes.slice(5, 7) - 1]}` : ''}</span></div>
     <div class="kpi ${nFech < linhas.length ? 'alerta' : ''}"><small>Parceiros fechados</small><b>${nFech} de ${linhas.length}</b><span>${Math.round(100 * nFech / Math.max(1, linhas.length))}% dos parceiros</span></div>
     <div class="kpi ${vFech < total ? 'alerta' : ''}"><small>Valor fechado</small><b>${BRL(vFech)}</b><span>${total ? Math.round(100 * vFech / total) : 0}% do valor do mês</span></div>
+    ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi neutro"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
   <section class="bloco"><h2>Evolução em 2026 · ${OPS[op]}</h2><div id="graf" style="position:relative"></div></section>
+  <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
+    <p class="sub">Previsto = valor fixo do contrato + atendimentos calendarizados de cada ponto × valor unitário. Realizado = malote fechado do parceiro. Kits/Spot não entram na previsão.</p>
+    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px">
     <section class="bloco"><h2>Clientes de ${nomeMes(c.mes)}</h2><div id="dcli" class="carregando">Carregando…</div></section>
     <section class="bloco"><h2>Pagamentos por data</h2><div id="dpag"></div></section>
@@ -1004,28 +1015,30 @@ function desenharDiretoria(el) {
   <section class="bloco"><div class="linha" style="justify-content:space-between"><h2>Parceiros</h2>
       <div class="linha"><input id="dfiltro" class="peq" placeholder="Filtrar parceiro" value="${esc(D.filtro || '')}" style="min-width:200px"><button class="btn sec peq" id="dcsv">Baixar tabela (CSV)</button></div></div>
     <div class="tabela"><table id="dtab"><thead><tr>
-      ${[['regiao', 'Parceiro'], ['malote', 'Malote', 1], ['kits', 'Kits/Spot', 1], ['desc', 'Descontos', 1], ['total', OPS[op] === 'Tudo' ? 'Total' : OPS[op], 1], ['varr', 'Var. mês', 1], ['dia', 'Pagamento'], ['status', 'Situação']]
+      ${[['regiao', 'Parceiro'], ['prev', 'Previsto', 1], ['malote', 'Malote', 1], ['dif', 'Malote − previsto', 1], ['kits', 'Kits/Spot', 1], ['desc', 'Descontos', 1], ['total', OPS[op] === 'Tudo' ? 'Total' : OPS[op], 1], ['varr', 'Var. mês', 1], ['dia', 'Pagamento'], ['status', 'Situação']]
         .map(([k, n, num]) => `<th class="${num ? 'n' : ''}" data-sort="${k}" style="cursor:pointer;white-space:nowrap">${n}${sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead>
       <tbody>${tab.map(t => `<tr data-p="${t.id}" style="cursor:pointer">
         <td><b>${esc(t.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(t.nome)}${t.tipo ? ' · ' + esc(t.tipo) : ''}</span></td>
-        <td class="n">${BRL(t.malote)}</td><td class="n">${BRL(t.kits)}</td><td class="n">${t.desc ? BRL(t.desc) : '—'}</td><td class="n"><b>${BRL(t.total)}</b></td>
+        <td class="n" style="color:var(--muted)">${t.prev == null ? '—' : BRL(t.prev)}</td><td class="n">${BRL(t.malote)}</td>
+        <td class="n" style="color:${t.dif > 0.5 ? 'var(--brand-deep)' : 'var(--ink)'}">${t.dif == null ? '—' : (t.dif > 0 ? '+' : '') + BRL(t.dif)}${t.dif != null && t.prev ? `<br><span style="font-size:12px;color:var(--muted)">${pct(t.dif / t.prev)}</span>` : ''}</td><td class="n">${BRL(t.kits)}</td><td class="n">${t.desc ? BRL(t.desc) : '—'}</td><td class="n"><b>${BRL(t.total)}</b></td>
         <td class="n" style="color:${t.varr > 0.1 ? 'var(--brand-deep)' : 'var(--ink)'}">${pct(t.varr)}</td>
         <td style="font-size:13px">${esc(t.dia)}${t.pago ? `<br><span class="pill escuro">Pago ${fmtD(t.pago)}</span>` : ''}</td>
-        <td><span class="pill ${t.fechado ? 'escuro' : 'alerta'}">${esc(t.fechado ? 'Fechado' : t.status)}</span></td></tr>`).join('')}
-      </tbody><tfoot><tr><td><b>Total (${tab.length})</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.malote, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.kits, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.desc, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.total, 0))}</b></td><td colspan="3"></td></tr></tfoot></table></div>
+        <td><span class="pill ${t.fechado ? 'escuro' : t.sem ? '' : 'alerta'}">${esc(t.fechado ? 'Fechado' : t.status)}</span></td></tr>`).join('')}
+      </tbody><tfoot><tr><td><b>Total (${tab.length})</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + (t.prev || 0), 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.malote, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + (t.dif || 0), 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.kits, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.desc, 0))}</b></td><td class="n"><b>${BRL(tab.reduce((a, t) => a + t.total, 0))}</b></td><td colspan="3"></td></tr></tfoot></table></div>
     <p class="nota">Clique em um parceiro para ver a evolução e os clientes atendidos.</p>
   </section>`;
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
-  pagamentos($('#dpag'), tab);
+  pagamentos($('#dpag'), tab.filter(t => !t.sem));
+  graficoPrev($('#gprev'), $('#tprev'), serieP, c.id);
   clientesMes($('#dcli'), c.id, op, null);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
   $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
   el.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; D.sort = [k, D.sort[0] === k ? -D.sort[1] : (k === 'regiao' || k === 'dia' || k === 'status' ? 1 : -1)]; desenharDiretoria(el); });
   $('#dfiltro').oninput = e => { D.filtro = e.target.value; clearTimeout(D.t); D.t = setTimeout(() => { desenharDiretoria(el); const i = $('#dfiltro'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 350); };
   $('#dcsv').onclick = () => {
-    const linhasCsv = [['Regiao', 'Parceiro', 'Malote', 'Kits/Spot', 'Descontos', 'Total', 'Var mes', 'Pagamento', 'Situacao'].join(';'),
-      ...tab.map(t => [t.regiao, t.nome, t.malote, t.kits, t.desc, t.total, t.varr == null ? '' : (t.varr * 100).toFixed(1) + '%', t.dia, t.fechado ? 'Fechado' : t.status].map(v => typeof v === 'number' ? v.toFixed(2).replace('.', ',') : `"${String(v).replace(/"/g, '""')}"`).join(';'))];
+    const linhasCsv = [['Regiao', 'Parceiro', 'Previsto', 'Malote', 'Malote - previsto', 'Kits/Spot', 'Descontos', 'Total', 'Var mes', 'Pagamento', 'Situacao'].join(';'),
+      ...tab.map(t => [t.regiao, t.nome, t.prev ?? '', t.malote, t.dif ?? '', t.kits, t.desc, t.total, t.varr == null ? '' : (t.varr * 100).toFixed(1) + '%', t.dia, t.fechado ? 'Fechado' : t.status].map(v => typeof v === 'number' ? v.toFixed(2).replace('.', ',') : `"${String(v).replace(/"/g, '""')}"`).join(';'))];
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + linhasCsv.join('\n')], { type: 'text/csv' }));
     a.download = `Fechamento_${c.mes.slice(0, 7)}_${op}.csv`; document.body.appendChild(a); a.click(); a.remove();
   };
@@ -1054,6 +1067,47 @@ function grafico(box, pts) {
     g.style.cursor = 'pointer';
     g.onclick = () => { S.dir.compId = pts[+g.dataset.i].id; desenharDiretoria(box.closest('main') || $('#main')); };
   });
+}
+
+function kpiPrev(x) {
+  if (!x || !x.p) return `<div class="kpi neutro"><small>Previsto (calendarizado)</small><b>—</b><span>sem base do mês gerada</span></div>`;
+  if (x.r == null) return `<div class="kpi neutro"><small>Previsto (calendarizado) · malote</small><b>${BRL(x.p)}</b><span>previsão do mês · ainda sem realizado</span></div>`;
+  const d = x.r - x.p;
+  return `<div class="kpi ${d > 0 ? 'alerta' : ''}"><small>Malote realizado x previsto</small><b>${(d > 0 ? '+' : '') + BRL(d)}</b><span>${pct(d / x.p)} · previsto ${BRLk(x.p)}</span></div>`;
+}
+
+// Duas barras por mês: previsto (contorno) e realizado (cheia)
+function graficoPrev(box, tbox, pts, atualId) {
+  const W = 900, H = 240, L = 70, R = 12, T = 16, B = 34;
+  const max = Math.max(...pts.map(p => Math.max(p.p || 0, p.r || 0)), 1); const nice = Math.pow(10, Math.floor(Math.log10(max))); const top = Math.ceil(max / nice) * nice;
+  const bw = (W - L - R) / pts.length; const y = v => T + (H - T - B) * (1 - v / top);
+  const rot = p => MES3[+p.c.mes.slice(5, 7) - 1];
+  box.innerHTML = `<div class="linha" style="font-size:13px;color:var(--muted);gap:18px"><span><i style="display:inline-block;width:12px;height:12px;border:2px solid #121112;border-radius:2px;vertical-align:-2px"></i> Previsto</span><span><i style="display:inline-block;width:12px;height:12px;background:#DB2242;border-radius:2px;vertical-align:-2px"></i> Realizado</span></div>
+  <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px;height:auto;display:block" role="img" aria-label="Previsto x realizado">
+    ${[0, top / 2, top].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${pts.map((p, i) => { const x0 = L + i * bw, w = bw * 0.3, g = 3;
+      const bar = (v, x, cheia) => v ? `<rect x="${x}" y="${y(v)}" width="${w}" height="${y(0) - y(v)}" rx="2" ${cheia ? 'fill="#DB2242"' : 'fill="#FBFAF8" stroke="#121112" stroke-width="1.5"'}/>` : '';
+      return `<g data-i="${i}"><rect x="${x0}" y="${T}" width="${bw}" height="${H - T - B}" fill="${p.c.id === atualId ? '#F6F5F2' : 'transparent'}"/>
+        ${bar(p.p, x0 + bw / 2 - w - g / 2, false)}${bar(p.r, x0 + bw / 2 + g / 2, true)}
+        <text x="${x0 + bw / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.c.id === atualId ? '#A3182F' : '#6E6E72'}" font-weight="${p.c.id === atualId ? 600 : 400}" font-family="Poppins">${rot(p)}</text></g>`; }).join('')}
+  </svg></div><div class="gt" hidden style="position:absolute;pointer-events:none;background:#121112;color:#fff;font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
+  const tip = box.querySelector('.gt');
+  box.querySelectorAll('g[data-i]').forEach(g => {
+    const p = pts[+g.dataset.i];
+    g.onmousemove = e => { tip.hidden = false;
+      tip.innerHTML = `<b>${rot(p)}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:#B8B6B4">${pct(p.r / p.p - 1)}</span>` : ''}`;
+      const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top - 70) + 'px'; };
+    g.onmouseleave = () => tip.hidden = true; g.style.cursor = 'pointer';
+    g.onclick = () => { S.dir.compId = p.c.id; desenharDiretoria(box.closest('main') || $('#main')); };
+  });
+  const comAmbos = pts.filter(p => p.p && p.r != null);
+  const tp = comAmbos.reduce((a, p) => a + p.p, 0), tr = comAmbos.reduce((a, p) => a + p.r, 0);
+  tbox.innerHTML = `<div class="tabela"><table><thead><tr><th>Mês</th><th class="n">Previsto</th><th class="n">Realizado</th><th class="n">Diferença</th><th class="n">%</th><th>Origem da previsão</th></tr></thead><tbody>
+    ${pts.map(p => `<tr${p.c.id === atualId ? ' style="background:var(--field);font-weight:600"' : ''}><td>${nomeMes(p.c.mes)}</td><td class="n">${p.p ? BRL(p.p) : '—'}</td><td class="n">${p.r != null ? BRL(p.r) : '—'}</td>
+      <td class="n">${p.p && p.r != null ? ((p.r - p.p > 0 ? '+' : '') + BRL(p.r - p.p)) : '—'}</td><td class="n">${p.p && p.r != null ? pct(p.r / p.p - 1) : '—'}</td>
+      <td style="font-size:13px;color:var(--muted)">${p.origem === 'planilha' ? 'Planilha de fechamento' : p.origem === 'portal' ? 'Calculado no portal' : 'Base do mês ainda não gerada'}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td><b>Acumulado</b></td><td class="n"><b>${BRL(tp)}</b></td><td class="n"><b>${BRL(tr)}</b></td><td class="n"><b>${(tr - tp > 0 ? '+' : '') + BRL(tr - tp)}</b></td><td class="n"><b>${tp ? pct(tr / tp - 1) : '—'}</b></td><td></td></tr></tfoot></table></div>
+    <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base).</p>`;
 }
 
 function pagamentos(box, tab) {
@@ -1088,7 +1142,7 @@ async function detalheParceiro(tr, pid, c, op) {
   document.querySelectorAll('#dtab tr.det').forEach(x => x.remove());
   if (prox && prox.classList.contains('det') && prox.dataset.p === pid) return;
   const D = S.dir; const linha = document.createElement('tr'); linha.className = 'det'; linha.dataset.p = pid;
-  linha.innerHTML = `<td colspan="8" style="background:var(--field)"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px;padding:8px 4px">
+  linha.innerHTML = `<td colspan="10" style="background:var(--field)"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px;padding:8px 4px">
     <div><b style="font-size:13px">Evolução · ${OPS[op]}</b><div id="dg"></div></div><div><b style="font-size:13px">Clientes em ${nomeMes(c.mes)}</b><div id="dc" class="carregando">Carregando…</div></div></div></td>`;
   tr.after(linha);
   const pts = D.comps.map(x => { const r = D.fech.find(f => f.competencia_id === x.id && f.parceiro_id === pid); return { rot: MES3[+x.mes.slice(5, 7) - 1], v: r ? valorOp(r, op) : 0, atual: x.id === c.id, id: x.id }; });
