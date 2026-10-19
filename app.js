@@ -65,19 +65,20 @@ function telaLogin(aba = 'entrar', msg = '') {
         <div class="abas" role="tablist">
           <button type="button" data-aba="entrar" class="${aba === 'entrar' ? 'on' : ''}">Entrar</button>
           <button type="button" data-aba="primeiro" class="${aba === 'primeiro' ? 'on' : ''}">Primeiro acesso</button>
+          <button type="button" data-aba="senha" class="${aba === 'senha' ? 'on' : ''}">Nova senha</button>
         </div>
         ${aba === 'entrar' ? `
           <label class="campo">E-mail<input id="email" type="email" autocomplete="username" required></label>
           <label class="campo">Senha<input id="senha" type="password" autocomplete="current-password" required></label>
           <button class="btn" type="submit">Entrar</button>
-          <p class="nota">Esqueceu a senha? Peça à GSM um novo código de acesso.</p>
+          <p class="nota">Esqueceu a senha? Peça à GSM um código e use a aba "Nova senha".</p>
         ` : `
-          <p style="margin:0;font-size:14px;color:var(--muted)">Use o código que a GSM enviou para você e escolha sua senha (mínimo de 8 caracteres).</p>
+          <p style="margin:0;font-size:14px;color:var(--muted)">${aba === 'senha' ? 'Use o código de nova senha que a GSM enviou (vale 2 dias) e escolha a nova senha' : 'Use o código que a GSM enviou para você e escolha sua senha'} (mínimo de 8 caracteres).</p>
           <label class="campo">E-mail<input id="email" type="email" autocomplete="username" required></label>
           <label class="campo">Código do convite<input id="codigo" type="text" autocomplete="one-time-code" required style="text-transform:uppercase;letter-spacing:.12em"></label>
           <label class="campo">Nova senha<input id="senha" type="password" autocomplete="new-password" required></label>
           <label class="campo">Repita a senha<input id="senha2" type="password" autocomplete="new-password" required></label>
-          <button class="btn marca" type="submit">Criar meu acesso</button>
+          <button class="btn marca" type="submit">${aba === 'senha' ? 'Salvar nova senha' : 'Criar meu acesso'}</button>
         `}
         <div id="msg">${msg}</div>
         <p class="nota">Cada parceiro vê apenas os próprios relatórios, divergências e valores.</p>
@@ -91,10 +92,10 @@ function telaLogin(aba = 'entrar', msg = '') {
     const email = $('#email').value.trim(), senha = $('#senha').value;
     const erro = t => { $('#msg').innerHTML = `<div class="msg erro">${esc(t)}</div>`; btn.disabled = false; };
     try {
-      if (aba === 'primeiro') {
+      if (aba === 'primeiro' || aba === 'senha') {
         if (senha !== $('#senha2').value) return erro('As duas senhas não são iguais.');
         if (senha.length < 8) return erro('A senha precisa ter pelo menos 8 caracteres.');
-        const r = await fetch(`${SB_URL}/functions/v1/primeiro-acesso`, {
+        const r = await fetch(`${SB_URL}/functions/v1/${aba === 'senha' ? 'redefinir-senha' : 'primeiro-acesso'}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
           body: JSON.stringify({ email, codigo: $('#codigo').value, senha }),
         });
@@ -791,14 +792,14 @@ async function vAcessos() {
       <button class="btn" id="int-gerar">Gerar código</button>
     </div><div id="int-cod"></div>
     ${internos.length ? `<div class="tabela"><table><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th></tr></thead><tbody>
-      ${internos.map(c => `<tr><td>${esc(c.email)}</td><td>${esc(c.nome || '')}</td><td>${esc(c.papel)}</td><td>${c.usado ? `<span class="pill escuro">Acesso criado ${fmtD(c.usado_em)}</span>` : '<span class="pill alerta">Convite pendente</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${internos.map(c => `<tr><td>${esc(c.email)}</td><td>${esc(c.nome || '')}</td><td>${esc(c.papel)}</td><td>${c.usado ? `<span class="pill escuro">Acesso criado ${fmtD(c.usado_em)}</span> <button class="btn sec peq" data-senha="${esc(c.email)}">Código de nova senha</button>` : '<span class="pill alerta">Convite pendente</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
   </section>
   <section class="bloco"><h2>Parceiros</h2>
     <div class="tabela"><table><thead><tr><th>Parceiro</th><th>E-mail de acesso</th><th>Situação</th><th></th></tr></thead><tbody>
     ${parcs.map(p => { const c = deParc(p.id); return `<tr><td>${esc(p.codigo + ' · ' + p.regiao)}<br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td>
       <td><input type="email" class="peq" id="em-${p.id}" value="${esc(c?.email || p.email_contato || '')}" placeholder="e-mail do parceiro" style="min-height:38px;font-size:14px;width:100%" ${c?.usado ? 'disabled' : ''}></td>
       <td id="st-${p.id}">${c ? (c.usado ? `<span class="pill escuro">Acesso criado ${fmtD(c.usado_em)}</span>` : `<span class="pill alerta">Convite pendente</span>${c.tentativas ? ` <span class="nota">${c.tentativas} tentativa(s) errada(s)</span>` : ''}`) : '<span class="pill">Sem convite</span>'}</td>
-      <td>${c?.usado ? '' : `<button class="btn peq" data-p="${p.id}">${c ? 'Gerar novo código' : 'Gerar código'}</button>`}</td></tr>`; }).join('')}
+      <td>${c?.usado ? `<button class="btn sec peq" data-senha="${esc(c.email)}">Código de nova senha</button>` : `<button class="btn peq" data-p="${p.id}">${c ? 'Gerar novo código' : 'Gerar código'}</button>`}</td></tr>`; }).join('')}
     </tbody></table></div></section>`;
   const mostrarCodigo = (alvo, email, cod) => {
     const link = location.origin + location.pathname;
@@ -815,6 +816,16 @@ async function vAcessos() {
     try { const cod = await q(sb.rpc('criar_convite', { p_email: email, p_papel: $('#int-papel').value, p_nome: $('#int-nome').value.trim() || null })); mostrarCodigo($('#int-cod'), email, cod); }
     catch (e) { alertaTopo(e.message); }
   };
+  app.querySelectorAll('#main button[data-senha]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const email = b.dataset.senha; const cod = await q(sb.rpc('criar_codigo_senha', { p_email: email }));
+      const tr = b.closest('tr'); const linha = document.createElement('tr'); linha.innerHTML = '<td colspan="4"></td>'; tr.after(linha);
+      const link = location.origin + location.pathname;
+      const texto = `Portal de Fechamento GSM\n${link}\nNova senha: aba "Nova senha", e-mail ${email} e código ${cod} (vale 2 dias)`;
+      linha.firstElementChild.innerHTML = `<div class="confirma"><b>Código de nova senha de ${esc(email)}: <span class="num" style="font-size:18px;letter-spacing:.12em">${esc(cod)}</span></b><textarea readonly style="font:inherit;font-size:13px;min-height:60px;padding:8px;border:1px solid var(--rule);border-radius:6px">${esc(texto)}</textarea></div>`;
+    } catch (e) { alertaTopo(e.message); } finally { b.disabled = false; }
+  });
   app.querySelectorAll('#main button[data-p]').forEach(b => b.onclick = async () => {
     const id = b.dataset.p; const email = $(`#em-${id}`).value.trim(); const p = parcs.find(x => x.id === id);
     if (!email.includes('@')) return alertaTopo('Informe o e-mail do parceiro antes de gerar o código.');
