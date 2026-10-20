@@ -968,59 +968,148 @@ function telaParceiro() {
 async function vParceiroInicio() {
   const m = S.previa && $('#pvcorpo') ? $('#pvcorpo') : $('#main');
   if (!S.compsP.length) {
-    m.innerHTML = `<div class="bloco"><h2>Nenhum mês liberado</h2><p class="sub" style="margin:0">Assim que a GSM liberar a competência, o modelo do relatório aparece aqui.</p></div>`;
+    m.innerHTML = `<div class="bloco"><h2>Nenhum mês liberado</h2><p class="sub" style="margin:0">Assim que a GSM liberar a competência, a base do mês aparece aqui.</p></div>`;
     return;
   }
-  const c = S.compsP.find(x => x.id === S.compPId);
-  m.innerHTML = `<div class="topo"><div><h1>Relatório de ${nomeMes(c.mes)}</h1><p>Baixe o modelo GSM, que já vem com os seus pontos e os kits que o Umov registrou para você. Confira, complete e envie de volta pelo portal.</p></div>
+  const c = S.compsP.find(x => x.id === S.compPId) || S.compsP[0]; S.compPId = c.id;
+  m.innerHTML = `<div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>A sua base do mês já está no portal: pontos, o que o Umov registrou e os kits. Confira, ajuste só o que não bate (com explicação) e envie para a GSM validar. Depois de aprovado, a NF é enviada aqui mesmo.</p></div>
     <label class="campo" style="min-width:220px">Competência<select id="compP">${S.compsP.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select></label></div>
-    <div id="pcorpo" class="carregando">Carregando…</div>`;
-  $('#compP').onchange = e => { S.compPId = e.target.value; vParceiroInicio(); };
-  const [pts, upp, kits, contr] = await Promise.all([
-    todas(() => sb.from('pontos_vigentes').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('cliente')),
-    todas(() => sb.from('umov_por_ponto').select('cod_int,retornadas').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id)),
-    todas(() => sb.from('umov_vigente').select('id_umov,grupo_cliente,cliente,cidade,status_gsm,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).eq('tipo', 'kit').order('data_prevista')),
-    q(sb.from('contratos').select('valor_fixo,inicio,fim').eq('parceiro_id', S.parc.id).order('inicio', { ascending: false }).limit(1)),
-  ]);
-  const umovPonto = {}; upp.forEach(u => umovPonto[u.cod_int] = u.retornadas);
-  const ret = upp.reduce((a, u) => a + u.retornadas, 0);
-  const prev = pts.reduce((a, x) => a + (x.previsto || 0), 0);
-  $('#pcorpo').outerHTML = `
-    <div class="kpis">
-      <div class="kpi"><small>Pontos da sua carteira</small><b>${fmtN(pts.length)}</b><span>${fmtN(prev)} atendimentos previstos</span></div>
-      <div class="kpi"><small>Malote no Umov</small><b>${fmtN(ret)}</b><span>retornados de campo</span></div>
-      <div class="kpi"><small>Kits no Umov</small><b>${fmtN(kits.length)}</b><span>já listados no modelo</span></div>
-    </div>
-    <section class="bloco"><h2>1. Baixe o modelo do mês</h2>
-      <p class="sub">Preencha só as células rosa. O arquivo traz uma aba Resumo com o total que você está informando.</p>
-      ${pts.length || kits.length ? `<div><button class="btn marca" id="baixar">Baixar modelo de ${nomeMes(c.mes)}</button></div>` : '<div class="msg alerta">A GSM ainda não carregou os seus pontos deste mês. Tente de novo mais tarde.</div>'}
-      <div id="msgb"></div>
-    </section>
-    <section class="bloco"><h2>2. Envie o relatório preenchido</h2>
-      <p class="sub">Envie o mesmo arquivo que você baixou, já preenchido. O portal confere com o Umov na hora e mostra o que precisa de ajuste. Pode enviar de novo quantas vezes precisar: vale sempre o último envio.</p>
-      ${S.previa && c.status !== 'fechada' ? `<div class="msg alerta">Envio em nome de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>. ${c.liberada_parceiros ? 'Mês liberado para o parceiro.' : 'Este mês ainda não está liberado para o parceiro.'}</div>` : ''}
-      ${c.status === 'fechada' ? '<div class="msg alerta">Este mês já foi fechado pela GSM. Não é possível enviar.</div>' : zonaArquivo('arqr', 'Arraste o relatório aqui ou clique para escolher', 'Arquivo .xlsx do modelo GSM', '.xlsx')}
-      <div id="prevr"></div>
-    </section>
-    <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>
-    <section class="bloco" id="secnf"><h2>4. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>
+    ${S.previa ? `<div class="msg alerta">Você está agindo em nome de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>. ${c.liberada_parceiros ? 'Mês liberado para o parceiro.' : 'Este mês ainda não está liberado para o parceiro.'} Tudo fica registrado como feito pela GSM.</div>` : ''}
+    <section class="bloco" id="secbase"><h2>1. Base do mês</h2><div id="basep" class="carregando">Carregando…</div></section>
+    <section class="bloco" id="situacao"><h2>2. Validação da GSM</h2><div id="sitr" class="carregando">Carregando…</div></section>
+    <section class="bloco" id="secnf"><h2>3. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>
     <section class="bloco"><h2>Adiantamento</h2><p class="sub">Peça um adiantamento do mês. A GSM confirma o valor e a data; o valor adiantado é descontado da NF do fechamento.</p><div id="adip" class="carregando">Carregando…</div></section>`;
-  if ($('#arqr')) ligarZona('arqr', f => previaRelatorio(f, c));
+  $('#compP').onchange = e => { S.compPId = e.target.value; S.baseAba = null; vParceiroInicio(); };
+  baseParceiro(c);
   situacaoParceiro(c);
   secaoNF(c);
   secaoAdiantamento(c);
-  const b = $('#baixar');
-  if (b) b.onclick = async () => {
-    b.disabled = true; b.textContent = 'Gerando…';
-    try {
-      const blob = await gerarModelo({ parceiro: S.parc, comp: c, nomeMes: nomeMes(c.mes), pontos: pts, umovPonto, kits, contrato: contr[0] ? Number(contr[0].valor_fixo) : 0 });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = `GSM_Relatorio_${S.parc.codigo}_${c.mes.slice(0, 7)}.xlsx`; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      $('#msgb').innerHTML = '<div class="msg ok">Modelo baixado. Confira a pasta de downloads.</div>';
-    } catch (e) { $('#msgb').innerHTML = `<div class="msg erro">Não foi possível gerar o modelo: ${esc(e.message)}</div>`; }
-    finally { b.disabled = false; b.textContent = `Baixar modelo de ${nomeMes(c.mes)}`; }
-  };
+}
+
+// ---------- Base do mês no portal (substitui o modelo em Excel) ----------
+const SERV_FORA = ['Redespacho', 'Diária', 'Reversa', 'Embarque', 'Outro'];
+async function baseParceiro(c) {
+  const box = $('#basep'); if (!box) return;
+  const pid = S.parc.id;
+  const [pts, upp, kits, contr, conts, envs, imp] = await Promise.all([
+    todas(() => sb.from('pontos_vigentes').select('cod_int,cliente,loja,cidade,uf,frequencia,previsto,v_unit').eq('competencia_id', c.id).eq('parceiro_id', pid).order('cliente')),
+    todas(() => sb.from('umov_por_ponto').select('cod_int,retornadas,atendimentos').eq('competencia_id', c.id).eq('parceiro_id', pid)),
+    todas(() => sb.from('umov_vigente').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
+    q(sb.from('contratos').select('valor_fixo,inicio,fim').eq('parceiro_id', pid).order('inicio', { ascending: false })),
+    q(sb.from('base_contestacoes').select('*').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('ativo', true).order('criado_em')),
+    q(sb.from('envios').select('id,versao,status,enviado_em,totais').eq('competencia_id', c.id).eq('parceiro_id', pid).order('versao', { ascending: false }).limit(1)),
+    q(sb.from('umov_importacoes').select('importado_em,arquivo').eq('competencia_id', c.id).eq('status', 'ativa').limit(1)),
+  ]);
+  box.className = '';
+  if (!pts.length && !kits.length) { box.innerHTML = '<div class="msg alerta">A GSM ainda não gerou a sua base deste mês.</div>'; return; }
+  const ult = envs[0]; const aprovado = ult?.status === 'aprovado'; const fechada = c.status === 'fechada'; const trava = aprovado || fechada;
+  const fx = contr.find(k => k.inicio <= c.mes && (!k.fim || k.fim >= c.mes)); const fixo = fx ? Number(fx.valor_fixo) : 0;
+  const ticket = S.parc.ticket_kit != null ? Number(S.parc.ticket_kit) : null;
+  const um = Object.fromEntries(upp.map(u => [u.cod_int, u]));
+  const cM = Object.fromEntries(conts.filter(x => x.tipo === 'malote').map(x => [x.ref, x]));
+  const cK = Object.fromEntries(conts.filter(x => x.tipo === 'kit').map(x => [x.ref, x]));
+  const extras = conts.filter(x => x.tipo === 'kit_extra'); const servs = conts.filter(x => x.tipo === 'servico');
+  const linhasM = pts.map(p => { const u = um[p.cod_int]; const feitos = u ? u.retornadas : 0; const ct = cM[p.cod_int]; const vu = Number(p.v_unit) || 0;
+    return { ...p, feitos, ct, vu, valor: (ct ? ct.realizado : feitos) * vu, valorGSM: feitos * vu }; });
+  const kitVal = k => k.situacao === 'Retornada de Campo' ? (ticket ?? 0) : 0;
+  const linhasK = kits.map(k => { const ct = cK[k.id_umov]; return { ...k, ct, valorGSM: kitVal(k), valor: ct ? Number(ct.valor) : kitVal(k) }; });
+  const soma = (l, f) => l.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const calcGSM = fixo + soma(linhasM, x => x.valorGSM) + soma(linhasK, x => x.valorGSM);
+  const totalParc = fixo + soma(linhasM, x => x.valor) + soma(linhasK, x => x.valor) + soma(extras, x => x.valor) + soma(servs, x => Number(x.quantidade) * Number(x.valor));
+  const nAjustes = conts.length;
+  S.baseAba = S.baseAba || 'malote';
+  const abas = [['malote', `Malote (${fmtN(pts.length)})`], ['kits', `Kits/Spot (${fmtN(kits.length + extras.length)})`], ['servicos', `Serviços fora do Umov (${fmtN(servs.length)})`], ['enviar', 'Resumo e envio']];
+  box.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><small>Valor pela base GSM</small><b>${BRL2(calcGSM)}</b><span>${fixo ? `fixo ${BRL2(fixo)} + ` : ''}Umov × valores cadastrados</span></div>
+      <div class="kpi ${Math.abs(totalParc - calcGSM) > 0.009 ? 'alerta' : 'neutro'}"><small>Seus ajustes</small><b>${(totalParc - calcGSM >= 0 ? '+' : '') + BRL2(totalParc - calcGSM)}</b><span>${fmtN(nAjustes)} ajuste(s) com explicação</span></div>
+      <div class="kpi"><small>Valor que você vai enviar</small><b>${BRL2(totalParc)}</b><span>${ult ? `último envio: ${fmtDH(ult.enviado_em)}` : 'ainda não enviado'}</span></div>
+    </div>
+    <p class="nota" style="margin:0">Umov ${imp[0] ? `atualizado em ${fmtDH(imp[0].importado_em)}` : 'ainda não importado neste mês'}. ${ticket != null ? `Kits retornados valem o ticket médio de ${BRL2(ticket)} cada; se um kit foi maior, ajuste o valor e explique.` : '<b>Ticket médio de kits ainda não cadastrado pela GSM.</b>'}</p>
+    ${trava ? `<div class="msg ok">${aprovado ? 'Mês aprovado pela GSM: a base não pode mais ser alterada.' : 'Mês fechado.'}</div>` : ''}
+    <nav class="abas">${abas.map(([k, n]) => `<button type="button" data-ba="${k}" class="${S.baseAba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+    <div id="baseaba"></div>`;
+  box.querySelectorAll('[data-ba]').forEach(b => b.onclick = () => { S.baseAba = b.dataset.ba; baseParceiro(c); });
+  const alvo = $('#baseaba'); const P = S.previa ? pid : null;
+  const recarregar = () => baseParceiro(c);
+  const anexar = async (file, tag) => { if (!file) return null; const path = `${pid}/${c.mes.slice(0, 7)}/base/${tag}_${Date.now()}_${safeName(file.name)}`; const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Anexo: ' + up.error.message); return path; };
+  const salvar = async (dados, file, tag, msgEl) => { try { const ap = await anexar(file, tag); await q(sb.rpc('salvar_contestacao', { p: { competencia_id: c.id, ...dados, arquivo_path: ap }, p_parceiro: P })); recarregar(); } catch (e) { msgEl.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; } };
+  const retirar = async id => { try { await q(sb.rpc('retirar_contestacao', { p_id: id, p_parceiro: P })); recarregar(); } catch (e) { alertaTopo(e.message); } };
+  const formLinha = (cols, campos, tag, onSave) => { const l = document.createElement('tr'); l.className = 'extra';
+    l.innerHTML = `<td colspan="${cols}" style="background:var(--field)"><div class="linha" style="align-items:flex-end">${campos}
+      <label class="campo" style="flex:1 1 260px">Explicação<input class="peq" data-x="just" placeholder="O que aconteceu"></label>
+      <label class="campo">Comprovante (opcional)<input type="file" data-x="arq" accept=".pdf,.jpg,.jpeg,.png" style="font:inherit;font-size:13px"></label>
+      <button class="btn peq" data-x="ok">Salvar ajuste</button></div><div data-x="msg"></div></td>`;
+    l.querySelector('[data-x="ok"]').onclick = () => onSave(l); return l; };
+  const v = (l, k) => l.querySelector(`[data-x="${k}"]`);
+
+  if (S.baseAba === 'malote') {
+    S.baseFiltro = S.baseFiltro ?? ''; S.baseSo = S.baseSo || 'todos';
+    const vis = linhasM.filter(x => (S.baseSo === 'todos' || (S.baseSo === 'ajustados' ? x.ct : S.baseSo === 'zerados' ? x.feitos === 0 : x.feitos < (x.previsto || 0)))
+      && (!S.baseFiltro || norm(`${x.cod_int} ${x.cliente} ${x.loja} ${x.cidade}`).includes(norm(S.baseFiltro))));
+    const pag = vis.slice(0, 200);
+    alvo.innerHTML = `<div class="linha" style="justify-content:space-between"><div class="linha">${[['todos', 'Todos'], ['abaixo', 'Abaixo do previsto'], ['zerados', 'Sem atendimento no Umov'], ['ajustados', 'Ajustados por você']].map(([k, n]) => `<button class="btn ${S.baseSo === k ? '' : 'sec'} peq" data-so="${k}">${n}</button>`).join('')}</div>
+      <input class="peq" id="bfil" placeholder="Buscar código, cliente, cidade" value="${esc(S.baseFiltro)}" style="min-width:240px"></div>
+      <div class="tabela"><table id="btm"><thead><tr><th>Código</th><th>Cliente / loja</th><th>Cidade</th><th>Frequência</th><th class="n">Previsto</th><th class="n">Feitos (Umov)</th><th class="n">V. unit</th><th class="n">Valor</th><th></th></tr></thead><tbody>
+      ${pag.map(x => `<tr data-cod="${esc(x.cod_int)}"${x.ct ? ' style="background:var(--wash)"' : ''}><td class="num">${esc(x.cod_int)}</td><td style="font-size:13px"><b>${esc(x.cliente || '')}</b><br>${esc(x.loja || '')}</td><td style="font-size:13px">${esc(x.cidade || '')}${x.uf ? ' - ' + esc(x.uf) : ''}</td><td style="font-size:13px">${esc(x.frequencia || '')}</td>
+        <td class="n">${fmtN(x.previsto || 0)}</td><td class="n">${x.ct ? `<s style="color:var(--muted)">${fmtN(x.feitos)}</s> <b>${fmtN(x.ct.realizado)}</b>` : fmtN(x.feitos)}</td><td class="n">${BRL2(x.vu)}</td><td class="n">${BRL2(x.valor)}</td>
+        <td style="white-space:nowrap">${trava ? '' : x.ct ? `<span class="nota" title="${esc(x.ct.justificativa)}">ajustado</span> <button class="btn sec peq" data-rm="${x.ct.id}">Desfazer</button>` : `<button class="btn sec peq" data-aj="${esc(x.cod_int)}">Ajustar</button>`}</td></tr>`).join('')}
+      </tbody></table></div>${vis.length > pag.length ? `<p class="nota">Mostrando ${pag.length} de ${fmtN(vis.length)}. Use a busca para achar um ponto.</p>` : ''}
+      <p class="nota">Feitos = atendimentos retornados de campo no Umov. Se você atendeu e o Umov não registrou (ou o contrário), clique em Ajustar, informe o número certo e explique.${fixo ? ` O valor fixo do contrato (${BRL2(fixo)}) entra no total.` : ''}</p>`;
+    alvo.querySelectorAll('[data-so]').forEach(b => b.onclick = () => { S.baseSo = b.dataset.so; baseParceiro(c); });
+    $('#bfil').oninput = e => { S.baseFiltro = e.target.value; clearTimeout(S.bT); S.bT = setTimeout(() => { baseParceiro(c).then(() => { const i = $('#bfil'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 350); };
+    alvo.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => retirar(b.dataset.rm));
+    alvo.querySelectorAll('[data-aj]').forEach(b => b.onclick = () => { const x = linhasM.find(k => k.cod_int === b.dataset.aj); const tr = b.closest('tr');
+      alvo.querySelectorAll('tr.extra').forEach(e => e.remove());
+      const l = formLinha(9, `<label class="campo">Atendimentos feitos<input class="peq" data-x="real" value="${x.feitos}" style="width:110px"></label>`, 'mal', async l2 => {
+        const n = Number(v(l2, 'real').value); if (!Number.isInteger(n) || n < 0) return (v(l2, 'msg').innerHTML = '<div class="msg erro">Informe um número inteiro.</div>');
+        await salvar({ tipo: 'malote', ref: x.cod_int, realizado: n, justificativa: v(l2, 'just').value }, v(l2, 'arq').files[0], 'mal', v(l2, 'msg')); });
+      tr.after(l); });
+  } else if (S.baseAba === 'kits') {
+    alvo.innerHTML = `<div class="tabela"><table><thead><tr><th>Ref. Umov</th><th>Data</th><th>Kit / cliente</th><th>Cidade</th><th>Situação no Umov</th><th class="n">Valor</th><th></th></tr></thead><tbody>
+      ${linhasK.map(k => `<tr${k.ct ? ' style="background:var(--wash)"' : ''}><td class="num">${esc(k.id_umov)}</td><td>${fmtD(k.data_final || k.data_prevista)}</td><td style="font-size:13px"><b>${esc(k.grupo_cliente || '')}</b><br>${esc(k.cliente || '')}</td><td style="font-size:13px">${esc(k.cidade || '')}</td>
+        <td><span class="pill ${k.situacao === 'Retornada de Campo' ? '' : 'alerta'}">${esc(k.situacao || '—')}</span></td><td class="n">${k.ct ? `<s style="color:var(--muted)">${BRL2(k.valorGSM)}</s> <b>${BRL2(k.valor)}</b>` : BRL2(k.valor)}</td>
+        <td style="white-space:nowrap">${trava ? '' : k.ct ? `<span class="nota" title="${esc(k.ct.justificativa)}">ajustado</span> <button class="btn sec peq" data-rm="${k.ct.id}">Desfazer</button>` : `<button class="btn sec peq" data-ak="${esc(k.id_umov)}">Ajustar</button>`}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nenhum kit do Umov para você neste mês.</td></tr>'}
+      </tbody></table></div>
+      <h3 style="margin:10px 0 0;font-size:15px">Kits que não aparecem no Umov</h3>
+      ${extras.length ? `<div class="tabela"><table><tbody>${extras.map(x => `<tr><td>${fmtD(x.data)}</td><td>${esc(x.descricao || '')}</td><td>${esc(x.cidade || '')}</td><td class="n">${BRL2(x.valor)}</td><td style="font-size:13px">${esc(x.justificativa || '')}${x.arquivo_path ? ' · comprovante anexado' : ''}</td><td>${trava ? '' : `<button class="btn sec peq" data-rm="${x.id}">Remover</button>`}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${trava ? '' : `<div class="linha" style="align-items:flex-end"><label class="campo">Data<input type="date" class="peq" id="ke-d"></label><label class="campo" style="flex:1 1 200px">Kit / cliente<input class="peq" id="ke-ds"></label><label class="campo">Cidade<input class="peq" id="ke-c" style="width:150px"></label><label class="campo">Valor (R$)<input class="peq" id="ke-v" style="width:110px"></label>
+        <label class="campo" style="flex:1 1 220px">Explicação<input class="peq" id="ke-j" placeholder="por que não está no Umov"></label><label class="campo">Comprovante<input type="file" id="ke-a" accept=".pdf,.jpg,.jpeg,.png" style="font:inherit;font-size:13px"></label><button class="btn peq" id="ke-ok">Adicionar kit</button></div><div id="ke-m"></div>`}`;
+    alvo.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => retirar(b.dataset.rm));
+    alvo.querySelectorAll('[data-ak]').forEach(b => b.onclick = () => { const k = linhasK.find(x => x.id_umov === b.dataset.ak); const tr = b.closest('tr');
+      alvo.querySelectorAll('tr.extra').forEach(e => e.remove());
+      const l = formLinha(7, `<label class="campo">Valor do kit (R$)<input class="peq" data-x="val" value="${String(k.valorGSM || '').replace('.', ',')}" style="width:120px"></label>`, 'kit', async l2 => {
+        const n = numBR(v(l2, 'val').value); if (n == null || Number.isNaN(n) || n < 0) return (v(l2, 'msg').innerHTML = '<div class="msg erro">Valor inválido.</div>');
+        await salvar({ tipo: 'kit', ref: k.id_umov, valor: n, justificativa: v(l2, 'just').value }, v(l2, 'arq').files[0], 'kit', v(l2, 'msg')); });
+      tr.after(l); });
+    const ok = $('#ke-ok'); if (ok) ok.onclick = async () => { const n = numBR($('#ke-v').value); if (n == null || Number.isNaN(n)) return ($('#ke-m').innerHTML = '<div class="msg erro">Informe o valor.</div>');
+      ok.disabled = true; await salvar({ tipo: 'kit_extra', data: $('#ke-d').value || null, descricao: $('#ke-ds').value, cidade: $('#ke-c').value, valor: n, justificativa: $('#ke-j').value }, $('#ke-a').files[0], 'kitx', $('#ke-m')); ok.disabled = false; };
+  } else if (S.baseAba === 'servicos') {
+    alvo.innerHTML = `<p class="sub" style="margin:0">Serviços que não passam pelo Umov: redespacho, diária, reversa, embarque. Um por linha, de preferência com comprovante.</p>
+      ${servs.length ? `<div class="tabela"><table><thead><tr><th>Data</th><th>Serviço</th><th>Descrição</th><th class="n">Qtd.</th><th class="n">V. unit</th><th class="n">Total</th><th>Explicação</th><th></th></tr></thead><tbody>${servs.map(x => `<tr><td>${fmtD(x.data)}</td><td>${esc(x.servico || '')}</td><td>${esc(x.descricao || '')}</td><td class="n">${fmtN(Number(x.quantidade))}</td><td class="n">${BRL2(x.valor)}</td><td class="n">${BRL2(Number(x.quantidade) * Number(x.valor))}</td><td style="font-size:13px">${esc(x.justificativa || '')}${x.arquivo_path ? ' · comprovante anexado' : ''}</td><td>${trava ? '' : `<button class="btn sec peq" data-rm="${x.id}">Remover</button>`}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${trava ? '' : `<div class="linha" style="align-items:flex-end"><label class="campo">Data<input type="date" class="peq" id="sv-d"></label><label class="campo">Serviço<select class="peq" id="sv-s">${SERV_FORA.map(x => `<option>${x}</option>`).join('')}</select></label><label class="campo" style="flex:1 1 200px">Descrição<input class="peq" id="sv-ds"></label>
+        <label class="campo">Qtd.<input class="peq" id="sv-q" value="1" style="width:70px"></label><label class="campo">Valor unit. (R$)<input class="peq" id="sv-v" style="width:110px"></label><label class="campo" style="flex:1 1 200px">Explicação<input class="peq" id="sv-j"></label><label class="campo">Comprovante<input type="file" id="sv-a" accept=".pdf,.jpg,.jpeg,.png" style="font:inherit;font-size:13px"></label><button class="btn peq" id="sv-ok">Adicionar serviço</button></div><div id="sv-m"></div>`}`;
+    alvo.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => retirar(b.dataset.rm));
+    const ok = $('#sv-ok'); if (ok) ok.onclick = async () => { const qn = numBR($('#sv-q').value), vv = numBR($('#sv-v').value); if (!qn || vv == null || Number.isNaN(vv)) return ($('#sv-m').innerHTML = '<div class="msg erro">Informe quantidade e valor.</div>');
+      ok.disabled = true; await salvar({ tipo: 'servico', data: $('#sv-d').value || null, servico: $('#sv-s').value, descricao: $('#sv-ds').value, quantidade: qn, valor: vv, justificativa: $('#sv-j').value }, $('#sv-a').files[0], 'serv', $('#sv-m')); ok.disabled = false; };
+  } else {
+    const t = { fixo, mal: soma(linhasM, x => x.valor), kits: soma(linhasK, x => x.valor) + soma(extras, x => x.valor), serv: soma(servs, x => Number(x.quantidade) * Number(x.valor)) };
+    alvo.innerHTML = `<div class="tabela" style="max-width:560px"><table><tbody>
+        <tr><td>Valor fixo do contrato</td><td class="n">${BRL2(t.fixo)}</td></tr><tr><td>Malote (atendimentos × valor unitário)</td><td class="n">${BRL2(t.mal)}</td></tr>
+        <tr><td>Kits/Spot</td><td class="n">${BRL2(t.kits)}</td></tr><tr><td>Serviços fora do Umov</td><td class="n">${BRL2(t.serv)}</td></tr>
+        <tr><td><b>Total a enviar</b></td><td class="n"><b style="font-size:18px">${BRL2(totalParc)}</b></td></tr></tbody></table></div>
+      ${nAjustes ? `<p class="sub" style="margin:0">${fmtN(nAjustes)} ajuste(s) seguem com a sua explicação para a GSM analisar.</p>` : '<p class="sub" style="margin:0">Nenhum ajuste: você está de acordo com a base da GSM.</p>'}
+      ${trava ? '' : `<label class="linha"><input type="checkbox" id="conf"> Conferi a base e os ajustes estão corretos.</label>
+        <div><button class="btn marca" id="envb" disabled>${ult && ult.status !== 'aprovado' ? 'Enviar de novo para validação' : 'Enviar para validação'}</button></div><div id="envm"></div>
+        ${ult ? '<p class="nota">Enviar de novo substitui o envio anterior (ele fica no histórico).</p>' : ''}`}`;
+    const cf = $('#conf'), eb = $('#envb');
+    if (cf) cf.onchange = () => eb.disabled = !cf.checked;
+    if (eb) eb.onclick = async () => { eb.disabled = true; eb.textContent = 'Enviando…';
+      try { const r = await q(sb.rpc('enviar_base', { p_comp: c.id, p_parceiro: P }));
+        $('#envm').innerHTML = `<div class="msg ok">Enviado para a GSM (envio ${r.versao}). ${r.em_analise || r.precisa_acao ? 'Os seus ajustes estão em análise.' : 'Sem ajustes: a GSM vai validar e aprovar.'}</div>`;
+        situacaoParceiro(c); }
+      catch (e) { eb.disabled = false; eb.textContent = 'Enviar para validação'; $('#envm').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; } };
+  }
 }
 
 // ---------- Envio do relatório e conferência ----------
@@ -1075,13 +1164,13 @@ async function situacaoParceiro(c) {
     q(sb.from('acoes_parceiro').select('*').eq('parceiro_id', S.parc.id).order('criado_em')),
   ]);
   const acoesPor = {}; acoes.forEach(a => (acoesPor[a.divergencia_id] = acoesPor[a.divergencia_id] || []).push(a));
-  const grupos = [['precisa_acao', 'Precisam da sua ação', 'Envie um comprovante ou explique. Se o relatório estiver errado, corrija o arquivo e envie de novo.'],
+  const grupos = [['precisa_acao', 'Precisam da sua ação', 'Envie um comprovante ou explique. Se a base estiver errada, ajuste no passo 1 e envie de novo.'],
     ['em_analise', 'Em análise pela GSM', 'Você já respondeu ou o item depende da GSM.'], ['informativo', 'Para seu conhecimento', 'Não bloqueiam o pagamento.'], ['conferido', 'Conferidos pela GSM', '']];
   const [rot, cls] = SIT_ENVIO[e.status] || [e.status, ''];
   const difUmov = (Number(t.malote_qtd) || 0) - (Number(t.umov_qtd) || 0);
   box.innerHTML = `
     <div class="linha" style="justify-content:space-between"><span>Envio ${e.versao} · ${fmtDH(e.enviado_em)}${t.enviado_pela_gsm ? ' · enviado pela GSM' : ''}</span><span class="pill ${cls}">${esc(rot)}</span></div>
-    ${e.comentario_gsm ? `<div class="msg ${e.status === 'recusado' ? 'erro' : 'ok'}"><b>GSM:</b> ${esc(e.comentario_gsm)}${e.status === 'recusado' ? '<br>Corrija o relatório e envie de novo no passo 2.' : ''}</div>` : ''}
+    ${e.comentario_gsm ? `<div class="msg ${e.status === 'recusado' ? 'erro' : 'ok'}"><b>GSM:</b> ${esc(e.comentario_gsm)}${e.status === 'recusado' ? '<br>Ajuste a base no passo 1 e envie de novo.' : ''}</div>` : ''}
     <div class="kpis">
       <div class="kpi"><small>Total informado</small><b>${BRL2(t.total)}</b><span>${t.malote_fixo ? `inclui fixo de ${BRL2(t.malote_fixo)}` : 'sem valor fixo'}</span></div>
       <div class="kpi ${difUmov > 0 ? 'alerta' : ''}"><small>Malote: você x Umov</small><b>${fmtN(t.malote_qtd)} x ${fmtN(t.umov_qtd)}</b><span>${difUmov ? (difUmov > 0 ? '+' : '') + fmtN(difUmov) + ' atendimento(s)' : 'iguais'}</span></div>
@@ -1174,6 +1263,7 @@ function formParceiro(p = {}, fixo) {
     <div class="linha" style="align-items:flex-end">
       <label class="campo">Valor fixo mensal (R$)<input class="peq" id="f-fixo" value="${fixo != null ? String(fixo).replace('.', ',') : ''}" placeholder="vazio = sem fixo" style="width:150px"></label>
       <label class="campo">Vale a partir de<input class="peq" id="f-ini" type="month" value="${new Date().toISOString().slice(0, 7)}"></label>
+      <label class="campo">Ticket médio por kit (R$)<input class="peq" id="f-ticket" value="${p.ticket_kit != null ? String(p.ticket_kit).replace('.', ',') : ''}" placeholder="vazio = não definido" style="width:150px"></label>
       <span class="nota" style="flex:1 1 260px">Mudar o valor fixo cria um novo período a partir do mês escolhido; o valor anterior fica guardado até o mês anterior.</span>
     </div>
     <div class="linha"><button class="btn peq" id="f-salvar">Salvar</button><button class="btn sec peq" id="f-cancelar">Cancelar</button></div><div id="f-msg"></div></div>`;
@@ -1189,10 +1279,10 @@ function cadParceiros(parcs, contr) {
     <div class="linha" style="justify-content:space-between"><div class="linha">${[['ativos', 'Ativos', parcs.filter(p => p.ativo !== false).length], ['inativos', 'Inativos', parcs.filter(p => p.ativo === false).length], ['todos', 'Todos', parcs.length]].map(([k, n, qq]) => `<button class="btn ${S.cadSit === k ? '' : 'sec'} peq" data-cs="${k}">${n} (${qq})</button>`).join('')}</div>
       <div class="linha"><input id="cadf" class="peq" placeholder="Buscar região, nome, CNPJ" value="${esc(S.cadFiltro)}" style="min-width:240px"><button class="btn marca peq" id="novo">+ Novo parceiro</button></div></div>
     <div id="novobox"></div>
-    <div class="tabela"><table id="cadtab"><thead><tr><th>Código</th><th>Região / rota</th><th>Razão social · CNPJ</th><th>Contrato</th><th class="n">Fixo vigente</th><th>Pagamento</th><th></th></tr></thead><tbody>
+    <div class="tabela"><table id="cadtab"><thead><tr><th>Código</th><th>Região / rota</th><th>Razão social · CNPJ</th><th>Contrato</th><th class="n">Fixo vigente</th><th class="n">Ticket kit</th><th>Pagamento</th><th></th></tr></thead><tbody>
     ${vis.map(p => `<tr data-id="${p.id}" style="${p.ativo === false ? 'opacity:.55' : ''}"><td class="num">${esc(p.codigo)}</td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td>
-      <td style="font-size:13px">${esc(p.razao_social || '—')}<br><span class="num" style="color:var(--muted)">${esc(fmtCNPJ(p.cnpj) || 'sem CNPJ')}</span></td><td>${esc(p.tipo || '—')}</td><td class="n">${fixoAtual(p.id) != null ? BRL2(fixoAtual(p.id)) : '—'}</td><td>${esc(p.dia_pagamento || '—')}</td>
-      <td style="white-space:nowrap"><button class="btn sec peq" data-alt="${p.id}">Alterar</button> ${p.ativo === false ? `<button class="btn peq" data-at="${p.id}" data-v="1">Reativar</button>` : `<button class="btn sec peq" data-at="${p.id}" data-v="0">Inativar</button>`}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nada encontrado.</td></tr>'}
+      <td style="font-size:13px">${esc(p.razao_social || '—')}<br><span class="num" style="color:var(--muted)">${esc(fmtCNPJ(p.cnpj) || 'sem CNPJ')}</span></td><td>${esc(p.tipo || '—')}</td><td class="n">${fixoAtual(p.id) != null ? BRL2(fixoAtual(p.id)) : '—'}</td><td class="n">${p.ticket_kit != null ? BRL2(p.ticket_kit) : '<span class="pill alerta">definir</span>'}</td><td>${esc(p.dia_pagamento || '—')}</td>
+      <td style="white-space:nowrap"><button class="btn sec peq" data-alt="${p.id}">Alterar</button> ${p.ativo === false ? `<button class="btn peq" data-at="${p.id}" data-v="1">Reativar</button>` : `<button class="btn sec peq" data-at="${p.id}" data-v="0">Inativar</button>`}</td></tr>`).join('') || '<tr><td colspan="8" class="nota">Nada encontrado.</td></tr>'}
     </tbody></table></div></section>`;
   box.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => { S.cadSit = b.dataset.cs; cadParceiros(parcs, contr); });
   $('#cadf').oninput = e => { S.cadFiltro = e.target.value; clearTimeout(S.cadT); S.cadT = setTimeout(() => { cadParceiros(parcs, contr); const i = $('#cadf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
@@ -1207,6 +1297,9 @@ function cadParceiros(parcs, contr) {
       try {
         const id = await q(sb.rpc('salvar_parceiro', { p: dados }));
         const atual = p ? fixoAtual(p.id) : null;
+        const tk = g('#f-ticket').trim(); const tkv = tk === '' ? null : numBR(tk);
+        if (tkv !== null && (Number.isNaN(tkv) || tkv < 0)) throw new Error('Ticket médio inválido.');
+        if ((p?.ticket_kit ?? null) !== tkv) await q(sb.rpc('definir_ticket_kit', { p_parceiro: id, p_valor: tkv }));
         if ((fixo ?? 0) !== (atual ?? 0)) await q(sb.rpc('definir_valor_fixo', { p_parceiro: id, p_valor: fixo ?? 0, p_inicio: g('#f-ini') + '-01' }));
         S.parceiros = await q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo').order('codigo'));
         vCadastro();
@@ -1219,7 +1312,7 @@ function cadParceiros(parcs, contr) {
     box.querySelectorAll('tr.extra').forEach(x => x.remove());
     const l = document.createElement('tr'); l.className = 'extra';
     const hist = contr.filter(k => k.parceiro_id === p.id);
-    l.innerHTML = `<td colspan="7" style="background:var(--field)">${formParceiro(p, fixoAtual(p.id))}
+    l.innerHTML = `<td colspan="8" style="background:var(--field)">${formParceiro(p, fixoAtual(p.id))}
       ${hist.length ? `<div class="nota" style="margin-top:8px">Valores fixos: ${hist.map(k => `${BRL2(k.valor_fixo)} de ${fmtD(k.inicio).slice(3)}${k.fim ? ' até ' + fmtD(k.fim).slice(3) : ' em diante'}`).join(' · ')}</div>` : ''}</td>`;
     tr.after(l); ligarForm(l.firstElementChild, p);
   });
