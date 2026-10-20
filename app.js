@@ -382,10 +382,10 @@ async function rotasSemParceiro(ativa) {
       <div class="kpi ${pend.length ? 'alerta' : 'neutro'}"><small>Pendentes</small><b>${fmtN(pend.reduce((a, r) => a + r.atendimentos, 0))}</b><span>${pend.length ? pend.length + ' cidades' : 'nenhum'}</span></div>
     </div>
     ${pendM.length ? `<h2 style="font-size:15px;margin-top:6px">Malote com código fora da carteira</h2>
-    <p class="sub" style="margin:0">Pontos que o Umov atendeu e não estão no cadastro. Escolha o parceiro para cadastrar; os demais dados vêm do Umov e podem ser completados na Carteira de pontos.</p>
+    <p class="sub" style="margin:0">Pontos que o Umov atendeu e não estão no cadastro. Escolha o parceiro para cadastrar, ou "Base própria GSM" para pontos da rota própria (não entram no pagamento de parceiros). Os demais dados vêm do Umov e podem ser completados na Carteira de pontos.</p>
     <div class="tabela"><table><thead><tr><th>Código</th><th>Cliente no Umov</th><th>Cidade</th><th class="n">Atend.</th><th>Parceiro</th><th></th></tr></thead><tbody>
     ${pendM.map((r, i) => `<tr><td class="num">${esc(r.cod_int || '(sem código)')}</td><td style="font-size:13px">${esc(r.cliente || '')}</td><td style="font-size:13px">${esc(r.cidade || '')}</td><td class="n">${fmtN(r.atendimentos)}</td>
-      <td><select class="peq" id="selm${i}" ${r.cod_int ? '' : 'disabled'}><option value="">Escolha…</option>${opts}</select></td>
+      <td><select class="peq" id="selm${i}" ${r.cod_int ? '' : 'disabled'}><option value="">Escolha…</option><option value="__bp">Base própria GSM (rota própria)</option>${opts}</select></td>
       <td>${r.cod_int ? `<button class="btn peq" data-m="${i}">Cadastrar ponto</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     ${(() => { const rc = {}; pendM.forEach(r => (r.rotas || '').split(', ').filter(Boolean).forEach(x => rc[x] = (rc[x] || 0) + r.atendimentos));
       const lst = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 30);
@@ -411,7 +411,9 @@ async function rotasSemParceiro(ativa) {
     b.disabled = true;
     try {
       const x = (r.cidade || '').match(/^(.*?)[\s\-]+([A-Za-z]{2})\s*$/);
-      await q(sb.rpc('salvar_ponto', { p: { cod_int: r.cod_int, cliente: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null), parceiro_id: v }, p_motivo: 'Cadastrado a partir do Umov' }));
+      const dados = { cod_int: r.cod_int, cliente: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null) };
+      if (v === '__bp') await q(sb.rpc('marcar_ponto_base_propria', { p: dados, p_motivo: 'Cadastrado a partir do Umov como base própria' }));
+      else await q(sb.rpc('salvar_ponto', { p: { ...dados, parceiro_id: v }, p_motivo: 'Cadastrado a partir do Umov' }));
       await umovAtivaEHist();
     } catch (e) { b.disabled = false; alertaTopo(e.message); }
   });
@@ -655,7 +657,7 @@ async function vPontos() {
   carregarPend();
 }
 
-const optsParc = sel => `<option value="">Sem parceiro</option>` + S.parceiros.filter(p => p.ativo || p.id === sel).map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('');
+const optsParc = (sel, bp) => `<option value="">Sem parceiro</option><option value="__bp" ${bp ? 'selected' : ''}>Base própria GSM (rota própria)</option>` + S.parceiros.filter(p => p.ativo || p.id === sel).map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('');
 function linhaPonto(p, novo = false) {
   const k = novo ? 'novo' : p.cod_int;
   return `<tr data-cod="${esc(k)}">
@@ -663,7 +665,7 @@ function linhaPonto(p, novo = false) {
       <div><input class="peq" data-f="cliente" value="${esc(p.cliente || '')}" placeholder="Cliente" style="width:200px;margin-top:4px"></div>
       <div><input class="peq" data-f="loja" value="${esc(p.loja || '')}" placeholder="Loja" style="width:200px;margin-top:4px"></div></td>
     <td><input class="peq" data-f="cidade" value="${esc(p.cidade || '')}" placeholder="Cidade" style="width:130px"> <input class="peq" data-f="uf" value="${esc(p.uf || '')}" placeholder="UF" style="width:46px"></td>
-    <td><select class="peq" data-f="parceiro_id" style="max-width:210px">${optsParc(p.parceiro_id)}</select></td>
+    <td><select class="peq" data-f="parceiro_id" style="max-width:210px">${optsParc(p.parceiro_id, p.base_propria)}</select></td>
     <td><input class="peq" data-f="frequencia" value="${esc(p.frequencia || '')}" placeholder="SEG, QUA" style="width:120px"></td>
     <td><input class="peq num" data-f="v_unit" value="${p.v_unit == null ? '' : p.v_unit}" placeholder="R$" style="width:80px"></td>
     <td><select class="peq" data-f="situacao">${['Ativo', 'Cancelado', 'Suspenso'].map(s => `<option ${s === p.situacao ? 'selected' : ''}>${s}</option>`).join('')}</select>
@@ -677,7 +679,10 @@ function ligarLinhas() {
     tr.querySelectorAll('[data-f]').forEach(i => { const v = i.value.trim(); p[i.dataset.f] = i.dataset.f === 'v_unit' ? v.replace(',', '.') : v; });
     if (tr.dataset.cod !== 'novo') p.cod_int = tr.dataset.cod;
     b.disabled = true;
-    try { await q(sb.rpc('salvar_ponto', { p })); b.textContent = 'Salvo'; setTimeout(() => { b.textContent = 'Salvar'; b.disabled = false; }, 1500); carregarPend(); }
+    try {
+      if (p.parceiro_id === '__bp') { const { parceiro_id, v_unit, ...resto } = p; await q(sb.rpc('salvar_ponto', { p: resto })); await q(sb.rpc('marcar_ponto_base_propria', { p: { cod_int: p.cod_int } })); }
+      else await q(sb.rpc('salvar_ponto', { p }));
+      b.textContent = 'Salvo'; setTimeout(() => { b.textContent = 'Salvar'; b.disabled = false; }, 1500); carregarPend(); }
     catch (e) { alertaTopo(e.message); b.disabled = false; }
   });
   document.querySelectorAll('#main [data-hist]').forEach(b => b.onclick = async () => {
