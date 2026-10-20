@@ -142,9 +142,9 @@ const MENU = [
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
-  ['Próximas etapas', [['', 'Pacote do financeiro e pagamento']]],
+  ['Financeiro', [['pacote', 'Pacote e pagamento']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 async function vVerParceiro() {
@@ -1144,6 +1144,15 @@ function formParceiro(p = {}, fixo) {
       <label class="campo" style="flex:1 1 220px">E-mail de contato<input class="peq" id="f-email" type="email" value="${esc(p.email_contato || '')}"></label>
     </div>
     <div class="linha" style="align-items:flex-end">
+      <label class="campo">Documento<input class="peq" id="f-doc" list="l-doc" value="${esc(p.tipo_documento || '')}" style="width:150px"></label>
+      <label class="campo">Log / Group<input class="peq" id="f-emp" list="l-emp" value="${esc(p.empresa_gsm || '')}" style="width:110px"></label>
+      <label class="campo">Tipo de pagamento<input class="peq" id="f-forma" list="l-forma" value="${esc(p.forma_pagamento || '')}" style="width:130px"></label>
+      <label class="campo" style="flex:1 1 220px">Dados p/ pagamento (chave PIX, "Boleto"…)<input class="peq" id="f-dados" value="${esc(p.dados_pagamento || '')}"></label>
+      <label class="campo">Modelo (capa)<input class="peq" id="f-mod" list="l-mod" value="${esc(p.modelo_capa || '')}" style="width:130px"></label>
+      <datalist id="l-doc"><option>NF</option><option>NF/FATURA</option><option>NF/BOLETO</option><option>FATURA/BOLETO</option><option>CT-e</option><option>BOLETO</option></datalist>
+      <datalist id="l-emp"><option>GROUP</option><option>LOG</option></datalist><datalist id="l-forma"><option>PIX</option><option>BOLETO</option><option>TED</option></datalist><datalist id="l-mod"><option>Parceiro</option><option>Adiantamento</option></datalist>
+    </div>
+    <div class="linha" style="align-items:flex-end">
       <label class="campo">Valor fixo mensal (R$)<input class="peq" id="f-fixo" value="${fixo != null ? String(fixo).replace('.', ',') : ''}" placeholder="vazio = sem fixo" style="width:150px"></label>
       <label class="campo">Vale a partir de<input class="peq" id="f-ini" type="month" value="${new Date().toISOString().slice(0, 7)}"></label>
       <span class="nota" style="flex:1 1 260px">Mudar o valor fixo cria um novo período a partir do mês escolhido; o valor anterior fica guardado até o mês anterior.</span>
@@ -1172,7 +1181,7 @@ function cadParceiros(parcs, contr) {
     alvo.querySelector('#f-cancelar').onclick = () => { alvo.closest('tr.extra') ? alvo.closest('tr.extra').remove() : (alvo.innerHTML = ''); };
     alvo.querySelector('#f-salvar').onclick = async ev => {
       const b = ev.currentTarget; const g = id => alvo.querySelector(id).value;
-      const dados = { id: p?.id || null, regiao: g('#f-regiao'), nome: g('#f-nome'), razao_social: g('#f-razao'), cnpj: g('#f-cnpj'), tipo: g('#f-tipo'), dia_pagamento: g('#f-dia'), limita_previsto: g('#f-lim'), fluxo: g('#f-fluxo'), email_contato: g('#f-email') };
+      const dados = { id: p?.id || null, regiao: g('#f-regiao'), nome: g('#f-nome'), razao_social: g('#f-razao'), cnpj: g('#f-cnpj'), tipo: g('#f-tipo'), dia_pagamento: g('#f-dia'), limita_previsto: g('#f-lim'), fluxo: g('#f-fluxo'), email_contato: g('#f-email'), tipo_documento: g('#f-doc'), empresa_gsm: g('#f-emp'), forma_pagamento: g('#f-forma'), dados_pagamento: g('#f-dados'), modelo_capa: g('#f-mod') };
       const fixoTxt = g('#f-fixo').trim(); const fixo = fixoTxt === '' ? null : numBR(fixoTxt);
       if (fixo != null && (Number.isNaN(fixo) || fixo < 0)) { alvo.querySelector('#f-msg').innerHTML = '<div class="msg erro">Valor fixo inválido.</div>'; return; }
       b.disabled = true;
@@ -1333,9 +1342,153 @@ async function vAdiantamentos() {
     na.disabled = true; try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#na-o').value, p_parceiro: $('#na-p').value })); vAdiantamentos(); } catch (e) { na.disabled = false; alertaTopo(e.message); } };
 }
 
+// ================= Pacote do financeiro e pagamento =================
+const ST_LOTE = { gerado: ['Gerado', 'alerta'], enviado: ['Enviado ao financeiro', 'marca'], pago_parcial: ['Pago em parte', 'alerta'], pago: ['Pago', 'escuro'], desfeito: ['Desfeito', ''] };
+
+// Junta tudo o que a capa precisa para um lote
+async function dadosLote(lote) {
+  const fech = await q(sb.from('fechamento_parceiro').select('*').eq('lote_id', lote.id));
+  const ids = fech.map(f => f.parceiro_id);
+  if (!ids.length) return { lote, linhas: [] };
+  const comp = (await q(sb.from('competencias').select('id,mes').eq('id', lote.competencia_id)))[0];
+  const [parcs, contr, prev, nfs, res] = await Promise.all([
+    q(sb.from('parceiros').select('*').in('id', ids)),
+    q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim').in('parceiro_id', ids)),
+    q(sb.from('previsao_realizado').select('parceiro_id,previsto').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
+    q(sb.from('notas_fiscais').select('parceiro_id,numero,arquivo_path,status,valor').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids).in('status', ['recebida', 'conferida'])),
+    q(sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
+  ]);
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
+  const sit = Object.fromEntries(res.map(r => [r.parceiro_id, r.situacao]));
+  const fixo = id => { const c = contr.filter(k => k.parceiro_id === id && k.inicio <= comp.mes && (!k.fim || k.fim >= comp.mes)).sort((a, b) => b.inicio.localeCompare(a.inicio))[0]; return c ? Number(c.valor_fixo) : 0; };
+  const n = v => Number(v) || 0;
+  const linhas = fech.map(f => { const p = pm[f.parceiro_id] || {}; const minhas = nfs.filter(x => x.parceiro_id === f.parceiro_id);
+    const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[f.parceiro_id] ?? 0); const final = n(f.valor_aprovado ?? f.valor_final);
+    return { id: f.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(f.parceiro_id), calend, malote: n(f.malote), caixas: n(f.kits), extrasMal: n(f.fora_umov), desc: n(f.descontos),
+      final, dif: final - calend, pagar: final - n(f.adiantado), adiantado: n(f.adiantado), data: lote.data_pagamento, status: f.pago_em ? 'Pago' : sit[f.parceiro_id] === 'conferida' ? 'Ok' : 'Aguardando NF',
+      doc: p.tipo_documento, nf: minhas.map(x => x.numero).join(' / ') || '-', emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: p.modelo_capa, nfs: minhas, pago: f.pago_em }; })
+    .sort((a, b) => (a.status === 'Ok' ? 0 : 1) - (b.status === 'Ok' ? 0 : 1) || (a.regiao || '').localeCompare(b.regiao || ''));
+  return { lote, comp, linhas };
+}
+
+// Capa no mesmo layout que o financeiro já recebe (Capa-Fechamento_DD.xlsx)
+async function baixarCapa(lote) {
+  const { linhas, comp } = await dadosLote(lote);
+  const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Planilha1');
+  const F = { name: 'Aptos Narrow', size: 11 }; const MOEDA = '_-"R$ "* #,##0.00_-;"-R$ "* #,##0.00_-;_-"R$ "* \\-??_-;_-@_-';
+  const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  const thin = { style: 'thin', color: { argb: 'FFBFBFBF' } }; const borda = { top: thin, left: thin, bottom: thin, right: thin };
+  const dd = lote.data_pagamento.slice(8, 10);
+  const cab = ['Região', 'Parceiros', 'Razão Social', 'CNPJ/CPF', 'Valor Contrato', 'Calendarizado', 'Valor Mensal Malote', 'Extras - Caixas', 'Extras - Malotes', 'Descontos', 'Valor final', 'Diferença', `Pagamento ${dd}`, 'Data para PAGTO', 'Status', 'Tipo', 'NF', 'Log / Group', 'Tipo de Pagamento', 'Dados p/ Pagamento', 'Contrato', 'Modelo'];
+  [24.2, 28.9, 53, 17.7, 12.9, 14, 17.8, 13.1, 14.1, 10.3, 14, 12.9, 14, 9.9, 9.3, 14.8, 19.1, 10.2, 16.8, 30.1, 8.2, 12.2].forEach((w, i) => ws.getColumn(i + 1).width = w);
+  const h = ws.getRow(3); h.height = 28.95;
+  cab.forEach((t, i) => { const c = h.getCell(i + 1); c.value = t; c.font = { ...F, bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill('FF262626'); c.border = borda; c.alignment = { vertical: 'middle', wrapText: true }; });
+  const [y, mo, d] = lote.data_pagamento.split('-').map(Number);
+  linhas.forEach((l, i) => {
+    const r = ws.getRow(4 + i);
+    const v = [l.regiao, l.nome, l.razao, l.cnpj, l.contrato, l.calend, l.malote, l.caixas, l.extrasMal, l.desc, l.final, l.dif, l.pagar, new Date(Date.UTC(y, mo - 1, d)), l.status, l.doc || '-', l.nf, l.emp || '-', l.forma || '-', l.dados || '-', l.tipo || '-', l.modelo || ''];
+    v.forEach((x, j) => { const c = r.getCell(j + 1); c.value = x ?? null; c.font = { ...F, bold: [5, 10, 11, 12].includes(j) }; c.border = borda;
+      if (j >= 4 && j <= 12) c.numFmt = MOEDA; if (j === 13) c.numFmt = '[$-416]d\\-mmm\\-yy;@'; if (j === 12) c.fill = fill('FFFFFF99'); });
+  });
+  const ult = 3 + linhas.length;
+  ['F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'].forEach(col => { const c = ws.getCell(`${col}1`); c.value = linhas.length ? { formula: `SUM(${col}4:${col}${ult})`, result: linhas.reduce((a, l) => a + ({ F: l.calend, G: l.malote, H: l.caixas, I: l.extrasMal, J: l.desc, K: l.final, L: l.dif, M: l.pagar }[col]), 0) } : 0;
+    c.font = { ...F, bold: true }; c.fill = fill('FFD9D9D9'); c.numFmt = MOEDA; });
+  const buf = await wb.xlsx.writeBuffer();
+  baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Capa-Fechamento_${dd}.xlsx`);
+}
+
+async function baixarNFs(lote, btn) {
+  if (!window.JSZip) return alertaTopo('Não foi possível carregar o compactador de arquivos. Recarregue a página.');
+  const { linhas, comp } = await dadosLote(lote); const zip = new JSZip(); let n = 0, falhas = [];
+  for (const l of linhas) for (const nf of l.nfs) {
+    if (!nf.arquivo_path) continue;
+    btn.textContent = `Baixando ${++n}…`;
+    const { data, error } = await sb.storage.from('envios').download(nf.arquivo_path);
+    if (error || !data) { falhas.push(`${l.regiao} NF ${nf.numero}`); continue; }
+    zip.file(safeName(`${l.regiao} - NF ${nf.numero}.pdf`), data);
+  }
+  if (!n) { btn.textContent = 'NFs (.zip)'; return alertaTopo('Nenhuma NF em PDF neste lote ainda.'); }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  baixarBlob(blob, `NFs_${lote.rotulo.replace(/\s+/g, '')}_${comp.mes.slice(0, 7)}.zip`);
+  btn.textContent = 'NFs (.zip)';
+  if (falhas.length) alertaTopo('Não baixaram: ' + falhas.join(', '));
+}
+function baixarBlob(blob, nome) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+
+// Lista de lotes (admin e financeiro)
+async function listaLotes(box, compId, admin) {
+  box.innerHTML = '<div class="carregando">Carregando…</div>';
+  const lotes = (await q(sb.from('lotes_financeiro').select('*').eq('competencia_id', compId).order('data_pagamento'))).filter(l => l.status !== 'desfeito');
+  const fech = lotes.length ? await todas(() => sb.from('fechamento_parceiro').select('parceiro_id,lote_id,pago_em,valor_aprovado,adiantado').in('lote_id', lotes.map(l => l.id))) : [];
+  if (!lotes.length) { box.innerHTML = `<p class="nota">Nenhum lote gerado neste mês.${admin ? '' : ' A GSM gera os lotes depois da aprovação dos parceiros.'}</p>`; return; }
+  const hoje = new Date().toISOString().slice(0, 10);
+  box.innerHTML = lotes.map(l => { const fs = fech.filter(f => f.lote_id === l.id); const pagos = fs.filter(f => f.pago_em).length; const [r, k] = ST_LOTE[l.status] || [l.status, ''];
+    return `<div class="bloco" style="border-top-color:var(--rule)" data-lote="${l.id}">
+      <div class="linha" style="justify-content:space-between"><div><b style="font-size:16px">${esc(l.rotulo || l.descricao)}</b> · ${fmtD(l.data_pagamento)} <span class="pill ${k}">${r}</span></div>
+        <div class="linha"><button class="btn sec peq" data-capa="${l.id}">Capa (.xlsx)</button><button class="btn sec peq" data-zip="${l.id}">NFs (.zip)</button>
+        ${admin && l.status === 'gerado' ? `<button class="btn sec peq" data-env="${l.id}">Marcar enviado</button>` : ''}${admin && !pagos ? `<button class="btn sec peq" data-desf="${l.id}">Desfazer lote</button>` : ''}</div></div>
+      <div class="kpis"><div class="kpi neutro"><small>A pagar neste lote</small><b>${BRL2(l.total)}</b><span>${fs.length} parceiro(s)</span></div>
+        <div class="kpi ${pagos < fs.length ? 'alerta' : ''}"><small>Pagos</small><b>${pagos} de ${fs.length}</b><span>${l.pago_em ? 'concluído em ' + fmtD(l.pago_em) : l.enviado_em ? 'enviado ' + fmtDH(l.enviado_em) : 'ainda não enviado'}</span></div></div>
+      ${pagos < fs.length ? `<div class="linha"><label class="campo">Pago em<input type="date" class="peq" data-pd="${l.id}" value="${hoje}"></label><button class="btn peq" data-pagar="${l.id}" style="align-self:flex-end">Registrar pagamento do lote</button>
+        <span class="nota" style="align-self:flex-end">Parceiros ainda sem NF conferida ficam de fora e continuam pendentes.</span></div>` : ''}<div data-msg="${l.id}"></div></div>`; }).join('');
+  const L = id => lotes.find(x => x.id === id);
+  box.querySelectorAll('[data-capa]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarCapa(L(b.dataset.capa)); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
+  box.querySelectorAll('[data-zip]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarNFs(L(b.dataset.zip), b); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
+  box.querySelectorAll('[data-env]').forEach(b => b.onclick = async () => { try { await q(sb.rpc('marcar_lote_enviado', { p_lote: b.dataset.env })); listaLotes(box, compId, admin); } catch (e) { alertaTopo(e.message); } });
+  box.querySelectorAll('[data-desf]').forEach(b => b.onclick = async () => { try { await q(sb.rpc('desfazer_lote', { p_lote: b.dataset.desf })); admin ? vPacote() : listaLotes(box, compId, admin); } catch (e) { alertaTopo(e.message); } });
+  box.querySelectorAll('[data-pagar]').forEach(b => b.onclick = async () => { const id = b.dataset.pagar; b.disabled = true;
+    try { const r = await q(sb.rpc('pagar_lote', { p_lote: id, p_data: box.querySelector(`[data-pd="${id}"]`).value || null }));
+      await listaLotes(box, compId, admin);
+      const m = box.querySelector(`[data-msg="${id}"]`); if (m) m.innerHTML = `<div class="msg ${r.sem_nf ? 'alerta' : 'ok'}">${r.pagos} parceiro(s) marcados como pagos.${r.sem_nf ? ' Ficaram de fora por falta de NF conferida: ' + esc(r.sem_nf) : ''}</div>`;
+    } catch (e) { b.disabled = false; alertaTopo(e.message); } });
+}
+
+async function vPacote() {
+  const m = $('#main');
+  m.innerHTML = `<div class="topo"><div><h1>Pacote do financeiro e pagamento</h1><p>Monte um lote por data de pagamento com os parceiros aprovados. A capa sai no mesmo layout que o financeiro já usa (Capa-Fechamento_DD.xlsx), junto com as NFs em PDF. O financeiro registra o pagamento no portal; depois que todos estiverem pagos, você fecha a competência.</p></div>${seletorComp(false)}</div>
+    <section class="bloco"><h2>Montar lote</h2><div id="montar" class="carregando">Carregando…</div></section>
+    <section class="bloco"><h2>Lotes do mês</h2><div id="lotes"></div></section>
+    <section class="bloco"><h2>Fechar a competência</h2><div id="fechar"></div></section>`;
+  ligarSeletor(vPacote);
+  const c = comp();
+  const [fech, res, parcs] = await Promise.all([
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,lote_id,pago_em').eq('competencia_id', c.id)),
+    todas(() => sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', c.id)),
+    q(sb.from('parceiros').select('id,regiao,nome,dia_pagamento,forma_pagamento,tipo_documento')),
+  ]);
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const sit = Object.fromEntries(res.map(r => [r.parceiro_id, r.situacao]));
+  const livres = fech.filter(f => f.valor_aprovado != null && !f.lote_id);
+  const grupos = {}; livres.forEach(f => { const d = pm[f.parceiro_id]?.dia_pagamento || 'Sem data cadastrada'; (grupos[d] = grupos[d] || []).push(f); });
+  const ord = ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal', 'Sem data cadastrada'];
+  const gs = Object.entries(grupos).sort((a, b) => ord.indexOf(a[0]) - ord.indexOf(b[0]));
+  S.pacGrupo = S.pacGrupo && grupos[S.pacGrupo] ? S.pacGrupo : gs[0]?.[0];
+  const sel = grupos[S.pacGrupo] || [];
+  const sugData = () => { const n = (S.pacGrupo || '').match(/\d+/); if (!n || /útil/.test(S.pacGrupo)) return ''; const [y, mm] = c.mes.split('-').map(Number); const dt = new Date(Date.UTC(y, mm, +n[0])); return dt.toISOString().slice(0, 10); };
+  $('#montar').className = '';
+  $('#montar').innerHTML = c.status === 'fechada' ? '<p class="nota">Competência fechada: não recebe novos lotes.</p>' : !livres.length ? '<p class="nota">Nenhum parceiro aprovado fora de lote neste mês.</p>' : `
+    <div class="linha">${gs.map(([d, ls]) => `<button class="btn ${d === S.pacGrupo ? '' : 'sec'} peq" data-grp="${esc(d)}">${esc(d)} (${ls.length})</button>`).join('')}</div>
+    <div class="tabela"><table><thead><tr><th><input type="checkbox" id="tudo" checked></th><th>Parceiro</th><th>Pagamento</th><th class="n">A pagar (aprovado − adiantado)</th><th>NF</th></tr></thead><tbody>
+      ${sel.map(f => { const p = pm[f.parceiro_id] || {}; const s = sit[f.parceiro_id]; return `<tr><td><input type="checkbox" class="pck" value="${f.parceiro_id}" checked></td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td><td style="font-size:13px">${esc(p.forma_pagamento || '—')}</td>
+        <td class="n">${BRL2(Number(f.valor_aprovado) - Number(f.adiantado || 0))}</td><td><span class="pill ${s === 'conferida' ? 'escuro' : 'alerta'}">${(SIT_NF[s] || ['—'])[0]}</span></td></tr>`; }).join('')}
+    </tbody></table></div>
+    <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="Pagamento ${esc((S.pacGrupo.match(/\d+/) || [''])[0])}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
+    <p class="nota">Parceiros aguardando NF podem entrar no lote (aparecem como "Aguardando NF" na capa, como hoje), mas só são marcados como pagos depois da NF conferida.</p>`;
+  m.querySelectorAll('[data-grp]').forEach(b => b.onclick = () => { S.pacGrupo = b.dataset.grp; vPacote(); });
+  const tudo = $('#tudo'); if (tudo) tudo.onchange = () => m.querySelectorAll('.pck').forEach(x => x.checked = tudo.checked);
+  const g = $('#lgerar'); if (g) g.onclick = async () => { const ids = [...m.querySelectorAll('.pck:checked')].map(x => x.value);
+    g.disabled = true; try { await q(sb.rpc('gerar_lote', { p_comp: c.id, p_data: $('#ldata').value || null, p_rotulo: $('#lrot').value, p_parceiros: ids })); vPacote(); } catch (e) { g.disabled = false; alertaTopo(e.message); } };
+  listaLotes($('#lotes'), c.id, true);
+  const pend = fech.filter(f => !f.pago_em);
+  $('#fechar').innerHTML = c.status === 'fechada' ? '<div class="msg ok">Competência fechada.</div>'
+    : `<p class="sub" style="margin:0">${fech.length ? `${fech.length - pend.length} de ${fech.length} parceiros pagos.` : 'Nenhum parceiro com fechamento neste mês.'} O fechamento só é aceito com todos pagos e sem adiantamento pendente.</p>
+      ${pend.length ? `<details><summary style="cursor:pointer;font-size:14px">Pendentes (${pend.length})</summary><p style="font-size:13px">${pend.map(f => esc(pm[f.parceiro_id]?.regiao || '—')).join(', ')}</p></details>` : ''}
+      <div><button class="btn ${pend.length || !fech.length ? 'sec' : 'marca'}" id="fcomp" ${pend.length || !fech.length ? 'disabled' : ''}>Fechar ${nomeMes(c.mes)}</button></div>`;
+  const fc = $('#fcomp'); if (fc) fc.onclick = async () => { fc.disabled = true; try { await q(sb.rpc('fechar_competencia', { p_comp: c.id })); await carregarBase(); vPacote(); } catch (e) { fc.disabled = false; alertaTopo(e.message); } };
+}
+
 // ================= Notas fiscais =================
 const digitos = t => String(t || '').replace(/\D/g, '');
-const fmtCNPJ = t => { const d = digitos(t); return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : (t || ''); };
+const fmtCNPJ = t => { const d = digitos(t); return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : d.length === 11 ? d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4') : (t || ''); };
 async function textoPDF(file) {
   if (!window.pdfjsLib) return '';
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -1690,7 +1843,7 @@ function desenharDiretoria(el) {
     ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi neutro"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
-  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
   <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
   <section class="bloco"><h2>Evolução em 2026 · ${OPS[op]}</h2><div id="graf" style="position:relative"></div></section>
@@ -1698,6 +1851,7 @@ function desenharDiretoria(el) {
   </div>
   <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
+  <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
@@ -1724,6 +1878,7 @@ function desenharDiretoria(el) {
   blocoAno($('#dano'), D, c);
   ponte($('#dponte'), D, c, ant);
   eficiencia($('#defic'), D, c);
+  if (D.aba === 'lotes') listaLotes($('#dlotes'), c.id, false);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, pago: r.pago_em, fechado: fechado(r) })));
