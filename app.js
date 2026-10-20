@@ -190,6 +190,7 @@ function casca() {
 
 function seletorComp(soAbertas = true) {
   const lista = S.comps.filter(c => !soAbertas || c.status === 'aberta');
+  if (lista.length && !lista.some(c => c.id === S.compId)) { S.compId = lista.slice().sort((a, b) => a.mes.localeCompare(b.mes))[0].id; S.umovPrev = null; }
   return `<label class="campo" style="min-width:220px">Competência
     <select id="comp">${lista.map(c => `<option value="${c.id}" ${c.id === S.compId ? 'selected' : ''}>${nomeMes(c.mes)}${c.status === 'fechada' ? ' (fechada)' : ''}</option>`).join('')}</select></label>`;
 }
@@ -519,7 +520,10 @@ async function gravarCarteira() {
     }
     await q(sb.from('carteira_importacoes').update({ linhas_novas: novas }).eq('id', imp.id));
     S.cartPrev = null;
-    $('#prevc').innerHTML = `<div class="msg ok">Planilha gravada: ${fmtN(novas)} movimentos novos (${fmtN(p.movimentos.length - novas)} já estavam no portal).</div>`;
+    passo('Atualizando a carteira de pontos…', 98);
+    const ap = await q(sb.rpc('aplicar_movimentos_cadastro'));
+    prog.innerHTML = '';
+    $('#prevc').innerHTML = `<div class="msg ok">Planilha gravada: ${fmtN(novas)} movimentos novos (${fmtN(p.movimentos.length - novas)} já estavam no portal).<br>Carteira de pontos atualizada: ${fmtN(ap.novos)} pontos novos, ${fmtN(ap.situacao)} mudanças de situação (ativo, cancelado, suspenso) e ${fmtN(ap.frequencia)} de frequência. ${ap.pendencias ? `${fmtN(ap.pendencias)} pontos com pendência (sem parceiro ou sem preço) para completar em <a href="#pontos">Carteira de pontos</a>.` : ''}</div>`;
     await carteiraResumo();
   } catch (e) {
     prog.innerHTML = `<div class="msg erro">A gravação parou: ${esc(e.message)}. O que já foi gravado fica; pode subir de novo que as linhas repetidas são ignoradas.</div>`;
@@ -530,27 +534,34 @@ async function gravarCarteira() {
 // ---------- Passo 4: Liberar competência ----------
 async function vCompetencias() {
   const m = $('#main');
-  m.innerHTML = `<div class="topo"><div><h1>Liberar competência</h1><p>Depois de importar o Umov do mês, libere a competência para os parceiros baixarem o relatório e enviarem a versão deles. Dá para bloquear de novo enquanto a competência estiver aberta.</p></div></div><div id="lista" class="carregando">Carregando…</div><div id="evt"></div>`;
-  const [imps, evts] = await Promise.all([
+  m.innerHTML = `<div class="topo"><div><h1>Liberar competência</h1><p>Para liberar, o mês precisa ter a base de pontos gerada (a partir da Carteira de pontos). O Umov entra quando o mês termina e não impede a liberação. Dá para bloquear de novo enquanto a competência estiver aberta.</p></div></div><div id="lista" class="carregando">Carregando…</div><div id="evt"></div>`;
+  const [imps, bases, evts] = await Promise.all([
     q(sb.from('umov_importacoes').select('competencia_id,linhas,importado_em').eq('status', 'ativa')),
+    q(sb.from('pontos_importacoes').select('competencia_id,pontos,importado_em').eq('status', 'ativa')),
     q(sb.from('competencia_eventos').select('*').order('feito_em', { ascending: false }).limit(20)),
   ]);
-  const impDe = id => imps.find(i => i.competencia_id === id);
+  const impDe = id => imps.find(i => i.competencia_id === id); const baseDe = id => bases.find(i => i.competencia_id === id);
   $('#lista').outerHTML = `<section class="bloco"><div class="tabela"><table>
-    <thead><tr><th>Competência</th><th>Situação</th><th>Base do Umov</th><th>Parceiros</th><th></th></tr></thead>
+    <thead><tr><th>Competência</th><th>Situação</th><th>Base de pontos</th><th>Umov</th><th>Parceiros</th><th></th></tr></thead>
     <tbody>${S.comps.map(c => {
-      const i = impDe(c.id); const aberta = c.status === 'aberta';
+      const i = impDe(c.id); const bs = baseDe(c.id); const aberta = c.status === 'aberta';
       return `<tr><td><b>${nomeMes(c.mes)}</b></td>
         <td><span class="pill ${aberta ? 'marca' : ''}">${aberta ? 'Aberta' : 'Fechada'}</span></td>
-        <td>${i ? `${fmtN(i.linhas)} linhas · ${fmtD(i.importado_em)}` : (aberta ? '<span class="pill alerta">não importada</span>' : '—')}</td>
+        <td>${bs ? `${fmtN(bs.pontos)} pontos · ${fmtD(bs.importado_em)}` : (aberta ? `<button class="btn sec peq" data-gerar="${c.id}">Gerar base do mês</button>` : '—')}</td>
+        <td>${i ? `${fmtN(i.linhas)} linhas · ${fmtD(i.importado_em)}` : (aberta ? '<span class="nota">entra no fim do mês</span>' : '—')}</td>
         <td>${c.liberada_parceiros ? `Liberada em ${fmtDH(c.liberada_em)}` : (aberta ? 'Bloqueada' : '—')}</td>
         <td>${aberta ? (c.liberada_parceiros
           ? `<button class="btn sec peq" data-acao="bloquear" data-id="${c.id}">Bloquear</button>`
-          : `<button class="btn peq" data-acao="liberar" data-id="${c.id}" ${i ? '' : 'disabled title="Importe o Umov antes"'}>Liberar</button>`) : ''}</td></tr>
-        <tr id="conf-${c.id}" hidden><td colspan="5"></td></tr>`;
+          : `<button class="btn peq" data-acao="liberar" data-id="${c.id}" ${bs ? '' : 'disabled title="Gere a base do mês antes"'}>Liberar</button>`) : ''}</td></tr>
+        <tr id="conf-${c.id}" hidden><td colspan="6"></td></tr>`;
     }).join('')}</tbody></table></div></section>`;
   $('#evt').innerHTML = evts.length ? `<section class="bloco"><h2>Registro</h2><div class="tabela"><table><thead><tr><th>Quando</th><th>Competência</th><th>O que aconteceu</th></tr></thead><tbody>
     ${evts.map(e => `<tr><td>${fmtDH(e.feito_em)}</td><td>${nomeMes(S.comps.find(c => c.id === e.competencia_id)?.mes)}</td><td>${({ liberada: 'Liberada aos parceiros', bloqueada: 'Bloqueada para os parceiros', fechada: 'Competência fechada' })[e.evento] || esc(e.evento)}${e.detalhe ? ` <span class="nota">${esc(e.detalhe)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></section>` : '';
+  app.querySelectorAll('[data-gerar]').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Gerando…';
+    try { const r = await q(sb.rpc('gerar_base_mes', { p_comp: b.dataset.gerar })); await vCompetencias(); alertaOk(`Base gerada: ${fmtN(r.pontos)} pontos.${r.sem_parceiro ? ` ${fmtN(r.sem_parceiro)} pontos ativos ficaram de fora por não ter parceiro — complete em Carteira de pontos e gere de novo.` : ''}`); }
+    catch (e) { b.disabled = false; b.textContent = 'Gerar base do mês'; alertaTopo(e.message); }
+  });
   app.querySelectorAll('[data-acao]').forEach(b => b.onclick = () => {
     const c = S.comps.find(x => x.id === b.dataset.id); const lib = b.dataset.acao === 'liberar';
     const tr = $(`#conf-${c.id}`); tr.hidden = false;
@@ -585,9 +596,11 @@ async function vPontos() {
   m.innerHTML = `<div class="topo"><div><h1>Carteira de pontos</h1><p>O cadastro de pontos fica no portal: cliente, loja, cidade, frequência, parceiro e valor unitário. Ele é atualizado pela planilha de inclusão e cancelamento e pelos seus ajustes, e todo mês o portal gera a base de pontos a partir dele.</p></div>${seletorComp()}</div>
     <div id="cart-corpo" class="carregando">Carregando…</div>`;
   ligarSeletor(vPontos);
-  const res = await q(sb.from('cadastro_resumo').select('*'));
+  let res = await q(sb.from('cadastro_resumo').select('*'));
   const tot = res.reduce((a, r) => a + r.pontos, 0);
   if (!tot) return cargaInicial();
+  // a carteira acompanha sempre a última planilha de inclusão e cancelamento (a rotina não duplica nada)
+  try { const ap = await q(sb.rpc('aplicar_movimentos_cadastro')); if (ap.novos || ap.situacao || ap.frequencia) { S.apAuto = ap; res = await q(sb.from('cadastro_resumo').select('*')); } } catch (e) { /* segue com o que existe */ }
   const g = k => res.find(r => r.situacao === k) || { pontos: 0, pendencias: 0, parceiros: 0 };
   const [hist, ult] = await Promise.all([
     q(sb.from('pontos_importacoes').select('*').eq('competencia_id', S.compId).eq('status', 'ativa').maybeSingle()),
@@ -625,6 +638,7 @@ async function vPontos() {
       </div>
       <div id="res"></div>
     </section>`;
+  if (S.apAuto) { const r = S.apAuto; S.apAuto = null; $('#msg-aplicar').innerHTML = `<div class="msg ok">Carteira atualizada pela última planilha de inclusão e cancelamento: ${fmtN(r.novos)} pontos novos, ${fmtN(r.situacao)} mudanças de situação e ${fmtN(r.frequencia)} de frequência. ${fmtN(r.pendencias)} pendências para revisar.</div>`; }
   $('#aplicar').onclick = async e => {
     e.target.disabled = true;
     try { const r = await q(sb.rpc('aplicar_movimentos_cadastro')); $('#msg-aplicar').innerHTML = `<div class="msg ok">${fmtN(r.novos)} pontos novos, ${fmtN(r.situacao)} mudanças de situação e ${fmtN(r.frequencia)} de frequência. ${fmtN(r.pendencias)} pendências para revisar.</div>`; carregarPend(); }
