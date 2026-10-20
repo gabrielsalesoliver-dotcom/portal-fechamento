@@ -140,11 +140,11 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
-  ['Próximas etapas', [['', 'Adiantamentos'], ['', 'Pacote do financeiro e pagamento']]],
+  ['Próximas etapas', [['', 'Pacote do financeiro e pagamento']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 async function vVerParceiro() {
@@ -984,10 +984,12 @@ async function vParceiroInicio() {
       <div id="prevr"></div>
     </section>
     <section class="bloco" id="situacao"><h2>3. Situação do seu relatório</h2><div id="sitr" class="carregando">Carregando…</div></section>
-    <section class="bloco" id="secnf"><h2>4. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>`;
+    <section class="bloco" id="secnf"><h2>4. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>
+    <section class="bloco"><h2>Adiantamento</h2><p class="sub">Peça um adiantamento do mês. A GSM confirma o valor e a data; o valor adiantado é descontado da NF do fechamento.</p><div id="adip" class="carregando">Carregando…</div></section>`;
   if ($('#arqr')) ligarZona('arqr', f => previaRelatorio(f, c));
   situacaoParceiro(c);
   secaoNF(c);
+  secaoAdiantamento(c);
   const b = $('#baixar');
   if (b) b.onclick = async () => {
     b.disabled = true; b.textContent = 'Gerando…';
@@ -1244,6 +1246,91 @@ async function cadHistorico(parcs) {
   };
   box.innerHTML = `<section class="bloco"><div class="tabela"><table><tbody>${log.map(g => `<tr><td style="font-size:13px;white-space:nowrap">${fmtDH(g.feito_em)}</td><td style="font-size:14px">${desc(g)}</td></tr>`).join('') || '<tr><td class="nota">Nenhuma alteração registrada ainda.</td></tr>'}</tbody></table></div>
     <p class="nota">Mostra as últimas 150 alterações em parceiros, valores fixos e rotas.</p></section>`;
+}
+
+// ================= Adiantamentos =================
+const ST_ADI = { solicitado: ['Aguardando GSM', 'alerta'], liberado: ['Liberado, a pagar', 'marca'], recusado: ['Recusado', ''], enviado_financeiro: ['No financeiro', 'marca'], nf_recebida: ['Liberado, a pagar', 'marca'], pago: ['Pago', 'escuro'], cancelado: ['Cancelado', ''] };
+
+async function secaoAdiantamento(c) {
+  const box = $('#adip'); if (!box) return;
+  const [ads, fe] = await Promise.all([
+    q(sb.from('adiantamentos').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('solicitado_em', { ascending: false })),
+    q(sb.from('fechamento_parceiro').select('valor_aprovado').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)),
+  ]).then(([x, f]) => [x, f[0]]);
+  box.className = '';
+  const pendente = ads.some(a => a.status === 'solicitado');
+  const pode = c.status === 'aberta' && !pendente && !(fe && fe.valor_aprovado != null);
+  const comprometido = ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)).reduce((s, a) => s + Number(a.valor || 0), 0);
+  box.innerHTML = `${ads.length ? `<div class="tabela"><table><thead><tr><th>Pedido</th><th class="n">Solicitado</th><th class="n">Liberado</th><th>Pagamento</th><th>Situação</th></tr></thead><tbody>
+      ${ads.map(a => { const [r, k] = ST_ADI[a.status] || [a.status, '']; return `<tr><td>${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td><td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor) : '—'}</td>
+        <td>${a.pago_em ? 'pago em ' + fmtD(a.pago_em) : a.data_pagamento ? 'previsto ' + fmtD(a.data_pagamento) : '—'}</td><td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">GSM: ${esc(a.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}
+      </tbody></table></div>${comprometido ? `<p class="nota" style="margin:0">Adiantado no mês: ${BRL2(comprometido)}. Esse valor é descontado da NF do fechamento.</p>` : ''}` : '<p class="nota" style="margin:0">Nenhum pedido de adiantamento neste mês.</p>'}
+    ${pode ? `<div class="linha" style="align-items:flex-end"><label class="campo">Valor (R$)<input class="peq" id="adi-v" style="width:140px"></label><label class="campo" style="flex:1 1 260px">Observação (opcional)<input class="peq" id="adi-o" placeholder="ex.: combustível da primeira quinzena"></label><button class="btn peq" id="adi-ok">Pedir adiantamento</button></div><div id="adi-m"></div>`
+      : pendente ? '<p class="nota" style="margin:0">Há um pedido aguardando a GSM.</p>' : ''}`;
+  const b = $('#adi-ok');
+  if (b) b.onclick = async () => {
+    const v = numBR($('#adi-v').value);
+    if (v == null || Number.isNaN(v) || v <= 0) { $('#adi-m').innerHTML = '<div class="msg erro">Informe um valor válido.</div>'; return; }
+    b.disabled = true;
+    try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#adi-o').value, p_parceiro: S.previa ? S.parc.id : null })); secaoAdiantamento(c); }
+    catch (e) { b.disabled = false; $('#adi-m').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+  };
+}
+
+async function vAdiantamentos() {
+  const m = $('#main');
+  m.innerHTML = `<div class="topo"><div><h1>Adiantamentos</h1><p>Pedidos dos parceiros. Você libera (podendo ajustar o valor e a data) ou recusa com motivo. O valor liberado é descontado da NF do fechamento, que sai pelo líquido.</p></div>${seletorComp(false)}</div><div id="adis" class="carregando">Carregando…</div>`;
+  ligarSeletor(vAdiantamentos);
+  const c = comp();
+  const [ads, prev, fech, parcs] = await Promise.all([
+    todas(() => sb.from('adiantamentos').select('*').eq('competencia_id', c.id).order('solicitado_em', { ascending: false })),
+    todas(() => sb.from('previsao_realizado').select('parceiro_id,previsto').eq('competencia_id', c.id)),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado').eq('competencia_id', c.id)),
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo').order('regiao')),
+  ]);
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
+  const ativo = a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status);
+  const jaAd = id => ads.filter(a => a.parceiro_id === id && ativo(a)).reduce((s, a) => s + Number(a.valor || 0), 0);
+  const soma = f => ads.filter(f).reduce((s, a) => s + Number(a.valor ?? a.valor_solicitado ?? 0), 0);
+  S.adiFiltro = S.adiFiltro || 'todos';
+  const vis = ads.filter(a => S.adiFiltro === 'todos' || (S.adiFiltro === 'apagar' ? ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status) : a.status === S.adiFiltro));
+  $('#adis').outerHTML = `
+    <div class="kpis">
+      <div class="kpi ${ads.some(a => a.status === 'solicitado') ? 'alerta' : 'neutro'}"><small>Pedidos em aberto</small><b>${ads.filter(a => a.status === 'solicitado').length}</b><span>${BRL(soma(a => a.status === 'solicitado'))} solicitados</span></div>
+      <div class="kpi"><small>Liberados a pagar</small><b>${BRL(soma(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)))}</b><span>${ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)).length} adiantamento(s)</span></div>
+      <div class="kpi neutro"><small>Pagos</small><b>${BRL(soma(a => a.status === 'pago'))}</b><span>${ads.filter(a => a.status === 'pago').length} adiantamento(s)</span></div>
+    </div>
+    ${c.status === 'aberta' ? `<section class="bloco"><h2>Lançar pedido em nome do parceiro</h2><div class="linha"><select class="peq" id="na-p" style="flex:1 1 260px"><option value="">Parceiro…</option>${parcs.filter(p => p.ativo !== false).map(p => `<option value="${p.id}">${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select>
+      <input class="peq" id="na-v" placeholder="Valor (R$)" style="width:140px"><input class="peq" id="na-o" placeholder="Observação" style="flex:1 1 220px"><button class="btn sec peq" id="na-ok">Lançar pedido</button></div></section>` : ''}
+    <section class="bloco"><div class="linha">${[['todos', 'Todos', ads.length], ['solicitado', 'Em aberto', ads.filter(a => a.status === 'solicitado').length], ['apagar', 'A pagar', ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)).length], ['pago', 'Pagos', ads.filter(a => a.status === 'pago').length], ['recusado', 'Recusados', ads.filter(a => a.status === 'recusado').length]]
+      .map(([k, n, qq]) => `<button class="btn ${S.adiFiltro === k ? '' : 'sec'} peq" data-af="${k}">${n} (${qq})</button>`).join('')}</div>
+    <div class="tabela"><table id="aditab"><thead><tr><th>Parceiro</th><th>Pedido</th><th class="n">Solicitado</th><th class="n">Previsto do mês</th><th class="n">Já adiantado</th><th class="n">Liberado</th><th>Situação</th><th></th></tr></thead><tbody>
+    ${vis.map(a => { const p = pm[a.parceiro_id] || {}; const [r, k] = ST_ADI[a.status] || [a.status, '']; const prv = pv[a.parceiro_id];
+      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')}</span></td><td style="font-size:13px">${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td>
+        <td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${prv ? BRL(prv) : '—'}</td><td class="n">${jaAd(a.parceiro_id) ? BRL(jaAd(a.parceiro_id)) : '—'}</td>
+        <td class="n">${a.valor != null ? BRL2(a.valor) : '—'}${a.data_pagamento ? `<br><span class="nota">${a.pago_em ? 'pago ' + fmtD(a.pago_em) : 'pagar ' + fmtD(a.data_pagamento)}</span>` : ''}</td>
+        <td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">${esc(a.motivo_recusa)}</div>` : ''}</td>
+        <td style="white-space:nowrap">${a.status === 'solicitado' ? `<button class="btn peq" data-lib="${a.id}">Liberar</button> <button class="btn sec peq" data-rcs="${a.id}">Recusar</button>`
+          : ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status) ? `<button class="btn peq" data-pag="${a.id}">Registrar pago</button> <button class="btn sec peq" data-can="${a.id}">Cancelar</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="nota">Nenhum adiantamento.</td></tr>'}
+    </tbody></table></div>
+    <p class="nota">"Previsto do mês" é o calendarizado do parceiro, só como referência. O portal não impõe limite de valor.</p></section>`;
+  m.querySelectorAll('[data-af]').forEach(b => b.onclick = () => { S.adiFiltro = b.dataset.af; vAdiantamentos(); });
+  const tab = $('#aditab');
+  const linha = (b, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="8" style="background:var(--field)"><div class="linha" style="align-items:flex-end">${html}</div><div class="am"></div></td>`; b.closest('tr').after(l); return l; };
+  const rodar = async (l, btn, fn) => { btn.disabled = true; try { await fn(); vAdiantamentos(); } catch (e) { btn.disabled = false; l.querySelector('.am').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; } };
+  const hoje = new Date().toISOString().slice(0, 10);
+  tab.querySelectorAll('[data-lib]').forEach(b => b.onclick = () => { const a = ads.find(x => x.id === b.dataset.lib);
+    const l = linha(b, `<label class="campo">Valor liberado<input class="peq" id="lv" value="${String(a.valor_solicitado ?? '').replace('.', ',')}" style="width:130px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ld" value="${hoje}"></label><label class="campo" style="flex:1 1 220px">Observação<input class="peq" id="lo"></label><button class="btn peq" id="lok">Confirmar liberação</button>`);
+    l.querySelector('#lok').onclick = ev => { const v = numBR(l.querySelector('#lv').value); rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: a.id, p_decisao: 'liberar', p_valor: Number.isNaN(v) ? null : v, p_data: l.querySelector('#ld').value || null, p_motivo: l.querySelector('#lo').value }))); }; });
+  tab.querySelectorAll('[data-rcs]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo" style="flex:1 1 300px">Motivo (o parceiro vê)<input class="peq" id="rm"></label><button class="btn peq" id="rok">Recusar</button>`);
+    l.querySelector('#rok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: b.dataset.rcs, p_decisao: 'recusar', p_motivo: l.querySelector('#rm').value }))); });
+  tab.querySelectorAll('[data-can]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo" style="flex:1 1 300px">Motivo do cancelamento<input class="peq" id="cm"></label><button class="btn peq" id="cok">Cancelar adiantamento</button>`);
+    l.querySelector('#cok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: b.dataset.can, p_decisao: 'cancelar', p_motivo: l.querySelector('#cm').value }))); });
+  tab.querySelectorAll('[data-pag]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo">Pago em<input class="peq" type="date" id="pd" value="${hoje}"></label><button class="btn peq" id="pok">Confirmar pagamento</button>`);
+    l.querySelector('#pok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('pagar_adiantamento', { p_id: b.dataset.pag, p_data: l.querySelector('#pd').value || null }))); });
+  const na = $('#na-ok');
+  if (na) na.onclick = async () => { const v = numBR($('#na-v').value); if (!$('#na-p').value) return alertaTopo('Escolha o parceiro.'); if (v == null || Number.isNaN(v) || v <= 0) return alertaTopo('Informe o valor.');
+    na.disabled = true; try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#na-o').value, p_parceiro: $('#na-p').value })); vAdiantamentos(); } catch (e) { na.disabled = false; alertaTopo(e.message); } };
 }
 
 // ================= Notas fiscais =================
