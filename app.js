@@ -1626,21 +1626,72 @@ async function textoPDF(file) {
   for (let i = 1; i <= Math.min(pdf.numPages, 4); i++) { const pg = await pdf.getPage(i); const c = await pg.getTextContent(); t += c.items.map(x => x.str).join(' ') + '\n'; }
   return t;
 }
-// Lê o que der do PDF; o que não achar fica para a pessoa preencher. Nada é inventado.
-function lerNF(texto, cnpjParceiro, esperado) {
-  const t = texto.replace(/\s+/g, ' ');
-  const cnpjs = [...new Set((t.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g) || []).map(digitos))];
-  const valores = [...new Set((t.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).map(v => Number(v.replace(/\./g, '').replace(',', '.'))))].filter(v => v > 0);
-  const m = t.match(/(?:N[úu]mero|N[º°o]\.?)\s*(?:da\s*)?(?:NFS-?e|Nota(?:\s*Fiscal)?)?\s*[:\-]?\s*(\d{1,15})/i);
-  const vl = t.match(/Valor\s+L[íi]quido[^\d]{0,40}(\d{1,3}(?:\.\d{3})*,\d{2})/i) || t.match(/Valor\s+(?:Total|do\s+Servi[çc]o|dos\s+Servi[çc]os)[^\d]{0,40}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
-  const dt = t.match(/(?:Emiss[ãa]o|Compet[êe]ncia)[^\d]{0,30}(\d{2}\/\d{2}\/\d{4})/i);
-  return {
-    texto: t.trim().length > 40, cnpj_parceiro_no_pdf: !!cnpjParceiro && cnpjs.includes(digitos(cnpjParceiro)),
-    numero: m ? m[1] : '', valor: vl ? Number(vl[1].replace(/\./g, '').replace(',', '.')) : null,
-    esperado_no_pdf: esperado != null && valores.some(v => Math.abs(v - esperado) < 0.01),
-    data: dt ? dt[1].split('/').reverse().join('-') : '',
-  };
+// Leitura por imagem (NF escaneada ou foto): renderiza a página e lê com OCR em português
+let _tess = null;
+async function carregarTesseract() {
+  if (window.Tesseract) return window.Tesseract;
+  if (!_tess) _tess = new Promise((ok, erro) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; sc.onload = () => ok(window.Tesseract); sc.onerror = () => erro(new Error('Não foi possível carregar o leitor de imagem.')); document.head.appendChild(sc); });
+  return _tess;
 }
+async function textoOCR(file, aviso) {
+  const T = await carregarTesseract();
+  const imgs = [];
+  if (/\.pdf$/i.test(file.name)) {
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) { const pg = await pdf.getPage(i); const vp = pg.getViewport({ scale: 2.5 }); const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height; await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; imgs.push(cv); }
+  } else imgs.push(file);
+  const w = await T.createWorker('por', 1, { logger: m => { if (m.status === 'recognizing text' && aviso) aviso(Math.round(m.progress * 100)); } });
+  let t = ''; for (const im of imgs) { const { data } = await w.recognize(im); t += data.text + '\n'; }
+  await w.terminate(); return t;
+}
+// Leitura de NFS-e (vários layouts municipais e o DANFSe nacional). Nada é inventado: o que não achar volta vazio.
+const GSM_CNPJ = '46766513000109';
+const digN = t => String(t || '').replace(/\D/g, '');
+const moedaN = v => Number(String(v).replace(/\./g, '').replace(',', '.'));
+function lerNF(texto, { cnpjParceiro = '', esperado = null } = {}) {
+  const t = String(texto || '').replace(/\s+/g, ' ').trim();
+  const r = { texto: t.length > 60, numero: '', valor: null, data: '', cnpj: '', cnpj_parceiro_no_pdf: false, valor_confere: null, valores: [] };
+  if (!r.texto) return r;
+  // CNPJ/CPF
+  const docs = [...new Set((t.match(/\b\d{2}\.?\d{3}\.?\d{3}[\/.]?\d{4}-?\d{2}\b|\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g) || []).map(digN).filter(d => d.length === 14 || d.length === 11))];
+  const cp = digN(cnpjParceiro);
+  r.cnpj_parceiro_no_pdf = !!cp && docs.includes(cp);
+  r.tomador_gsm = docs.includes(GSM_CNPJ);
+  r.cnpj = r.cnpj_parceiro_no_pdf ? cp : (docs.find(d => d !== GSM_CNPJ) || '');
+  // Valores em R$
+  const vals = (t.match(/(?<![\d.,])\d{1,3}(?:\.\d{3})*,\d{2}(?![\d,])/g) || []).map(moedaN).filter(v => v > 0);
+  r.valores = [...new Set(vals)];
+  const rotulos = [/Valor\s+L[íi]quido(?:\s+da\s+NFS-?e)?(?:\s*\(R\$\))?\s*(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2})/i,
+    /VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*=?\s*R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i,
+    /Valor\s+(?:Total\s+)?d[oa]s?\s+(?:Servi[çc]os?|NFS-?e|Nota)\s*(?:\(R\$\))?\s*:?\s*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i];
+  let rot = null; for (const re of rotulos) { const m = t.match(re); if (m) { rot = moedaN(m[1]); break; } }
+  if (esperado != null && r.valores.some(v => Math.abs(v - esperado) < 0.01)) { r.valor = Number(esperado); r.valor_confere = true; }
+  else { r.valor = rot ?? (r.valores.length ? Math.max(...r.valores) : null); r.valor_confere = esperado == null ? null : false; }
+  // Data de emissão: prefere data com hora; senão a primeira perto de "emiss"
+  const comHora = t.match(/(\d{2}\/\d{2}\/\d{4})\s*(?:-|às)?\s*\d{2}:\d{2}/);
+  const perto = t.match(/Emiss[ãa]o[^\d]{0,60}(\d{2}\/\d{2}\/\d{4})/i);
+  const d = (comHora || perto || t.match(/\b(\d{2}\/\d{2}\/\d{4})\b/) || [])[1];
+  if (d) { const [dd, mm, yy] = d.split('/'); r.data = `${yy}-${mm}-${dd}`; }
+  // Número da nota. 1º: chave de acesso nacional (50 dígitos: município 7, ambiente 1, tipo 1, CNPJ/CPF 14, número 13, AAMM 4, código 9, DV 1)
+  for (const ch of (t.match(/(?<!\d)\d{50}(?!\d)/g) || [])) {
+    const doc = ch.slice(9, 23); const n = ch.slice(23, 36).replace(/^0+/, '');
+    if (n && (docs.includes(doc) || docs.includes(doc.slice(3)) || doc === cp)) { r.numero = n; r.chave = ch; if (!r.cnpj) r.cnpj = doc; break; }
+  }
+  const nums = [
+    /N[ÚU]MERO\s+DA\s+NFS-?E\s+0*(\d{1,15})\b(?!\/)/i,
+    /N[ÚU]MERO\s+DA\s+NFS-?E\s+COMPET[ÊE]NCIA\D{0,140}?\b0*(\d{1,15})\s+\d{2}\/\d{2}\/\d{4}/i,
+    /N[°º]\s*NFS-?e\s*\/\s*CHAVE\s+NFS-?e\s+0*(\d{1,15})\s*\//i,
+    /N[úu]mero\s+da\s+Nota\s+Data\s+e\s+Hora\s+de\s+Emiss[ãa]o\s+C[óo]digo\s+de\s+Verifica[çc][ãa]o\s+\S*u\d+\s+0*(\d{1,10})\b/i,
+    /NFS-?e\s+Substitu[íi]da\s+(?:\d+\s+)?0*(\d{1,10})\s+NFS-?e/i,
+    /Compet[êe]ncia\s+0*(\d{1,10})\s*(?:\/\s*[A-Z0-9]{1,3}\s*)?\d{2}\/\d{4}/i,
+    /N[úu]mero\s*\/\s*S[ée]rie.{0,80}?\b0*(\d{1,10})\s*\/\s*[A-Z]{1,3}\b/i,
+    /N[úu]mero\s+da\s+(?:Nota|NFS-?e)\s*:?\s*0*(\d{1,12})\b(?!\/)/i,
+    /N[úu]mero\s*:\s*0*(\d{1,12})\b(?!\/)/i,
+  ];
+  if (!r.numero) for (const re of nums) { const m = t.match(re); if (m && m[1] !== '0') { r.numero = m[1]; break; } }
+  return r;
+}
+
 const ST_NF = { recebida: ['A conferir', 'alerta'], conferida: ['Conferida', 'escuro'], recusada: ['Recusada', 'marca'], cancelada: ['Cancelada', ''], substituida: ['Substituída', ''] };
 const SIT_NF = { aguardando: ['Aguardando NF', ''], a_conferir: ['NF a conferir', 'alerta'], faltando: ['Soma diferente do esperado', 'marca'], conferida: ['NF conferida', 'escuro'] };
 
@@ -1664,27 +1715,50 @@ async function secaoNF(c) {
     ${nfs.length ? `<div class="tabela"><table><thead><tr><th>NF</th><th>Emissão</th><th>CNPJ emitente</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
       ${nfs.map(n => { const [r, k] = ST_NF[n.status] || [n.status, '']; return `<tr><td><b>${esc(n.numero)}</b>${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">PDF</a>` : ''}</td><td>${fmtD(n.data_emissao)}</td><td class="num">${esc(fmtCNPJ(n.cnpj_emitente))}</td><td class="n">${BRL2(n.valor)}</td>
         <td><span class="pill ${k}">${r}</span>${n.motivo_recusa ? `<div class="nota">GSM: ${esc(n.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
-    ${res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste o PDF da NF aqui ou clique para escolher', 'O portal lê o número, o valor e o CNPJ quando o PDF tem texto. Confira antes de enviar.', '.pdf')}<div id="nfform"></div>` : ''}`;
+    ${res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ, tomador e valor e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png')}<div id="nfform"></div>` : ''}`;
   box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
   if ($('#arqnf')) ligarZona('arqnf', f => formNF(f, c, falta > 0.009 ? falta : esp));
 }
 
 async function formNF(file, c, sugerido) {
   const box = $('#nfform');
-  if (!/\.pdf$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie o PDF da nota fiscal.</div>'; return; }
-  box.innerHTML = '<div class="carregando" style="padding:10px 0">Lendo o PDF…</div>';
-  let lido = { texto: false };
-  try { lido = lerNF(await textoPDF(file), S.parc.cnpj, sugerido); } catch (e) { lido = { texto: false }; }
-  const valorIni = lido.valor ?? (lido.esperado_no_pdf ? sugerido : null);
-  box.innerHTML = `<div class="confirma">
-    <b>Confira os dados da NF · ${esc(file.name)}</b>
-    <span>${lido.texto ? `Lido do PDF: ${[lido.numero && 'número', lido.valor != null && 'valor', lido.data && 'data'].filter(Boolean).join(', ') || 'nada reconhecido'}. ${lido.cnpj_parceiro_no_pdf ? 'O CNPJ do parceiro aparece no PDF.' : '<b>O CNPJ cadastrado do parceiro não foi encontrado no PDF.</b>'}` : 'O PDF não tem texto legível (pode ser imagem). Preencha os campos.'}</span>
-    <div class="linha" style="align-items:flex-end">
-      <label class="campo">Número<input class="peq" id="nf-num" value="${esc(lido.numero || '')}" style="width:140px"></label>
+  if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie a NF em PDF (ou foto JPG/PNG).</div>'; return; }
+  box.innerHTML = '<div class="carregando" style="padding:10px 0" id="nf-lendo">Lendo a NF…</div>';
+  const ctx = { cnpjParceiro: S.parc.cnpj, esperado: sugerido };
+  let lido = { texto: false }, ocr = false;
+  try { if (/\.pdf$/i.test(file.name)) lido = lerNF(await textoPDF(file), ctx); } catch (e) { lido = { texto: false }; }
+  if (!lido.texto || (!lido.numero && lido.valor == null)) {
+    ocr = true;
+    try { lido = lerNF(await textoOCR(file, p => { const e = $('#nf-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo o conteúdo… ${p}%`; }), ctx); }
+    catch (e) { lido = { texto: false, erro: e.message }; }
+  }
+  const hoje = new Date().toISOString().slice(0, 10);
+  const cad = digitos(S.parc.cnpj);
+  const ck = { numero: !!lido.numero, data: !!lido.data && lido.data <= hoje && lido.data >= c.mes, cnpj: !!lido.cnpj_parceiro_no_pdf, tomador: !!lido.tomador_gsm, valor: lido.valor_confere === true };
+  const ok = ck.numero && ck.data && ck.cnpj && ck.tomador && ck.valor;
+  const linha = (rot, okk, val, msgRuim, okTxt = 'Confere') => `<tr><td>${rot}</td><td><b>${val || '—'}</b></td><td>${okk ? `<span class="pill escuro">${okTxt}</span>` : `<span class="pill alerta">${msgRuim}</span>`}</td></tr>`;
+  box.innerHTML = lido.texto ? `<div class="confirma">
+    <b>Dados lidos da NF · ${esc(file.name)}${ocr ? ' (lida pela imagem)' : ''}</b>
+    <div class="tabela"><table><tbody>
+      ${linha('Número', ck.numero, esc(lido.numero), 'Não encontrado', 'Lido')}
+      ${linha('Emissão', ck.data, lido.data ? fmtD(lido.data) : '', !lido.data ? 'Não encontrada' : lido.data > hoje ? 'Data futura' : 'Antes do mês da competência')}
+      ${linha('CNPJ do emitente', ck.cnpj, esc(fmtCNPJ(lido.cnpj)), cad ? `Diferente do cadastro (${esc(fmtCNPJ(cad))})` : 'Parceiro sem CNPJ no cadastro')}
+      ${linha('Tomador', ck.tomador, ck.tomador ? 'GSM Group Logística' : '', 'GSM não aparece como tomador')}
+      ${linha('Valor', ck.valor, lido.valor != null ? BRL2(lido.valor) : '', `Esperado ${BRL2(sugerido)}`)}
+    </tbody></table></div>
+    ${ok ? '<div class="msg ok">Todos os dados conferem com o fechamento aprovado.</div>' : '<div class="msg alerta">Há dados que não conferem. Corrija abaixo se a leitura errou; se a NF estiver errada, emita outra. Se enviar assim, a GSM vê os avisos.</div>'}
+    <details ${ok ? '' : 'open'}><summary style="cursor:pointer;font-size:14px">Corrigir a leitura</summary>
+    <div class="linha" style="align-items:flex-end;margin-top:8px">
+      <label class="campo">Número<input class="peq" id="nf-num" value="${esc(lido.numero || '')}" style="width:160px"></label>
       <label class="campo">Emissão<input class="peq" id="nf-dt" type="date" value="${esc(lido.data || '')}"></label>
-      <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(S.parc.cnpj || ''))}" style="width:190px"></label>
-      <label class="campo">Valor (R$)<input class="peq" id="nf-val" value="${valorIni != null ? valorIni.toFixed(2).replace('.', ',') : ''}" style="width:130px"></label>
-    </div>
+      <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(lido.cnpj || cad))}" style="width:190px"></label>
+      <label class="campo">Valor (R$)<input class="peq" id="nf-val" value="${lido.valor != null ? lido.valor.toFixed(2).replace('.', ',') : ''}" style="width:130px"></label>
+    </div></details>
+    <div class="linha"><button class="btn marca" id="nf-env">${ok ? 'Confirmar e enviar NF' : 'Enviar mesmo assim'}</button><button class="btn sec" id="nf-canc">Cancelar</button></div><div id="nf-msg"></div></div>`
+  : `<div class="confirma"><b>Não foi possível ler a NF · ${esc(file.name)}</b><span>${esc(lido.erro || 'O arquivo não tem texto legível.')} Preencha os dados abaixo.</span>
+    <div class="linha" style="align-items:flex-end">
+      <label class="campo">Número<input class="peq" id="nf-num" style="width:160px"></label><label class="campo">Emissão<input class="peq" id="nf-dt" type="date"></label>
+      <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(cad))}" style="width:190px"></label><label class="campo">Valor (R$)<input class="peq" id="nf-val" style="width:130px"></label></div>
     <span class="nota">Valor que falta emitir: ${BRL2(sugerido)}.</span>
     <div class="linha"><button class="btn marca" id="nf-env">Enviar NF</button><button class="btn sec" id="nf-canc">Cancelar</button></div><div id="nf-msg"></div></div>`;
   $('#nf-canc').onclick = () => { box.innerHTML = ''; $('#arqnf').value = ''; };
@@ -1694,9 +1768,13 @@ async function formNF(file, c, sugerido) {
     b.disabled = true; b.textContent = 'Enviando…';
     try {
       const path = `${S.parc.id}/${c.mes.slice(0, 7)}/nf/${Date.now()}_${safeName(file.name)}`;
-      const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o PDF: ' + up.error.message);
-      await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: $('#nf-num').value, p_cnpj: digitos($('#nf-cnpj').value), p_valor: v, p_data: $('#nf-dt').value || null,
-        p_checagens: { texto: !!lido.texto, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, numero_lido: lido.numero || null, valor_lido: lido.valor ?? null, valor_confere_pdf: lido.valor != null ? Math.abs(lido.valor - v) < 0.01 : null } }));
+      const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
+      const num = $('#nf-num').value.trim(), dt = $('#nf-dt').value || null, cn = digitos($('#nf-cnpj').value);
+      await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: num, p_cnpj: cn, p_valor: v, p_data: dt,
+        p_checagens: { texto: !!lido.texto, ocr, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, tomador_gsm: !!lido.tomador_gsm, chave: lido.chave || null,
+          numero_lido: lido.numero || null, data_lida: lido.data || null, valor_lido: lido.valor ?? null,
+          valor_confere_pdf: lido.valor != null ? Math.abs(lido.valor - v) < 0.01 : null,
+          editado: !!lido.texto && (num !== (lido.numero || '') || (dt || '') !== (lido.data || '') || (lido.valor != null && Math.abs(lido.valor - v) >= 0.01)) } }));
       secaoNF(c);
     } catch (e) { $('#nf-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF'; }
   };
@@ -1734,7 +1812,9 @@ async function vNotas() {
       ${minhas.map(n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, '']; const sinais = [
           ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '<span class="pill">CNPJ confere</span>',
           ck.texto ? (ck.cnpj_no_pdf ? '<span class="pill">CNPJ no PDF</span>' : '<span class="pill alerta">CNPJ não achado no PDF</span>') : '<span class="pill alerta">PDF sem texto: conferir visualmente</span>',
-          ck.valor_confere_pdf === false ? `<span class="pill alerta">PDF mostra ${BRL2(ck.valor_lido)}</span>` : ''].join(' ');
+          ck.valor_confere_pdf === false ? `<span class="pill alerta">PDF mostra ${BRL2(ck.valor_lido)}</span>` : '',
+          ck.tomador_gsm === false && ck.texto ? '<span class="pill alerta">GSM não aparece como tomador</span>' : '',
+          ck.editado ? '<span class="pill alerta">Dados digitados diferentes do lido</span>' : '', ck.ocr ? '<span class="pill">lida pela imagem</span>' : ''].join(' ');
         return `<tr style="background:var(--field)"><td colspan="3" style="padding-left:24px;font-size:13px">NF <b>${esc(n.numero)}</b> · emissão ${fmtD(n.data_emissao)} · enviada ${fmtDH(n.enviado_em)}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}<div style="margin-top:4px">${sinais}</div>${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</td>
           <td class="n">${BRL2(n.valor)}</td><td colspan="2"><span class="pill ${k2}">${r2}</span></td>
           <td style="white-space:nowrap">${c.status === 'fechada' ? '' : n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}</td></tr>`; }).join('')}`; }).join('')}
