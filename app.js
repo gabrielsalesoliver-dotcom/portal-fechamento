@@ -222,36 +222,85 @@ async function lerPlanilha(file) {
 async function vPainel() {
   const m = $('#main');
   const c = comp();
-  m.innerHTML = `<div class="topo"><div><h1>Painel</h1><p>Situação da competência em aberto e do ciclo mensal.</p></div>${seletorComp()}</div><div id="corpo" class="carregando">Carregando…</div>`;
+  m.innerHTML = `<div class="topo"><div><h1>Painel</h1><p>O que está acontecendo no mês e o que depende de você agora.</p></div>${seletorComp()}</div><div id="corpo" class="carregando">Carregando…</div>`;
   ligarSeletor(vPainel);
-  const [imp, cart] = await Promise.all([
-    q(sb.from('umov_importacoes').select('*').eq('competencia_id', S.compId).eq('status', 'ativa').maybeSingle()),
-    q(sb.from('carteira_importacoes').select('*').order('importado_em', { ascending: false }).limit(1)),
+  const id = S.compId;
+  const [imp, cart, base, envs, divs, fech, nfr, adis, lotes, cad] = await Promise.all([
+    q(sb.from('umov_importacoes').select('linhas,malote,kits,sem_parceiro,importado_em').eq('competencia_id', id).eq('status', 'ativa').limit(1)).then(r => r[0]),
+    q(sb.from('carteira_importacoes').select('importado_em,linhas_gravadas').order('importado_em', { ascending: false }).limit(1)).then(r => r[0]),
+    q(sb.from('pontos_importacoes').select('importado_em,linhas_lidas,sem_parceiro').eq('competencia_id', id).eq('status', 'ativa').limit(1)).then(r => r[0]),
+    todas(() => sb.from('envios').select('id,parceiro_id,status,versao').eq('competencia_id', id).neq('status', 'substituido')),
+    todas(() => sb.from('divergencias').select('envio_id,parceiro_id,situacao').eq('competencia_id', id).in('situacao', ['precisa_acao', 'em_analise'])),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,lote_id,pago_em').eq('competencia_id', id)),
+    todas(() => sb.from('nf_resumo').select('parceiro_id,situacao,a_conferir').eq('competencia_id', id)),
+    q(sb.from('adiantamentos').select('status,valor,valor_solicitado').eq('competencia_id', id)),
+    q(sb.from('lotes_financeiro').select('id,status').eq('competencia_id', id).neq('status', 'desfeito')),
+    q(sb.from('cadastro_resumo').select('*')),
   ]);
-  const ult = cart[0];
-  const passos = [
-    ['Importar Umov', !!imp, imp ? `${fmtN(imp.linhas)} linhas` : 'pendente'],
-    ['Importar inclusão e cancelamento', !!ult, ult ? fmtD(ult.importado_em) : 'pendente'],
-    ['Liberar adiantamentos', false, 'em construção'],
-    ['Liberar competência aos parceiros', c.liberada_parceiros, c.liberada_parceiros ? 'liberada' : 'pendente'],
-    ['Parceiro valida e envia relatório', false, 'em construção'],
-    ['GSM aprova (valor congelado)', false, 'em construção'],
-    ['Parceiro sobe a NF em PDF', false, 'em construção'],
-    ['Conferência da NF', false, 'em construção'],
-    ['Data de pagamento', false, 'em construção'],
-    ['Pacote do financeiro', false, 'em construção'],
-    ['Registrar pagamento', false, 'em construção'],
-    ['Fechar competência', c.status === 'fechada', c.status],
+  const ativos = S.parceiros.filter(p => p.ativo !== false).length;
+  const ult = {}; envs.forEach(e => { if (!ult[e.parceiro_id] || e.versao > ult[e.parceiro_id].versao) ult[e.parceiro_id] = e; });
+  const ue = Object.values(ult);
+  const comEnvio = ue.length, aprov = ue.filter(e => e.status === 'aprovado').length;
+  const envAtivos = new Set(ue.map(e => e.id));
+  const dv = divs.filter(d => envAtivos.has(d.envio_id));
+  const decidir = dv.filter(d => d.situacao === 'em_analise').length, comParc = dv.filter(d => d.situacao === 'precisa_acao').length;
+  const parcDecidir = new Set(dv.filter(d => d.situacao === 'em_analise').map(d => d.parceiro_id)).size;
+  const prontos = ue.filter(e => e.status !== 'aprovado' && e.status !== 'recusado' && !dv.some(d => d.envio_id === e.id)).length;
+  const comValor = fech.filter(f => f.valor_aprovado != null);
+  const nfConf = nfr.filter(r => r.situacao === 'conferida').length, nfAConf = nfr.filter(r => r.situacao === 'a_conferir').length;
+  const nfAguard = nfr.filter(r => r.situacao === 'aguardando').length, nfDif = nfr.filter(r => r.situacao === 'faltando').length;
+  const adiPed = adis.filter(a => a.status === 'solicitado'), adiLib = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status));
+  const emLote = comValor.filter(f => f.lote_id).length, pagos = comValor.filter(f => f.pago_em).length;
+  const pendCad = (cad || []).filter(r => r.situacao === 'Ativo').reduce((a, r) => a + (r.pendencias || 0), 0);
+  const fechada = c.status === 'fechada';
+
+  // O que depende de você agora
+  const acoes = [];
+  const ac = (txt, link, rot, alerta = true) => acoes.push({ txt, link, rot, alerta });
+  if (!fechada) {
+    if (!base) ac('A base de pontos do mês ainda não foi gerada.', '#competencias', 'Gerar base');
+    else if (!c.liberada_parceiros) ac('A base está pronta, mas o mês ainda não foi liberado para os parceiros.', '#competencias', 'Liberar');
+    if (pendCad) ac(`${fmtN(pendCad)} ponto(s) ativo(s) da carteira com pendência (sem parceiro, sem preço ou frequência sem dia).`, '#pontos', 'Completar');
+    if (imp && imp.sem_parceiro) ac(`${fmtN(imp.sem_parceiro)} atendimento(s) do Umov sem parceiro.`, '#umov', 'Vincular');
+    if (decidir) ac(`${fmtN(decidir)} item(ns) de ${parcDecidir} parceiro(s) aguardando a sua decisão.`, '#conferencia', 'Decidir');
+    if (prontos) ac(`${prontos} parceiro(s) sem pendência, prontos para aprovar.`, '#conferencia', 'Aprovar');
+    if (adiPed.length) ac(`${adiPed.length} pedido(s) de adiantamento aguardando resposta (${BRL(adiPed.reduce((a, x) => a + Number(x.valor_solicitado || 0), 0))}).`, '#adiantamentos', 'Responder');
+    if (nfAConf) ac(`${nfAConf} parceiro(s) com NF nova para conferir.`, '#notas', 'Conferir');
+    if (nfDif) ac(`${nfDif} parceiro(s) com soma de NF diferente do valor líquido.`, '#notas', 'Ver');
+    const semLote = comValor.filter(f => !f.lote_id).length;
+    if (semLote && nfConf) ac(`${semLote} parceiro(s) aprovado(s) ainda fora de lote de pagamento.`, '#pacote', 'Montar lote', false);
+    if (comValor.length && pagos === comValor.length && comValor.length >= ativos) ac('Todos os parceiros pagos: o mês pode ser fechado.', '#pacote', 'Fechar mês', false);
+  }
+
+  const etapas = [
+    ['Inclusão e cancelamento', !!cart, cart ? `última em ${fmtD(cart.importado_em)}` : 'não importada', '#carteira'],
+    ['Base de pontos do mês', !!base, base ? `${fmtN(base.linhas_lidas)} pontos` : 'não gerada', '#competencias'],
+    ['Liberar aos parceiros', !!c.liberada_parceiros, c.liberada_parceiros ? `desde ${fmtD(c.liberada_em)}` : 'não liberada', '#competencias'],
+    ['Umov do mês', !!imp, imp ? `${fmtN(imp.linhas)} linhas` : 'entra no fim do mês', '#umov'],
+    ['Parceiros enviam a base', comEnvio >= ativos && ativos > 0, `${comEnvio} de ${ativos}`, '#conferencia'],
+    ['GSM decide e aprova', aprov >= ativos && ativos > 0, `${aprov} aprovado(s)${decidir ? ` · ${decidir} item(ns) para decidir` : ''}`, '#conferencia'],
+    ['Adiantamentos', !adiPed.length, adiPed.length ? `${adiPed.length} pedido(s) em aberto` : adiLib.length ? `${adiLib.length} liberado(s) a pagar` : 'nenhum pendente', '#adiantamentos'],
+    ['NF conferida', comValor.length > 0 && nfConf >= comValor.length, comValor.length ? `${nfConf} de ${comValor.length} aprovados${nfAguard ? ` · ${nfAguard} aguardando` : ''}` : 'depois da aprovação', '#notas'],
+    ['Lotes do financeiro', comValor.length > 0 && emLote >= comValor.length, comValor.length ? `${emLote} de ${comValor.length} em lote · ${lotes.length} lote(s)` : '—', '#pacote'],
+    ['Pagamento registrado', comValor.length > 0 && pagos >= comValor.length, comValor.length ? `${pagos} de ${comValor.length}` : '—', '#pacote'],
+    ['Fechar competência', fechada, fechada ? 'fechada' : 'aberta', '#pacote'],
   ];
+  const feitas = etapas.filter(e => e[1]).length;
   $('#corpo').outerHTML = `
     <div class="kpis">
-      <div class="kpi ${imp ? '' : 'alerta'}"><small>Umov de ${nomeMes(c.mes)}</small><b>${imp ? fmtN(imp.linhas) : '—'}</b><span>${imp ? `${fmtN(imp.malote)} malote · ${fmtN(imp.kits)} kits` : 'Ainda não importado'}</span></div>
-      <div class="kpi ${imp && imp.sem_parceiro ? 'alerta' : 'neutro'}"><small>Atendimentos sem parceiro</small><b>${imp ? fmtN(imp.sem_parceiro) : '—'}</b><span>${imp ? (imp.sem_parceiro ? 'Rotas sem de-para' : 'Todas as rotas vinculadas') : ''}</span></div>
-      <div class="kpi ${ult ? 'neutro' : 'alerta'}"><small>Inclusão e cancelamento</small><b>${ult ? fmtN(ult.linhas_gravadas) : '—'}</b><span>${ult ? 'Importado em ' + fmtD(ult.importado_em) : 'Ainda não importado'}</span></div>
-      <div class="kpi ${c.liberada_parceiros ? '' : 'neutro'}"><small>Parceiros</small><b>${c.liberada_parceiros ? 'Liberada' : 'Bloqueada'}</b><span>${c.liberada_parceiros ? 'desde ' + fmtDH(c.liberada_em) : 'Libere depois de importar as bases'}</span></div>
+      <div class="kpi ${comEnvio < ativos ? 'alerta' : ''}"><small>Envios dos parceiros</small><b>${comEnvio} de ${ativos}</b><span>${ativos - comEnvio} ainda sem envio</span></div>
+      <div class="kpi ${decidir ? 'alerta' : 'neutro'}"><small>Itens para você decidir</small><b>${fmtN(decidir)}</b><span>${comParc ? `${comParc} aguardando o parceiro` : 'nenhum com o parceiro'}</span></div>
+      <div class="kpi"><small>Aprovados</small><b>${aprov}</b><span>${BRL(comValor.reduce((a, f) => a + Number(f.valor_aprovado || 0), 0))}</span></div>
+      <div class="kpi ${nfAConf ? 'alerta' : 'neutro'}"><small>NFs</small><b>${nfConf} conferida(s)</b><span>${nfAConf} a conferir · ${nfAguard} aguardando</span></div>
+      <div class="kpi ${pagos < comValor.length ? 'neutro' : ''}"><small>Pagos</small><b>${pagos} de ${comValor.length}</b><span>${emLote} parceiro(s) em lote</span></div>
     </div>
-    <section class="bloco"><h2>Ciclo mensal · ${nomeMes(c.mes)}</h2>
-      <ol class="ciclo">${passos.map(([t, ok, d], i) => `<li class="${ok ? 'pronto' : ''}"><b>${i + 1}</b><span>${t}</span><em>${ok ? '✓ ' : ''}${esc(d)}</em></li>`).join('')}</ol>
+    <section class="bloco"><h2>O que depende de você agora</h2>
+      ${acoes.length ? `<div class="tabela"><table><tbody>${acoes.map(a => `<tr><td style="width:12px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${a.alerta ? 'var(--alert)' : 'var(--ink)'}"></span></td><td>${a.txt}</td><td style="text-align:right;white-space:nowrap"><a class="btn sec peq" href="${a.link}">${a.rot}</a></td></tr>`).join('')}</tbody></table></div>`
+        : `<div class="msg ok">${fechada ? 'Competência fechada. Nada pendente.' : 'Nada pendente com você neste momento.'}</div>`}
+    </section>
+    <section class="bloco"><h2>Ciclo de ${nomeMes(c.mes)} · ${feitas} de ${etapas.length} etapas concluídas</h2>
+      <div class="barra" style="max-width:520px"><i style="width:${Math.round(100 * feitas / etapas.length)}%"></i></div>
+      <ol class="ciclo">${etapas.map(([t, ok, d, link], i) => `<li class="${ok ? 'pronto' : ''}"><b>${i + 1}</b><a href="${link}" style="color:inherit;text-decoration:none">${t}</a><em>${ok ? '✓ ' : ''}${esc(d)}</em></li>`).join('')}</ol>
     </section>`;
 }
 
