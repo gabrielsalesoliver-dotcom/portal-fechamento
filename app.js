@@ -1,13 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1030';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1030';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1415';
+import BR from './brasil.js?v=2026.10.23-1415';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1415';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1030';
+const VERSAO = '2026.10.23-1415';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2170,13 +2171,14 @@ function desenharDiretoria(el) {
   </div>
   <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
+  <div data-sec="mapa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Mapa de custos · ${nomeMes(c.mes)}</h2><p class="sub">Onde agir para reduzir custo. O custo de cada parceiro é dividido entre os estados pela quantidade de pontos que ele atende em cada um. Clique em um estado para ver os parceiros e a ação sugerida.</p><div id="dmapa"></div></section></div>
   <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
     <p class="sub">Previsto = valor fixo do contrato + atendimentos calendarizados de cada ponto × valor unitário. Realizado = malote fechado do parceiro. Kits/Spot não entram na previsão.</p>
-    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
+    <div id="rprev"></div><div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
   <section class="bloco"><h2>Projeção por parceiro até dezembro</h2>
     <p class="sub">Calculada com a carteira de pontos de hoje e as mesmas regras do previsto do mês: frequência de cada ponto × dias úteis (sem feriados nacionais) × valor unitário, mais o valor fixo do contrato. Entram as inclusões e cancelamentos já cadastrados com data futura.</p>
     <div id="pprev"><div class="carregando">Calculando a projeção…</div></div></section></div>
@@ -2204,14 +2206,19 @@ function desenharDiretoria(el) {
   eficiencia($('#defic'), D, c);
   if (D.aba === 'lotes') listaLotes($('#dlotes'), c.id, false);
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
+  if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
   if (D.proj === undefined && D.aba === 'previsto') { D.proj = null; todas(() => sb.rpc('projecao_previsto', {})).then(r => { D.proj = r; if (D.aba === 'previsto') desenharDiretoria(el); }).catch(e => { D.proj = { erro: e.message }; desenharDiretoria(el); }); }
   const proj = Array.isArray(D.proj) ? D.proj : [];
-  const mesesProj = [...new Set(proj.map(r => r.mes))].filter(m => !D.comps.some(x => x.mes === m)).sort();
-  const serieProj = mesesProj.map(m => ({ c: { id: 'proj-' + m, mes: m }, p: proj.filter(r => r.mes === m).reduce((a, r) => a + Number(r.calendarizado), 0), r: null, origem: 'projecao', proj: true }));
-  graficoPrev($('#gprev'), $('#tprev'), serieP.concat(serieProj), c.id);
+  const somaProj = m => proj.filter(r => r.mes === m).reduce((a, r) => a + Number(r.calendarizado), 0);
+  const mesesProj = [...new Set(proj.map(r => r.mes))].filter(m => !D.comps.some(x => x.mes === m && somaPrev(x.id))).sort();
+  // mês que já tem algum fechamento mas ainda não tem base: usa a projeção como previsto
+  const serieComp = serieP.map(x => !x.p && mesesProj.includes(x.c.mes) ? { ...x, p: somaProj(x.c.mes), origem: 'projecao', proj: true, temReal: true } : x);
+  const serieProj = mesesProj.filter(m => !D.comps.some(x => x.mes === m)).map(m => ({ c: { id: 'proj-' + m, mes: m }, p: somaProj(m), r: null, origem: 'projecao', proj: true }));
+  graficoPrev($('#gprev'), $('#tprev'), serieComp.concat(serieProj), c.id);
+  resumoAno($('#rprev'), serieComp.concat(serieProj), id => doMes(id).reduce((a, r) => a + (Number(r.kits) || 0) + (Number(r.fora_umov) || 0), 0), Array.isArray(D.proj));
   projecaoParceiros($('#pprev'), D, proj, mesesProj);
   clientesMes($('#dcli'), c.id, op, null);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
@@ -2283,6 +2290,114 @@ function projecaoParceiros(box, D, proj, meses) {
   };
 }
 
+// Ano: realizado + previsto até dezembro, para ver se a média se mantém
+function resumoAno(box, pts, kitsDe, projPronta) {
+  if (!box) return;
+  const ano = (pts.find(p => !p.proj) || pts[0])?.c.mes.slice(0, 4);
+  const doAno = pts.filter(p => p.c.mes.slice(0, 4) === ano);
+  const fechou = p => !p.proj && p.r != null && (S.compsFechadas ? S.compsFechadas.has(p.c.id) : true);
+  const feitos = doAno.filter(fechou), abertos = doAno.filter(p => !fechou(p) && p.p);
+  if (!feitos.length) { box.innerHTML = ''; return; }
+  const real = feitos.reduce((a, p) => a + p.r, 0), prevFeitos = feitos.reduce((a, p) => a + (p.p || 0), 0);
+  const resto = abertos.reduce((a, p) => a + p.p, 0);
+  const mReal = real / feitos.length, mResto = abertos.length ? resto / abertos.length : null;
+  const estimado = real + resto, prevAno = prevFeitos + resto;
+  const exec = prevFeitos ? real / prevFeitos : 1; const ajustado = real + resto * exec;
+  const kitsReal = feitos.reduce((a, p) => a + kitsDe(p.c.id), 0); const kitsMedia = kitsReal / feitos.length;
+  const totalAno = ajustado + kitsReal + kitsMedia * abertos.length;
+  const varMedia = mResto != null && mReal ? (mResto * exec) / mReal - 1 : null;
+  const ult = feitos.slice(-1)[0], ultAb = abertos.slice(-1)[0];
+  const mesesTxt = (a, b) => a && b ? `${MES3[+a.c.mes.slice(5, 7) - 1]} a ${MES3[+b.c.mes.slice(5, 7) - 1]}` : '';
+  const leitura = varMedia == null ? 'Sem meses em aberto até dezembro.' : Math.abs(varMedia) <= 0.02 ? `Com a execução do ano, a média dos meses em aberto fica praticamente igual à realizada (${pct(varMedia)}): o ano mantém a média.` : varMedia > 0 ? `Com a execução do ano, a média dos meses em aberto fica ${pct(varMedia)} acima da realizada: o custo mensal tende a subir até dezembro.` : `Com a execução do ano, a média dos meses em aberto fica ${pct(varMedia)} abaixo da realizada: o custo mensal tende a cair até dezembro.`;
+  box.innerHTML = `<div class="kpis" style="margin-bottom:6px">
+      <div class="kpi"><small>Realizado ${mesesTxt(feitos[0], ult)}</small><b>${BRL(real)}</b><span>média ${BRL(mReal)} por mês</span></div>
+      <div class="kpi neutro"><small>Previsto ${abertos.length ? mesesTxt(abertos[0], ultAb) : '—'}</small><b>${abertos.length ? BRL(resto) : '—'}</b><span>${mResto != null ? `média ${BRL(mResto)}/mês; com a execução do ano, ${BRL(mResto * exec)} (${pct(varMedia)} sobre a média realizada)` : projPronta ? 'nenhum mês em aberto' : 'calculando a projeção…'}</span></div>
+      <div class="kpi"><small>Ano ${ano} · realizado + previsto</small><b>${BRL(estimado)}</b><span>previsto do ano todo ${BRL(prevAno)} (${pct(estimado / prevAno - 1)})</span></div>
+      <div class="kpi ${exec < 1 ? '' : 'alerta'}"><small>Se mantiver a execução do ano (${pct(exec - 1)})</small><b>${BRL(ajustado)}</b><span>${BRL(ajustado - prevAno)} contra o previsto do ano</span></div>
+      <div class="kpi neutro"><small>Custo total estimado do ano</small><b>${BRL(totalAno)}</b><span>malote ajustado + Kits/Spot (${BRL(kitsReal)} realizado + média ${BRL(kitsMedia)}/mês)</span></div>
+    </div>
+    <p class="nota" style="margin:0 0 12px">${leitura} Execução do ano = malote realizado ÷ previsto nos meses fechados; aplicada aos meses em aberto, dá o valor provável até dezembro.</p>`;
+}
+
+// ================= Mapa de custos por estado =================
+const MAPA_MET = [['potencial', 'Onde agir (potencial de redução)'], ['custo', 'Custo do mês'], ['cpa', 'Custo por atendimento'], ['exec', 'Execução (realizado ÷ previsto)']];
+async function mapaCustos(box, D, c) {
+  if (!box) return;
+  D.mapa = D.mapa || {};
+  if (!D.mapa[c.id]) {
+    box.innerHTML = '<div class="carregando">Montando o mapa…</div>';
+    try {
+      const [rows, contr] = await Promise.all([todas(() => sb.rpc('mapa_uf', { p_comp: c.id })), D.contr ? Promise.resolve(D.contr) : q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim'))]);
+      D.contr = contr; D.mapa[c.id] = rows;
+    } catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
+  }
+  const rows = D.mapa[c.id]; const n = v => Number(v) || 0;
+  const fech = D.fech.filter(f => f.competencia_id === c.id);
+  if (!fech.length || !rows.length) { box.innerHTML = '<p class="nota">Este mês ainda não tem fechamento ou base de pontos para montar o mapa.</p>'; return; }
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const prevP = Object.fromEntries(D.prev.filter(x => x.competencia_id === c.id && x.previsto != null).map(x => [x.parceiro_id, n(x.previsto)]));
+  const fixoDe = id => { const k = (D.contr || []).filter(x => x.parceiro_id === id && x.inicio <= c.mes && (!x.fim || x.fim >= c.mes)).sort((a, b) => b.inicio.localeCompare(a.inicio))[0]; return k ? n(k.valor_fixo) : 0; };
+  // por parceiro
+  const P = {};
+  fech.forEach(f => { const rs = rows.filter(r => r.parceiro_id === f.parceiro_id); const prev = rs.reduce((a, r) => a + n(r.atend_previsto), 0), real = rs.reduce((a, r) => a + n(r.atend_realizado), 0);
+    const malote = n(f.malote), kits = n(f.kits) + n(f.fora_umov), custo = valorOp(f, 'tudo'); const fixo = fixoDe(f.parceiro_id);
+    const exec = prev ? real / prev : null; const ocioso = fixo && exec != null ? fixo * Math.max(0, 1 - exec) : 0; const acima = prevP[f.parceiro_id] != null ? Math.max(0, malote - prevP[f.parceiro_id]) : 0;
+    P[f.parceiro_id] = { id: f.parceiro_id, p: pm[f.parceiro_id] || {}, rs, prev, real, malote, kits, custo, fixo, exec, ocioso, acima, potencial: ocioso + acima, cpa: real ? (malote + kits) / real : null }; });
+  const nac = (() => { const ls = Object.values(P).filter(x => x.real); const a = ls.reduce((s, x) => s + x.malote + x.kits, 0), b = ls.reduce((s, x) => s + x.real, 0); return b ? a / b : null; })();
+  // por estado
+  const U = {};
+  Object.values(P).forEach(x => x.rs.forEach(r => { const w = n(r.peso); const u = U[r.uf] || (U[r.uf] = { uf: r.uf, custo: 0, potencial: 0, ocioso: 0, acima: 0, prev: 0, real: 0, mk: 0, parc: new Set() });
+    u.custo += x.custo * w; u.potencial += x.potencial * w; u.ocioso += x.ocioso * w; u.acima += x.acima * w; u.prev += n(r.atend_previsto); u.real += n(r.atend_realizado); u.mk += (x.malote + x.kits) * w; u.parc.add(x.id); }));
+  Object.values(U).forEach(u => { u.exec = u.prev ? u.real / u.prev : null; u.cpa = u.real ? u.mk / u.real : null; });
+  const met = D.mapaMet = D.mapaMet || 'potencial';
+  const val = u => met === 'exec' ? u.exec : u[met];
+  const vals = Object.values(U).map(val).filter(v => v != null && isFinite(v));
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  // escuro = pede mais atenção (na execução, quanto menor, mais escuro)
+  const inten = v => v == null || hi === lo ? 0.15 : met === 'exec' ? (hi - v) / (hi - lo) : (v - lo) / (hi - lo);
+  const cor = v => v == null ? '#ECEAE6' : `rgba(219,34,66,${(0.08 + 0.85 * inten(v)).toFixed(3)})`;
+  const fmt = v => v == null ? '—' : met === 'exec' ? pct(v - 1).replace('+', '') + ' do previsto' .replace(' do previsto', '') : met === 'cpa' ? BRL2(v) : BRL(v);
+  const fmtExec = v => v == null ? '—' : (100 * v).toFixed(1).replace('.', ',') + '%';
+  const fmtV = v => met === 'exec' ? fmtExec(v) : fmt(v);
+  const sel = D.mapaUF && U[D.mapaUF] ? D.mapaUF : null;
+  const rank = Object.values(U).filter(u => val(u) != null).sort((a, b) => met === 'exec' ? val(a) - val(b) : val(b) - val(a));
+  const totPot = Object.values(P).reduce((a, x) => a + x.potencial, 0);
+  const acao = x => { const t = [];
+    if (x.fixo && x.exec != null && x.exec < 0.92) t.push(`Renegociar o fixo: executou ${fmtExec(x.exec)} do previsto`);
+    if (x.acima > 1) t.push(`Conferir cobrança: malote ${BRL(x.acima)} acima do previsto`);
+    if (x.cpa && nac && x.cpa > 1.5 * nac) t.push(`Custo por atendimento ${(x.cpa / nac).toFixed(1).replace('.', ',')}× a média`);
+    if (x.custo && x.kits / x.custo > 0.3) t.push(`Kits/Spot são ${Math.round(100 * x.kits / x.custo)}% do custo`);
+    return t.join(' · ') || '—'; };
+  box.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
+    <div class="alterna" role="group" aria-label="Indicador" style="display:inline-flex;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff;align-self:flex-start">${MAPA_MET.map(([k, t]) => `<button type="button" data-mm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${met === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
+    <div class="kpis">
+      <div class="kpi"><small>Potencial de redução no mês</small><b>${BRL(totPot)}</b><span>fixo pago sem atendimento + malote acima do previsto</span></div>
+      <div class="kpi neutro"><small>Custo por atendimento (Brasil)</small><b>${nac ? BRL2(nac) : '—'}</b><span>malote + kits ÷ atendimentos realizados</span></div>
+      <div class="kpi neutro"><small>Estado com mais potencial</small><b>${(() => { const u = Object.values(U).sort((a, b) => b.potencial - a.potencial)[0]; return u ? `${u.uf} · ${BRL(u.potencial)}` : '—'; })()}</b><span>clique no mapa para ver os parceiros</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(300px,1.25fr) minmax(260px,1fr);gap:24px;align-items:start" class="mapa-grid">
+      <div style="position:relative">
+        <svg viewBox="${BR.viewBox}" style="width:100%;height:auto;display:block" role="img" aria-label="Mapa do Brasil por estado: ${esc(MAPA_MET.find(m => m[0] === met)[1])}">
+          ${Object.entries(BR.uf).map(([uf, g]) => { const u = U[uf]; const v = u ? val(u) : null; return `<path d="${g.d}" data-uf="${uf}" fill="${cor(v)}" stroke="${sel === uf ? '#121112' : '#FFFFFF'}" stroke-width="${sel === uf ? 2.2 : 0.8}" style="cursor:${u ? 'pointer' : 'default'}"><title>${esc(g.nome)}: ${u ? fmtV(v) : 'sem parceiro'}</title></path>`; }).join('')}
+        </svg>
+        <div class="linha" style="font-size:12px;color:var(--muted);gap:8px;margin-top:6px"><span>${met === 'exec' ? 'maior execução' : 'menor'}</span><i style="display:inline-block;width:140px;height:10px;border-radius:5px;background:linear-gradient(90deg,rgba(219,34,66,.08),rgba(219,34,66,.93))"></i><span>${met === 'exec' ? 'menor execução' : 'maior'}</span><span style="margin-left:auto">Mapa: svg-maps, CC BY 4.0</span></div>
+      </div>
+      <div class="tabela" style="max-height:560px;overflow:auto"><table><thead><tr><th>Estado</th><th class="n">${esc(MAPA_MET.find(m => m[0] === met)[1].replace(/ \(.*\)/, ''))}</th><th class="n">Parceiros</th></tr></thead><tbody>
+        ${rank.map(u => `<tr data-ufr="${u.uf}" style="cursor:pointer${sel === u.uf ? ';background:var(--field);font-weight:600' : ''}"><td><b>${u.uf}</b> <span style="font-size:12px;color:var(--muted)">${esc(BR.uf[u.uf]?.nome || '')}</span></td><td class="n">${fmtV(val(u))}</td><td class="n">${u.parc.size}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>
+    ${sel ? (() => { const u = U[sel]; const ls = [...u.parc].map(id => P[id]).sort((a, b) => b.potencial - a.potencial || b.custo - a.custo);
+      return `<section class="bloco" style="margin:0"><h2>${esc(BR.uf[sel]?.nome || sel)} · ${BRL(u.custo)} no mês · potencial ${BRL(u.potencial)}</h2>
+        <div class="tabela"><table><thead><tr><th>Parceiro</th><th class="n">Custo do parceiro</th><th class="n">Execução</th><th class="n">Custo por atend.</th><th class="n">Fixo sem atendimento</th><th class="n">Malote acima do previsto</th><th>Ação sugerida</th></tr></thead><tbody>
+        ${ls.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}${x.rs.length > 1 ? ` · ${Math.round(100 * n(x.rs.find(r => r.uf === sel)?.peso))}% dos pontos em ${sel}` : ''}</span></td><td class="n">${BRL(x.custo)}</td><td class="n">${fmtExec(x.exec)}</td><td class="n">${x.cpa ? BRL2(x.cpa) : '—'}</td><td class="n">${x.ocioso ? BRL(x.ocioso) : '—'}</td><td class="n">${x.acima ? BRL(x.acima) : '—'}</td><td style="font-size:13px">${esc(acao(x))}</td></tr>`).join('')}
+        </tbody></table></div>
+        <p class="nota">Valores do parceiro inteiro; quando ele atende mais de um estado, o mapa usa a parte proporcional aos pontos.</p></section>`; })() : ''}
+    <p class="nota">Potencial de redução = fixo do contrato × (1 − execução), ou seja, o que se paga por atendimentos previstos que não aconteceram, mais o malote cobrado acima do previsto. Execução = atendimentos realizados ÷ previstos no calendário. ${rows[0]?.fonte === 'carteira atual' ? 'Este mês não tem base de pontos: a divisão por estado usa a carteira atual e não há execução.' : ''}</p>
+  </div>`;
+  box.querySelectorAll('[data-mm]').forEach(b => b.onclick = () => { D.mapaMet = b.dataset.mm; mapaCustos(box, D, c); });
+  box.querySelectorAll('[data-uf],[data-ufr]').forEach(el => el.onclick = () => { const uf = el.dataset.uf || el.dataset.ufr; if (!U[uf]) return; D.mapaUF = D.mapaUF === uf ? null : uf; mapaCustos(box, D, c); });
+}
+
 function kpiPrev(x) {
   if (!x || !x.p) return `<div class="kpi neutro"><small>Previsto (calendarizado)</small><b>—</b><span>sem base do mês gerada</span></div>`;
   if (x.r == null) return `<div class="kpi neutro"><small>Previsto (calendarizado) · malote</small><b>${BRL(x.p)}</b><span>previsão do mês · ainda sem realizado</span></div>`;
@@ -2311,7 +2426,7 @@ function graficoPrev(box, tbox, pts, atualId) {
     g.onmousemove = e => { tip.hidden = false;
       tip.innerHTML = `<b>${rot(p)}${p.proj ? ' · projeção' : ''}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:#B8B6B4">${pct(p.r / p.p - 1)}</span>` : ''}`;
       const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top - 70) + 'px'; };
-    g.onmouseleave = () => tip.hidden = true; if (p.proj) return; g.style.cursor = 'pointer';
+    g.onmouseleave = () => tip.hidden = true; if (p.proj && !p.temReal) return; g.style.cursor = 'pointer';
     g.onclick = () => { S.dir.compId = p.c.id; desenharDiretoria(box.closest('main') || $('#main')); };
   });
   const comAmbos = pts.filter(p => p.p && p.r != null);
@@ -2325,7 +2440,7 @@ function graficoPrev(box, tbox, pts, atualId) {
     <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base). Os meses sem base aparecem como projeção (barra tracejada), calculada com a carteira atual até dezembro.</p>`;
 }
 
-const ABAS_DIR = [['geral', 'Visão geral'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+const ABAS_DIR = [['geral', 'Visão geral'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
 function visaoGeral(box, D, c, ant) {

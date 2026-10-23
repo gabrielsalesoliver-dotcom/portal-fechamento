@@ -143,3 +143,5 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
   .gstack i,.gbar i,.gcol i,.gdot{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   [data-sec]:not([data-sec="geral"]){display:none!important}
 }
+
+@media (max-width:860px){.mapa-grid{grid-template-columns:1fr!important}}
