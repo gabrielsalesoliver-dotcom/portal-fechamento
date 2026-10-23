@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1500';
-import BR from './brasil.js?v=2026.10.23-1500';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1500';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1530';
+import BR from './brasil.js?v=2026.10.23-1530';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1530';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1500';
+const VERSAO = '2026.10.23-1530';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2101,20 +2101,21 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
-  const [comps, parcs, fech, prev, efic, adis] = await Promise.all([
+  const [comps, parcs, fech, prev, efic, adis, ddet] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento')),
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
+    todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor')).catch(() => []),
   ]);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
   const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
   if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.aba = D.aba || 'geral';
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.aba = D.aba || 'geral';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
   desenharDiretoria(el);
@@ -2479,16 +2480,22 @@ function visaoGeral(box, D, c, ant) {
   // Resultado da gestão: o que a GSM deixou de pagar
   const ganhos = id => { const f = doMes(id); const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
     const comP = f.filter(r => pp[r.parceiro_id] != null && fechado(r)); const abaixo = comP.reduce((a, r) => a + Math.max(0, pp[r.parceiro_id] - n(r.malote)), 0), acimaV = comP.reduce((a, r) => a + Math.max(0, n(r.malote) - pp[r.parceiro_id]), 0);
-    const val = Math.max(0, abaixo - acimaV); const d = -f.reduce((a, r) => a + n(r.descontos), 0);
-    const sv = (D.adis || []).filter(a => a.competencia_id === id).reduce((a, x) => a + n(x.valor_desconto), 0) + f.reduce((a, r) => a + n(r.antec_desconto), 0);
-    return { val, abaixo, acima: acimaV, nAbaixo: comP.filter(r => pp[r.parceiro_id] > n(r.malote)).length, nAcima: comP.filter(r => n(r.malote) > pp[r.parceiro_id]).length, desc: d, save: sv, total: val + d + sv }; };
+    const val = Math.max(0, abaixo - acimaV);
+    const cat = {}; f.forEach(r => { const dt = -n(r.descontos); if (dt <= 0) return; const det = (D.ddet || []).filter(x => x.competencia_id === id && x.parceiro_id === r.parceiro_id);
+      const ant = Math.min(dt, det.filter(x => x.categoria === 'antecipacao').reduce((a, x) => a + n(x.valor), 0)); cat.antecipacao = (cat.antecipacao || 0) + ant;
+      let resto = dt - ant; ['repasse', 'penalidade', 'ajuste'].forEach(k => { const v = Math.min(resto, det.filter(x => x.categoria === k).reduce((a, x) => a + n(x.valor), 0)); cat[k] = (cat[k] || 0) + v; resto -= v; }); cat.ajuste = (cat.ajuste || 0) + resto; });
+    const antPl = cat.antecipacao || 0; const d = (cat.repasse || 0) + (cat.penalidade || 0) + (cat.ajuste || 0);
+    const sv = (D.adis || []).filter(a => a.competencia_id === id).reduce((a, x) => a + n(x.valor_desconto), 0) + f.reduce((a, r) => a + n(r.antec_desconto), 0) + antPl;
+    return { val, abaixo, acima: acimaV, nAbaixo: comP.filter(r => pp[r.parceiro_id] > n(r.malote)).length, nAcima: comP.filter(r => n(r.malote) > pp[r.parceiro_id]).length, desc: d, cat, save: sv, total: val + d + sv }; };
   const G = ganhos(c.id);
   const mesesAno = D.comps.filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && +x.mes.slice(5, 7) <= +c.mes.slice(5, 7));
   const GA = mesesAno.map(x => ganhos(x.id)).reduce((a, g) => ({ val: a.val + g.val, desc: a.desc + g.desc, save: a.save + g.save, total: a.total + g.total }), { val: 0, desc: 0, save: 0, total: 0 });
+  const catTxt = g => [['repasse', 'repasses'], ['penalidade', 'penalidades'], ['ajuste', 'ajustes']].filter(([k]) => (g.cat[k] || 0) > 0.5).map(([k, t]) => `${t} ${BRL(g.cat[k])}`).join(' · ');
   const ganhosParc = ids => { const L = {}; ids.forEach(id => { const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
       doMes(id).forEach(r => { const x = L[r.parceiro_id] || (L[r.parceiro_id] = { id: r.parceiro_id, p: pm[r.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 });
         if (pp[r.parceiro_id] != null && fechado(r)) { x.prev += pp[r.parceiro_id]; x.mal += n(r.malote); x.abaixo += Math.max(0, pp[r.parceiro_id] - n(r.malote)); x.acima += Math.max(0, n(r.malote) - pp[r.parceiro_id]); }
-        x.desc += -n(r.descontos); x.save += n(r.antec_desconto); });
+        const dt = Math.max(0, -n(r.descontos)); const ant = Math.min(dt, (D.ddet || []).filter(d => d.competencia_id === id && d.parceiro_id === r.parceiro_id && d.categoria === 'antecipacao').reduce((a, d) => a + n(d.valor), 0));
+        x.desc += dt - ant + Math.min(0, -n(r.descontos)); x.save += n(r.antec_desconto) + ant; });
       (D.adis || []).filter(a => a.competencia_id === id).forEach(a => { const x = L[a.parceiro_id] || (L[a.parceiro_id] = { id: a.parceiro_id, p: pm[a.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 }); x.save += n(a.valor_desconto); }); });
     return Object.values(L).map(x => ({ ...x, val: x.abaixo - x.acima, total: x.abaixo - x.acima + x.desc + x.save })); };
   const potM = potencialMes(D, c);
@@ -2540,8 +2547,8 @@ function visaoGeral(box, D, c, ant) {
       <span class="gres-ano">Acumulado ${c.mes.slice(0, 4)}: <b>${BRL(GA.total)}</b></span></div>
     <div class="gres-itens">
       <div><small>Validação do fechamento</small><b>${BRL(G.val)}</b><span>malote pago abaixo do previsto: só o realizado comprovado (${G.nAbaixo} parceiros${G.acima > 0.5 ? `; ${BRL(G.acima)} acima do previsto em ${G.nAcima}` : ''}) · ano ${BRL(GA.val)}</span></div>
-      <div><small>Descontos aplicados</small><b>${BRL(G.desc)}</b><span>glosas, penalidades e repasses · ano ${BRL(GA.desc)}</span></div>
-      <div><small>Adiantamentos e antecipações</small><b>${BRL(G.save)}</b><span>desconto cobrado no pagamento antecipado · ano ${BRL(GA.save)}</span></div>
+      <div><small>Descontos aplicados</small><b>${BRL(G.desc)}</b><span>${catTxt(G) || 'repasses, penalidades e ajustes'} · ano ${BRL(GA.desc)}</span></div>
+      <div><small>Adiantamentos e antecipações</small><b>${BRL(G.save)}</b><span>taxa cobrada para pagar antes · ano ${BRL(GA.save)}</span></div>
       <div class="gres-pot"><small>Ainda dá para reduzir</small><b>${potM === undefined ? '…' : potM === null ? '—' : BRL(potM)}</b><span>${potM === undefined ? 'calculando…' : potM === null ? 'sem execução do mês (Umov) para calcular' : 'fixo pago por atendimento previsto que não aconteceu'} · <a href="#" data-irmapa>ver no Mapa de custos</a></span></div>
     </div><span class="gres-mais">${D.gresAberto ? '▲ fechar detalhe por praça' : '▼ ver por praça'}</span></section>`}
   ${!semReal && D.gresAberto ? (() => { const per = D.gresPer || 'mes'; const ids = per === 'ano' ? mesesAno.map(x => x.id) : [c.id];
@@ -2555,7 +2562,7 @@ function visaoGeral(box, D, c, ant) {
       <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th data-gs="praca" style="cursor:pointer">Praça${sk === 'praca' ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>${th('prev', 'Previsto')}${th('mal', 'Malote pago')}${th('abaixo', 'Abaixo do previsto')}${th('acima', 'Acima do previsto')}${th('desc', 'Descontos')}${th('save', 'Save')}${th('total', 'Economia')}</tr></thead><tbody>
       ${L.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.prev ? BRL(x.prev) : '—'}</td><td class="n">${x.mal ? BRL(x.mal) : '—'}</td><td class="n">${x.abaixo > 0.5 ? BRL(x.abaixo) : '—'}</td><td class="n" style="color:${x.acima > 0.5 ? 'var(--brand-deep)' : 'inherit'}">${x.acima > 0.5 ? '−' + BRL(x.acima) : '—'}</td><td class="n">${x.desc > 0.5 ? BRL(x.desc) : '—'}</td><td class="n">${x.save > 0.5 ? BRL(x.save) : '—'}</td><td class="n"><b style="color:${x.total < 0 ? 'var(--brand-deep)' : 'inherit'}">${BRL(x.total)}</b></td></tr>`).join('')}
       </tbody><tfoot><tr><td><b>Total (${L.length} praças)</b></td><td class="n"><b>${BRL(T('prev'))}</b></td><td class="n"><b>${BRL(T('mal'))}</b></td><td class="n"><b>${BRL(T('abaixo'))}</b></td><td class="n"><b>−${BRL(T('acima'))}</b></td><td class="n"><b>${BRL(T('desc'))}</b></td><td class="n"><b>${BRL(T('save'))}</b></td><td class="n"><b>${BRL(T('total'))}</b></td></tr></tfoot></table></div>
-      <p class="nota" style="margin:6px 0 0">Economia = abaixo do previsto − acima do previsto + descontos + save. Praça em vermelho: pagou mais do que o previsto no período. Clique no título de uma coluna para ordenar.</p></section>`; })() : ''}
+      <p class="nota" style="margin:6px 0 0">Economia = abaixo do previsto − acima do previsto + descontos (repasses, penalidades e ajustes) + save (taxa de adiantamentos e antecipações, lida na descrição dos descontos da base de fechamento). Praça em vermelho: pagou mais do que o previsto no período. Clique no título de uma coluna para ordenar.</p></section>`; })() : ''}
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
     ${tile('Malote realizado', semReal ? '—' : BRL(mal), !previsto || !prevComReal ? 'sem previsão no mês' : `${pct(difPrev / prevComReal)} sobre o previsto`)}
