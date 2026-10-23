@@ -2169,6 +2169,7 @@ function desenharDiretoria(el) {
   </div>
   <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
+  <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos por ponto · ${nomeMes(c.mes)}</h2><p class="sub">Mesma lista da aba Atendimentos da base de fechamento: cada ponto com o previsto (calendarizado), o realizado e os valores. Malote; Kits/Spot e valor fixo do contrato não entram aqui.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
@@ -2198,6 +2199,7 @@ function desenharDiretoria(el) {
   ponte($('#dponte'), D, c, ant);
   eficiencia($('#defic'), D, c);
   if (D.aba === 'lotes') listaLotes($('#dlotes'), c.id, false);
+  if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
@@ -2282,7 +2284,7 @@ function graficoPrev(box, tbox, pts, atualId) {
     <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base).</p>`;
 }
 
-const ABAS_DIR = [['geral', 'Visão geral'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+const ABAS_DIR = [['geral', 'Visão geral'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
 function visaoGeral(box, D, c, ant) {
@@ -2447,6 +2449,56 @@ function ponte(box, D, c, ant) {
 }
 
 // Custo por atendimento e execução do calendarizado (meses com Umov no portal)
+// Lista de atendimentos por ponto (igual à aba Atendimentos da base de fechamento)
+async function listaAtendimentos(box, D, c) {
+  D.atd = D.atd || {};
+  if (!D.atd[c.id]) {
+    box.innerHTML = '<div class="carregando">Carregando os pontos do mês…</div>';
+    try { D.atd[c.id] = await todas(() => sb.rpc('listagem_atendimentos', { p_comp: c.id })); }
+    catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
+  }
+  const L = D.atd[c.id];
+  if (!L.length) { box.innerHTML = '<p class="nota">Este mês ainda não tem base de pontos no portal.</p>'; return; }
+  const F = D.atdF = D.atdF || { parc: '', busca: '', so: 'todos' };
+  const parcs = [...new Map(L.map(r => [r.parceiro_id, r.regiao])).entries()].sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
+  const vis = L.filter(r => (!F.parc || r.parceiro_id === F.parc)
+    && (F.so === 'todos' || (F.so === 'abaixo' ? r.realizado < r.previsto : F.so === 'acima' ? r.realizado > r.previsto : F.so === 'ajuste' ? r.ajuste_parceiro != null : r.realizado === 0))
+    && (!F.busca || norm(`${r.cod_int} ${r.cliente} ${r.loja} ${r.cidade}`).includes(norm(F.busca))));
+  const sm = k => vis.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const prev = sm('previsto'), real = sm('realizado'), vp = sm('valor_previsto'), vr = sm('valor_realizado');
+  const pag = vis.slice(0, 300);
+  box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">
+    <div class="linha" style="align-items:flex-end;justify-content:space-between">
+      <div class="linha" style="align-items:flex-end"><label class="campo">Parceiro<select class="peq" id="at-p" style="min-width:220px"><option value="">Todos (${parcs.length})</option>${parcs.map(([id, n]) => `<option value="${id}" ${F.parc === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+        <label class="campo">Mostrar<select class="peq" id="at-so">${[['todos', 'Todos os pontos'], ['abaixo', 'Realizado abaixo do previsto'], ['acima', 'Realizado acima do previsto'], ['zero', 'Sem atendimento'], ['ajuste', 'Com ajuste do parceiro']].map(([k, n]) => `<option value="${k}" ${F.so === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label class="campo">Buscar<input class="peq" id="at-b" placeholder="Código, cliente, loja, cidade" value="${esc(F.busca)}" style="min-width:220px"></label></div>
+      <button class="btn sec peq" id="at-x">Baixar Excel (${fmtN(vis.length)} pontos)</button></div>
+    <div class="kpis">
+      <div class="kpi neutro"><small>Pontos</small><b>${fmtN(vis.length)}</b><span>${F.parc ? esc(parcs.find(x => x[0] === F.parc)?.[1] || '') : 'todos os parceiros'}</span></div>
+      <div class="kpi"><small>Atendimentos previstos x realizados</small><b>${fmtN(prev)} x ${fmtN(real)}</b><span>${prev ? pct(real / prev - 1) : '—'} · ${fmtN(real - prev)} atendimento(s)</span></div>
+      <div class="kpi"><small>Valor previsto x realizado</small><b>${BRL(vp)} x ${BRL(vr)}</b><span>diferença ${BRL(vr - vp)}</span></div>
+    </div>
+    <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Cliente / loja</th><th>Cód. Int</th><th>Cidade</th><th>Frequência</th><th class="n">V. unit</th><th class="n">Previsto</th><th class="n">Umov</th><th class="n">Realizado</th><th class="n">Valor previsto</th><th class="n">Valor realizado</th><th class="n">Diferença</th></tr></thead><tbody>
+      ${pag.map(r => `<tr><td style="font-size:13px">${esc(r.regiao || '')}</td><td style="font-size:13px"><b>${esc(r.cliente || '')}</b><br>${esc(r.loja || '')}</td><td class="num">${esc(r.cod_int)}</td><td style="font-size:13px">${esc(r.cidade || '')}${r.uf ? ' - ' + esc(r.uf) : ''}</td><td style="font-size:13px">${esc(r.frequencia || '')}</td>
+        <td class="n">${BRL2(r.v_unit)}</td><td class="n">${fmtN(r.previsto)}</td><td class="n">${fmtN(r.umov_retornados)}</td><td class="n" title="${esc(r.origem_realizado)}${r.ajuste_parceiro != null ? ` · parceiro informou ${r.ajuste_parceiro} (${esc(r.ajuste_situacao || '')})` : ''}"><b>${fmtN(r.realizado)}</b>${r.ajuste_parceiro != null ? `<br><span class="nota">ajuste ${esc(r.ajuste_situacao || '')}</span>` : ''}</td>
+        <td class="n">${BRL2(r.valor_previsto)}</td><td class="n">${BRL2(r.valor_realizado)}</td><td class="n" style="color:${r.diferenca < 0 ? 'var(--ink)' : r.diferenca > 0 ? 'var(--brand-deep)' : 'var(--muted)'}">${r.diferenca ? (r.diferenca > 0 ? '+' : '') + BRL2(r.diferenca) : '—'}</td></tr>`).join('')}
+    </tbody></table></div>
+    ${vis.length > pag.length ? `<p class="nota">Mostrando ${pag.length} de ${fmtN(vis.length)} pontos. Use os filtros ou baixe o Excel com todos.</p>` : ''}
+    <p class="nota">Realizado: da planilha de fechamento nos meses anteriores ao portal; nos meses do portal, o Umov (retornados de campo) ou o ajuste do parceiro quando a GSM aceitou. Parceiros de contrato fechado aparecem com V. unit zero: o valor deles é o fixo do contrato.</p></div>`;
+  const red = () => listaAtendimentos(box, D, c);
+  $('#at-p').onchange = e => { F.parc = e.target.value; red(); };
+  $('#at-so').onchange = e => { F.so = e.target.value; red(); };
+  $('#at-b').oninput = e => { F.busca = e.target.value; clearTimeout(D.atdT); D.atdT = setTimeout(() => red().then(() => { const i = $('#at-b'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }), 350); };
+  $('#at-x').onclick = () => {
+    const linhas = vis.map(r => ({ 'Mês': nomeMes(c.mes), 'Parceiro': r.parceiro, 'Região': r.regiao, 'Tipo': r.tipo, 'Cliente': r.cliente, 'Cod. Int': r.cod_int, 'Loja': r.loja, 'Cidade': r.cidade, 'UF': r.uf, 'Frequência': r.frequencia,
+      'V. Unit': Number(r.v_unit), 'Previsto (Qtd atend.)': r.previsto, 'Umov programados': r.umov_programados, 'Umov retornados': r.umov_retornados, 'Ajuste do parceiro': r.ajuste_parceiro, 'Situação do ajuste': r.ajuste_situacao,
+      'Realizado': r.realizado, 'Origem do realizado': r.origem_realizado, 'V. Previsto': Number(r.valor_previsto), 'V. Realizado': Number(r.valor_realizado), 'Diferença': Number(r.diferenca) }));
+    const ws = XLSX.utils.json_to_sheet(linhas); ws['!cols'] = [10, 18, 26, 10, 26, 12, 34, 20, 5, 22, 10, 10, 10, 10, 10, 12, 10, 22, 12, 12, 12].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Atendimentos');
+    XLSX.writeFile(wb, `Atendimentos_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => x[0] === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`);
+  };
+}
+
 function eficiencia(box, D, c) {
   const ef = D.efic.filter(e => e.competencia_id === c.id);
   if (!ef.length) { box.innerHTML = '<p class="nota">Disponível nos meses com Umov e carteira carregados no portal (a partir de Setembro/2026).</p>'; return; }
