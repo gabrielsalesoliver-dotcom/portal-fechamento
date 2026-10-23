@@ -1,13 +1,13 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-0905';
-import { gerarModelo } from './modelo.js?v=2026.10.23-0905';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1030';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1030';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-0905';
+const VERSAO = '2026.10.23-1030';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -142,10 +142,10 @@ const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
-  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
+  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente'], ['backup', 'Cópia de segurança']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
+const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 async function vVerParceiro() {
@@ -2170,7 +2170,7 @@ function desenharDiretoria(el) {
   </div>
   <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
-  <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos por ponto · ${nomeMes(c.mes)}</h2><p class="sub">Mesma lista da aba Atendimentos da base de fechamento: cada ponto com o previsto (calendarizado), o realizado e os valores. Malote; Kits/Spot e valor fixo do contrato não entram aqui.</p><div id="datend"></div></section></div>
+  <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
@@ -2490,8 +2490,61 @@ function ponte(box, D, c, ant) {
 }
 
 // Custo por atendimento e execução do calendarizado (meses com Umov no portal)
+// Lista de kits do Umov do mês, com o valor de cada um
+async function listaKits(box, D, c) {
+  D.kit = D.kit || {};
+  if (!D.kit[c.id]) {
+    box.innerHTML = '<div class="carregando">Carregando os kits do mês…</div>';
+    try { D.kit[c.id] = await todas(() => sb.rpc('listagem_kits', { p_comp: c.id })); }
+    catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
+  }
+  const L = D.kit[c.id];
+  if (!L.length) { box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">${togAtd(D)}<p class="nota">Nenhum kit do Umov neste mês.</p></div>`; ligarTogAtd(box, D, c); return; }
+  const F = D.kitF = D.kitF || { parc: '', busca: '', so: 'todos' };
+  const parcs = [...new Map(L.map(r => [r.parceiro_id || '', r.regiao])).entries()].sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
+  const vis = L.filter(r => (F.parc === '' || (r.parceiro_id || '-') === F.parc)
+    && (F.so === 'todos' || (F.so === 'valor' ? Number(r.valor) > 0 : F.so === 'ajuste' ? r.valor_parceiro != null : F.so === 'semparc' ? !r.parceiro_id : r.situacao !== 'Retornada de Campo'))
+    && (!F.busca || norm(`${r.id_umov || ''} ${r.grupo_cliente || ''} ${r.cliente || ''} ${r.cidade || ''} ${r.motorista || ''}`).includes(norm(F.busca))));
+  const total = vis.reduce((a, r) => a + (Number(r.valor) || 0), 0);
+  const porKit = {}; vis.forEach(r => { const k = r.grupo_cliente || '—'; const x = porKit[k] || (porKit[k] = { n: 0, v: 0 }); x.n++; x.v += Number(r.valor) || 0; });
+  const top = Object.entries(porKit).sort((a, b) => b[1].v - a[1].v || b[1].n - a[1].n).slice(0, 4);
+  const pag = vis.slice(0, 300);
+  box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">${togAtd(D)}
+    <div class="linha" style="align-items:flex-end;justify-content:space-between">
+      <div class="linha" style="align-items:flex-end"><label class="campo">Parceiro<select class="peq" id="kt-p" style="min-width:220px"><option value="">Todos (${parcs.length})</option>${parcs.map(([id, n]) => `<option value="${id || '-'}" ${F.parc === (id || '-') ? 'selected' : ''}>${esc(n || 'Sem parceiro')}</option>`).join('')}</select></label>
+        <label class="campo">Mostrar<select class="peq" id="kt-so">${[['todos', 'Todos os kits'], ['valor', 'Com valor a pagar'], ['ajuste', 'Com valor informado pelo parceiro'], ['semparc', 'Sem parceiro'], ['naoret', 'Não retornados']].map(([k, n]) => `<option value="${k}" ${F.so === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label class="campo">Buscar<input class="peq" id="kt-b" placeholder="Ref. Umov, kit, cliente, cidade" value="${esc(F.busca)}" style="min-width:220px"></label></div>
+      <button class="btn sec peq" id="kt-x">Baixar Excel (${fmtN(vis.length)} kits)</button></div>
+    <div class="kpis">
+      <div class="kpi neutro"><small>Kits</small><b>${fmtN(vis.length)}</b><span>${fmtN(vis.filter(r => r.situacao === 'Retornada de Campo').length)} retornados de campo</span></div>
+      <div class="kpi"><small>Valor dos kits</small><b>${BRL(total)}</b><span>${vis.length ? 'média ' + BRL2(total / Math.max(1, vis.filter(r => Number(r.valor) > 0).length)) + ' por kit com valor' : '—'}</span></div>
+      <div class="kpi neutro"><small>Maiores kits</small><b style="font-size:15px;line-height:1.4">${top.map(([k, x]) => `${esc(k)}: ${BRL(x.v)}`).join('<br>') || '—'}</b><span></span></div>
+    </div>
+    <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Ref. Umov</th><th>Data</th><th>Kit / cliente</th><th>Cidade</th><th>Situação</th><th class="n">Valor</th><th>Origem do valor</th></tr></thead><tbody>
+      ${pag.map(r => `<tr><td style="font-size:13px">${esc(r.regiao || 'Sem parceiro')}</td><td class="num">${esc(r.id_umov || '—')}</td><td style="font-size:13px">${fmtD(r.data)}</td><td style="font-size:13px"><b>${esc(r.grupo_cliente || '')}</b><br>${esc(r.cliente || '')}</td><td style="font-size:13px">${esc(r.cidade || '')}${r.uf ? ' - ' + esc(r.uf) : ''}</td>
+        <td><span class="pill ${r.situacao === 'Retornada de Campo' ? '' : 'alerta'}">${esc(r.situacao || '—')}</span></td><td class="n"><b>${BRL2(r.valor)}</b>${r.valor_parceiro != null ? `<br><span class="nota">parceiro: ${BRL2(r.valor_parceiro)} (${esc(r.ajuste_situacao || '')})</span>` : ''}</td><td style="font-size:13px;color:var(--muted)">${esc(r.origem_valor || '')}</td></tr>`).join('')}
+    </tbody></table></div>
+    ${vis.length > pag.length ? `<p class="nota">Mostrando ${pag.length} de ${fmtN(vis.length)} kits. Use os filtros ou baixe o Excel com todos.</p>` : ''}
+    <p class="nota">Valor: ticket médio do parceiro para kit retornado de campo; quando o parceiro informou outro valor e a GSM aceitou, vale o valor dele. Nos meses fechados antes do portal, o valor pago saiu da planilha (aba Extras) e pode diferir do ticket médio.</p></div>`;
+  ligarTogAtd(box, D, c);
+  const red = () => listaKits(box, D, c);
+  $('#kt-p').onchange = e => { F.parc = e.target.value; red(); };
+  $('#kt-so').onchange = e => { F.so = e.target.value; red(); };
+  $('#kt-b').oninput = e => { F.busca = e.target.value; clearTimeout(D.kitT); D.kitT = setTimeout(() => red().then(() => { const i = $('#kt-b'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }), 350); };
+  $('#kt-x').onclick = () => {
+    const linhas = vis.map(r => ({ 'Mês': nomeMes(c.mes), 'Parceiro': r.parceiro, 'Região': r.regiao, 'Ref. Umov': r.id_umov, 'Data': r.data, 'Kit (grupo cliente)': r.grupo_cliente, 'Cliente': r.cliente, 'Cidade': r.cidade, 'UF': r.uf, 'Motorista': r.motorista,
+      'Situação': r.situacao, 'Ticket médio': r.ticket != null ? Number(r.ticket) : null, 'Valor informado pelo parceiro': r.valor_parceiro != null ? Number(r.valor_parceiro) : null, 'Situação do ajuste': r.ajuste_situacao, 'Valor': Number(r.valor), 'Origem do valor': r.origem_valor }));
+    const ws = XLSX.utils.json_to_sheet(linhas); ws['!cols'] = [10, 18, 26, 12, 11, 26, 30, 20, 5, 22, 18, 10, 12, 12, 10, 30].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Kits');
+    XLSX.writeFile(wb, `Kits_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => (x[0] || '-') === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`);
+  };
+}
+
 // Lista de atendimentos por ponto (igual à aba Atendimentos da base de fechamento)
+const togAtd = D => `<div class="alterna" role="group" aria-label="Lista" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff;align-self:flex-start">${[['malote', 'Malote (pontos)'], ['kits', 'Kits/Spot']].map(([k, n]) => `<button type="button" data-atm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${(D.atdModo || 'malote') === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>`;
+const ligarTogAtd = (box, D, c) => box.querySelectorAll('[data-atm]').forEach(b => b.onclick = () => { D.atdModo = b.dataset.atm; listaAtendimentos(box, D, c); });
 async function listaAtendimentos(box, D, c) {
+  if (D.atdModo === 'kits') return listaKits(box, D, c);
   D.atd = D.atd || {};
   if (!D.atd[c.id]) {
     box.innerHTML = '<div class="carregando">Carregando os pontos do mês…</div>';
@@ -2499,7 +2552,7 @@ async function listaAtendimentos(box, D, c) {
     catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
   }
   const L = D.atd[c.id];
-  if (!L.length) { box.innerHTML = '<p class="nota">Este mês ainda não tem base de pontos no portal.</p>'; return; }
+  if (!L.length) { box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">${togAtd(D)}<p class="nota">Este mês ainda não tem base de pontos no portal.</p></div>`; ligarTogAtd(box, D, c); return; }
   const F = D.atdF = D.atdF || { parc: '', busca: '', so: 'todos' };
   const parcs = [...new Map(L.map(r => [r.parceiro_id, r.regiao])).entries()].sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
   const vis = L.filter(r => (!F.parc || r.parceiro_id === F.parc)
@@ -2508,7 +2561,7 @@ async function listaAtendimentos(box, D, c) {
   const sm = k => vis.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   const prev = sm('previsto'), real = sm('realizado'), vp = sm('valor_previsto'), vr = sm('valor_realizado');
   const pag = vis.slice(0, 300);
-  box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">
+  box.innerHTML = `<div style="display:flex;flex-direction:column;gap:18px">${togAtd(D)}
     <div class="linha" style="align-items:flex-end;justify-content:space-between">
       <div class="linha" style="align-items:flex-end"><label class="campo">Parceiro<select class="peq" id="at-p" style="min-width:220px"><option value="">Todos (${parcs.length})</option>${parcs.map(([id, n]) => `<option value="${id}" ${F.parc === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
         <label class="campo">Mostrar<select class="peq" id="at-so">${[['todos', 'Todos os pontos'], ['abaixo', 'Realizado abaixo do previsto'], ['acima', 'Realizado acima do previsto'], ['zero', 'Sem atendimento'], ['ajuste', 'Com ajuste do parceiro']].map(([k, n]) => `<option value="${k}" ${F.so === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
@@ -2527,6 +2580,7 @@ async function listaAtendimentos(box, D, c) {
     ${vis.length > pag.length ? `<p class="nota">Mostrando ${pag.length} de ${fmtN(vis.length)} pontos. Use os filtros ou baixe o Excel com todos.</p>` : ''}
     <p class="nota">Realizado: da planilha de fechamento nos meses anteriores ao portal; nos meses do portal, o Umov (retornados de campo) ou o ajuste do parceiro quando a GSM aceitou. Parceiros de contrato fechado aparecem com V. unit zero: o valor deles é o fixo do contrato.</p></div>`;
   const red = () => listaAtendimentos(box, D, c);
+  ligarTogAtd(box, D, c);
   $('#at-p').onchange = e => { F.parc = e.target.value; red(); };
   $('#at-so').onchange = e => { F.so = e.target.value; red(); };
   $('#at-b').oninput = e => { F.busca = e.target.value; clearTimeout(D.atdT); D.atdT = setTimeout(() => red().then(() => { const i = $('#at-b'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }), 350); };
@@ -2628,6 +2682,49 @@ async function detalheParceiro(tr, pid, c, op) {
 }
 
 // ---------- Histórico por cliente (carga das planilhas antigas) ----------
+// ================= Cópia de segurança =================
+const TAB_BACKUP = [
+  ['parceiros', 'Parceiros', 'id'], ['contratos', 'Contratos', 'id'], ['rotas_depara', 'Rotas Umov', 'rota'], ['cidades_parceiro', 'Cidades por parceiro', null],
+  ['cadastro_pontos', 'Carteira de pontos', 'cod_int'], ['cadastro_pontos_hist', 'Carteira - historico', 'id'], ['carteira_importacoes', 'Inclusao e cancelamento', 'id'],
+  ['competencias', 'Competencias', 'mes'], ['competencia_eventos', 'Eventos do mes', 'id'], ['pontos_importacoes', 'Bases geradas', 'id'], ['pontos', 'Base de pontos por mes', 'id'],
+  ['umov_importacoes', 'Importacoes Umov', 'id'], ['envios', 'Envios dos parceiros', 'id'], ['base_contestacoes', 'Ajustes dos parceiros', 'id'],
+  ['divergencias', 'Itens da conferencia', 'id'], ['acoes_parceiro', 'Respostas dos parceiros', 'id'], ['ajustes', 'Ajustes e descontos GSM', 'id'],
+  ['fechamento_parceiro', 'Fechamento por parceiro', null], ['fechamento_versoes', 'Versoes do fechamento', 'id'], ['adiantamentos', 'Adiantamentos', 'id'],
+  ['notas_fiscais', 'Notas fiscais', 'id'], ['lotes_financeiro', 'Lotes de pagamento', 'id'], ['historico_cliente', 'Historico por cliente', 'id'],
+  ['feriados', 'Feriados', 'data'], ['cadastro_log', 'Log do cadastro', 'id'],
+];
+async function vBackup() {
+  const m = $('#main');
+  m.innerHTML = `<div class="topo"><div><h1>Cópia de segurança</h1><p>Baixa um Excel com todas as tabelas do portal (uma aba por tabela) para guardar no OneDrive. No plano gratuito do Supabase não há backup diário; faça uma cópia ao fim de cada etapa importante do mês.</p></div></div>
+    <section class="bloco"><h2>Gerar cópia</h2>
+      <label class="linha"><input type="checkbox" id="bk-umov"> Incluir os atendimentos do Umov (cerca de 53 mil linhas por mês; o arquivo fica bem maior)</label>
+      <div class="linha"><button class="btn marca" id="bk-ok">Baixar cópia de segurança</button></div><div id="bk-m"></div>
+      <p class="nota">Os arquivos enviados (NFs em PDF, relatórios, comprovantes e as planilhas originais do Umov) continuam guardados no portal e não entram no Excel. Logins e senhas também não entram.</p></section>`;
+  $('#bk-ok').onclick = async ev => {
+    const b = ev.currentTarget; b.disabled = true; const msg = $('#bk-m');
+    try {
+      const wb = XLSX.utils.book_new(); const resumo = [];
+      const lista = TAB_BACKUP.concat($('#bk-umov').checked ? [['umov_vigente', 'Umov (importacao ativa)', 'id']] : []);
+      for (const [t, nome, ord] of lista) {
+        msg.innerHTML = `<div class="carregando">Baixando ${esc(nome)}… (${resumo.length + 1} de ${lista.length})</div>`;
+        let rows;
+        try { rows = await todas(() => { let qy = sb.from(t).select('*'); return ord ? qy.order(ord) : qy; }); }
+        catch (e) { resumo.push({ Tabela: nome, Linhas: null, Obs: 'não lida: ' + e.message }); continue; }
+        const plano = rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v != null && typeof v === 'object' ? JSON.stringify(v).slice(0, 32000) : v])));
+        XLSX.utils.book_append_sheet(wb, plano.length ? XLSX.utils.json_to_sheet(plano) : XLSX.utils.aoa_to_sheet([['(vazia)']]), nome.slice(0, 31));
+        resumo.push({ Tabela: nome, Linhas: rows.length, Obs: '' });
+      }
+      const agora = new Date();
+      const capa = XLSX.utils.json_to_sheet([{ Tabela: 'Cópia gerada em', Linhas: agora.toLocaleString('pt-BR'), Obs: `por ${S.user.email} · versão ${VERSAO}` }, ...resumo]);
+      XLSX.utils.book_append_sheet(wb, capa, 'Resumo'); wb.SheetNames.unshift(wb.SheetNames.pop());
+      const z = n => String(n).padStart(2, '0'); const stamp = `${agora.getFullYear()}${z(agora.getMonth() + 1)}${z(agora.getDate())}_${z(agora.getHours())}${z(agora.getMinutes())}`;
+      XLSX.writeFile(wb, `Portal_Fechamento_copia_${stamp}.xlsx`, { compression: true });
+      msg.innerHTML = `<div class="msg ok">Cópia baixada: ${resumo.length} tabelas, ${fmtN(resumo.reduce((a, r) => a + (r.Linhas || 0), 0))} linhas.${resumo.some(r => r.Linhas == null) ? ' Algumas tabelas não foram lidas; veja a aba Resumo.' : ''}</div>`;
+    } catch (e) { msg.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+    b.disabled = false;
+  };
+}
+
 async function vHistorico() {
   const m = $('#main');
   m.innerHTML = `<div class="topo"><div><h1>Histórico por cliente</h1><p>Carregue uma vez a planilha de fechamento de cada mês já fechado para a diretoria ver a evolução por cliente. Malote por cliente é estimado pela proporção de atendimentos; Kits/Spot vem da aba Extras.</p></div>${seletorComp(false)}</div>
