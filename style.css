@@ -133,7 +133,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .gcol{flex:1;width:100%;max-width:34px;position:relative}
 .gcol i{position:absolute;bottom:0;left:0;right:0;border-radius:3px 3px 0 0}
 .gcol .gp{border:1.5px solid var(--ink);background:var(--field)}.gcol .gv{left:22%;right:22%;background:var(--ink);opacity:.8}
-.gcol .gk{left:22%;right:22%;background:var(--brand);border-radius:3px 3px 0 0}
+.gcol .gk{left:22%;right:22%;bottom:0;background:var(--brand);border-radius:0;box-shadow:0 -1px 0 #fff}
 .gmes.on{background:rgba(219,34,66,.07);border-radius:6px}.gmes.on .gcol .gv{opacity:1}
 .gal{margin:0;padding:0 0 0 18px;display:flex;flex-direction:column;gap:8px;font-size:14px}.gal li.ok{color:var(--muted)}
 @media (max-width:760px){.ghero-main b{font-size:32px}.ghero{padding:20px}}
