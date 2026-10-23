@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1415';
-import BR from './brasil.js?v=2026.10.23-1415';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1415';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1425';
+import BR from './brasil.js?v=2026.10.23-1425';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1425';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1415';
+const VERSAO = '2026.10.23-1425';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2472,7 +2472,7 @@ function visaoGeral(box, D, c, ant) {
   // Ano
   const ano = c.mes.slice(0, 4), mSel = +c.mes.slice(5, 7);
   const meses = D.comps.filter(x => x.mes.slice(0, 4) === ano);
-  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
+  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), k: doMes(x.id).reduce((a, r) => a + n(r.kits) + n(r.fora_umov), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
   const acum = serie.filter(s => +s.c.mes.slice(5, 7) <= mSel).reduce((a, s) => a + s.v, 0);
   const comV = serie.filter(s => s.v > 0); const ultR = comV.length ? +comV[comV.length - 1].c.mes.slice(5, 7) : 0;
   const ultP = serie.filter(s => s.p > 0).slice(-1)[0];
@@ -2520,9 +2520,9 @@ function visaoGeral(box, D, c, ant) {
         <tr class="gtot"><td>Total</td><td class="n">${BRL(custo)}</td><td></td></tr></tbody></table>`}
     </section>
     <section class="gcard"><h3>Mês a mês · ${ano}</h3>
-      <div class="gmeses">${serie.map(s => `<div class="gmes${s.c.id === c.id ? ' on' : ''}" data-comp="${s.c.id}" title="${nomeMes(s.c.mes)}: ${s.v ? BRL(s.v) : 'sem fechamento'}${s.p ? ' · previsto ' + BRL(s.p) : ''}">
-        <div class="gcol"><i class="gp" style="height:${100 * s.p / maxS}%"></i><i class="gv" style="height:${100 * s.v / maxS}%"></i></div><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></div>`).join('')}</div>
-      <p class="nota" style="margin:6px 0 0"><i class="gdot" style="background:#121112;opacity:.8"></i>realizado <i class="gdot" style="background:#fff;border:1px solid #121112;margin-left:10px"></i>previsto <i class="gdot" style="background:#DB2242;margin-left:10px"></i>mês selecionado · clique para trocar</p>
+      <div class="gmeses">${serie.map(s => `<div class="gmes${s.c.id === c.id ? ' on' : ''}" data-comp="${s.c.id}" title="${nomeMes(s.c.mes)}: ${s.v ? BRL(s.v) + ' (malote ' + BRL(s.v - s.k) + ' + Kits/Spot ' + BRL(s.k) + ')' : 'sem fechamento'}${s.p ? ' · previsto ' + BRL(s.p) : ''}">
+        <div class="gcol"><i class="gp" style="height:${100 * s.p / maxS}%"></i><i class="gv" style="height:${100 * Math.max(0, s.v - s.k) / maxS}%"></i><i class="gk" style="bottom:${100 * Math.max(0, s.v - s.k) / maxS}%;height:${100 * s.k / maxS}%"></i></div><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></div>`).join('')}</div>
+      <p class="nota" style="margin:6px 0 0"><i class="gdot" style="background:#121112;opacity:.8"></i>malote <i class="gdot" style="background:#DB2242;margin-left:10px"></i>Kits/Spot <i class="gdot" style="background:#fff;border:1px solid #121112;margin-left:10px"></i>previsto (malote) · clique no mês para trocar</p>
     </section>
     <section class="gcard"><h3>Maiores custos do mês</h3>
       <table class="gtab"><tbody>${top.map(x => `<tr><td>${esc(x.p.regiao || '—')}</td><td class="gbarc"><div class="gbar fina"><i style="width:${top[0] ? 100 * x.v / top[0].v : 0}%"></i></div></td><td class="n">${BRL(x.v)}</td><td class="n gmut">${custo ? Math.round(100 * x.v / custo) : 0}%</td></tr>`).join('') || '<tr><td class="nota">Sem fechamento.</td></tr>'}</tbody></table>
