@@ -140,7 +140,7 @@ async function carregarBase() {
 const MENU = [
   ['Visão geral', [['painel', 'Painel']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
+  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
   ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
 ];
@@ -231,7 +231,7 @@ async function vPainel() {
     q(sb.from('pontos_importacoes').select('importado_em,linhas_lidas,sem_parceiro').eq('competencia_id', id).eq('status', 'ativa').limit(1)).then(r => r[0]),
     todas(() => sb.from('envios').select('id,parceiro_id,status,versao').eq('competencia_id', id).neq('status', 'substituido')),
     todas(() => sb.from('divergencias').select('envio_id,parceiro_id,situacao').eq('competencia_id', id).in('situacao', ['precisa_acao', 'em_analise'])),
-    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,lote_id,pago_em').eq('competencia_id', id)),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,lote_id,pago_em,antec_status').eq('competencia_id', id)),
     todas(() => sb.from('nf_resumo').select('parceiro_id,situacao,a_conferir').eq('competencia_id', id)),
     q(sb.from('adiantamentos').select('status,valor,valor_solicitado').eq('competencia_id', id)),
     q(sb.from('lotes_financeiro').select('id,status').eq('competencia_id', id).neq('status', 'desfeito')),
@@ -264,6 +264,8 @@ async function vPainel() {
     if (imp && imp.sem_parceiro) ac(`${fmtN(imp.sem_parceiro)} atendimento(s) do Umov sem parceiro.`, '#umov', 'Vincular');
     if (decidir) ac(`${fmtN(decidir)} item(ns) de ${parcDecidir} parceiro(s) aguardando a sua decisão.`, '#conferencia', 'Decidir');
     if (prontos) ac(`${prontos} parceiro(s) sem pendência, prontos para aprovar.`, '#conferencia', 'Aprovar');
+    const antPed = fech.filter(f => f.antec_status === 'solicitada').length;
+    if (antPed) ac(`${antPed} pedido(s) de antecipação do fechamento aguardando resposta.`, '#adiantamentos', 'Responder');
     if (adiPed.length) ac(`${adiPed.length} pedido(s) de adiantamento aguardando resposta (${BRL(adiPed.reduce((a, x) => a + Number(x.valor_solicitado || 0), 0))}).`, '#adiantamentos', 'Responder');
     if (nfAConf) ac(`${nfAConf} parceiro(s) com NF nova para conferir.`, '#notas', 'Conferir');
     if (nfDif) ac(`${nfDif} parceiro(s) com soma de NF diferente do valor líquido.`, '#notas', 'Ver');
@@ -279,7 +281,7 @@ async function vPainel() {
     ['Umov do mês', !!imp, imp ? `${fmtN(imp.linhas)} linhas` : 'entra no fim do mês', '#umov'],
     ['Parceiros enviam a base', comEnvio >= ativos && ativos > 0, `${comEnvio} de ${ativos}`, '#conferencia'],
     ['GSM decide e aprova', aprov >= ativos && ativos > 0, `${aprov} aprovado(s)${decidir ? ` · ${decidir} item(ns) para decidir` : ''}`, '#conferencia'],
-    ['Adiantamentos', !adiPed.length, adiPed.length ? `${adiPed.length} pedido(s) em aberto` : adiLib.length ? `${adiLib.length} liberado(s) a pagar` : 'nenhum pendente', '#adiantamentos'],
+    ['Adiantamentos e antecipações', !adiPed.length && !fech.some(f => f.antec_status === 'solicitada'), adiPed.length ? `${adiPed.length} pedido(s) em aberto` : adiLib.length ? `${adiLib.length} liberado(s) a pagar` : 'nenhum pendente', '#adiantamentos'],
     ['NF conferida', comValor.length > 0 && nfConf >= comValor.length, comValor.length ? `${nfConf} de ${comValor.length} aprovados${nfAguard ? ` · ${nfAguard} aguardando` : ''}` : 'depois da aprovação', '#notas'],
     ['Lotes do financeiro', comValor.length > 0 && emLote >= comValor.length, comValor.length ? `${emLote} de ${comValor.length} em lote · ${lotes.length} lote(s)` : '—', '#pacote'],
     ['Pagamento registrado', comValor.length > 0 && pagos >= comValor.length, comValor.length ? `${pagos} de ${comValor.length}` : '—', '#pacote'],
@@ -1027,7 +1029,7 @@ async function vParceiroInicio() {
     <section class="bloco" id="secbase"><h2>1. Base do mês</h2><div id="basep" class="carregando">Carregando…</div></section>
     <section class="bloco" id="situacao"><h2>2. Validação da GSM</h2><div id="sitr" class="carregando">Carregando…</div></section>
     <section class="bloco" id="secnf"><h2>3. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>
-    <section class="bloco"><h2>Adiantamento</h2><p class="sub">Peça um adiantamento do mês. A GSM confirma o valor e a data; o valor adiantado é descontado da NF do fechamento.</p><div id="adip" class="carregando">Carregando…</div></section>`;
+    <section class="bloco"><h2>Adiantamento e antecipação</h2><p class="sub">Antes da aprovação, peça um adiantamento: o valor adiantado é descontado da NF do fechamento. Depois da aprovação, peça a antecipação do pagamento: a NF sai pelo valor com o desconto.</p><div id="adip" class="carregando">Carregando…</div></section>`;
   $('#compP').onchange = e => { S.compPId = e.target.value; S.baseAba = null; vParceiroInicio(); };
   baseParceiro(c);
   situacaoParceiro(c);
@@ -1423,42 +1425,68 @@ const ST_ADI = { solicitado: ['Aguardando GSM', 'alerta'], liberado: ['Liberado,
 
 async function secaoAdiantamento(c) {
   const box = $('#adip'); if (!box) return;
-  const [ads, fe] = await Promise.all([
+  const [ads, fe, nr] = await Promise.all([
     q(sb.from('adiantamentos').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('solicitado_em', { ascending: false })),
-    q(sb.from('fechamento_parceiro').select('valor_aprovado').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)),
-  ]).then(([x, f]) => [x, f[0]]);
+    q(sb.from('fechamento_parceiro').select('valor_aprovado,adiantado,a_pagar,lote_id,pago_em,antec_status,antec_taxa,antec_desconto,antec_data,antec_motivo,antec_solicitada_em').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)).then(r => r[0]),
+    q(sb.from('nf_resumo').select('nfs').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)).then(r => r[0]),
+  ]);
   box.className = '';
+  const aprovado = fe && fe.valor_aprovado != null;
   const pendente = ads.some(a => a.status === 'solicitado');
-  const pode = c.status === 'aberta' && !pendente && !(fe && fe.valor_aprovado != null);
+  const pode = c.status === 'aberta' && !pendente && !aprovado;
   const comprometido = ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)).reduce((s, a) => s + Number(a.valor || 0), 0);
+  const P = S.previa ? S.parc.id : null;
+  let antec = '';
+  if (aprovado) {
+    const st = fe.antec_status; const semNF = !(nr && Number(nr.nfs));
+    const podeAntec = c.status === 'aberta' && !fe.lote_id && !fe.pago_em && semNF && (!st || st === 'recusada');
+    const sem = Number(fe.valor_aprovado) - Number(fe.adiantado || 0);
+    antec = `<div class="confirma" style="margin-top:4px"><b>Antecipar o pagamento do mês</b>
+      ${st === 'liberada' ? `<div class="msg ok">Antecipação liberada pela GSM: desconto de ${String(fe.antec_taxa).replace('.', ',')}% (${BRL2(fe.antec_desconto)}), pagamento em ${fmtD(fe.antec_data)}. <b>Emita a NF por ${BRL2(fe.a_pagar)}</b>.</div>`
+      : st === 'solicitada' ? `<div class="msg alerta">Pedido enviado em ${fmtDH(fe.antec_solicitada_em)}. A GSM vai responder com a taxa e a data. Envie a NF só depois da resposta, pelo valor que aparecer aqui.</div>`
+      : `<span class="nota">O valor do mês já foi aprovado: ${BRL2(sem)} a receber${Number(fe.adiantado) ? ' (já descontado o adiantamento)' : ''}. Se quiser receber antes da data combinada, peça a antecipação. A GSM informa a taxa e a data; com a antecipação liberada, a NF passa a ser emitida pelo valor com o desconto.</span>
+        ${st === 'recusada' ? `<div class="msg erro">Pedido anterior recusado. GSM: ${esc(fe.antec_motivo || '')}</div>` : ''}
+        ${podeAntec ? `<div class="linha" style="align-items:flex-end"><label class="campo" style="flex:1 1 260px">Observação (opcional)<input class="peq" id="ant-o" placeholder="ex.: preciso receber até dia 10"></label><button class="btn peq" id="ant-ok">Pedir antecipação</button></div><div id="ant-m"></div>`
+          : !semNF ? '<span class="nota">A NF do mês já foi enviada. Para antecipar, fale com a GSM.</span>' : fe.lote_id || fe.pago_em ? '<span class="nota">O pagamento deste mês já está com o financeiro.</span>' : ''}`}
+    </div>`;
+  }
   box.innerHTML = `${ads.length ? `<div class="tabela"><table><thead><tr><th>Pedido</th><th class="n">Solicitado</th><th class="n">Liberado</th><th class="n">Você recebe</th><th>Pagamento</th><th>Situação</th></tr></thead><tbody>
       ${ads.map(a => { const [r, k] = ST_ADI[a.status] || [a.status, '']; return `<tr><td>${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td><td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor_liquido) + (Number(a.taxa_pct) ? `<br><span class="nota">desconto de ${String(a.taxa_pct).replace('.', ',')}%</span>` : '') : '—'}</td>
         <td>${a.pago_em ? 'pago em ' + fmtD(a.pago_em) : a.data_pagamento ? 'previsto ' + fmtD(a.data_pagamento) : '—'}</td><td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">GSM: ${esc(a.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}
-      </tbody></table></div>${comprometido ? `<p class="nota" style="margin:0">Adiantado no mês: ${BRL2(comprometido)}. Esse valor (liberado) é descontado da NF do fechamento.</p>` : ''}` : '<p class="nota" style="margin:0">Nenhum pedido de adiantamento neste mês.</p>'}
+      </tbody></table></div>${comprometido ? `<p class="nota" style="margin:0">Adiantado no mês: ${BRL2(comprometido)}. Esse valor (liberado) é descontado da NF do fechamento.</p>` : ''}` : aprovado ? '' : '<p class="nota" style="margin:0">Nenhum pedido de adiantamento neste mês.</p>'}
     ${pode ? `<div class="linha" style="align-items:flex-end"><label class="campo">Valor (R$)<input class="peq" id="adi-v" style="width:140px"></label><label class="campo" style="flex:1 1 260px">Observação (opcional)<input class="peq" id="adi-o" placeholder="ex.: combustível da primeira quinzena"></label><button class="btn peq" id="adi-ok">Pedir adiantamento</button></div><div id="adi-m"></div>`
-      : pendente ? '<p class="nota" style="margin:0">Há um pedido aguardando a GSM.</p>' : ''}`;
+      : pendente ? '<p class="nota" style="margin:0">Há um pedido aguardando a GSM.</p>' : ''}
+    ${antec}`;
   const b = $('#adi-ok');
   if (b) b.onclick = async () => {
     const v = numBR($('#adi-v').value);
     if (v == null || Number.isNaN(v) || v <= 0) { $('#adi-m').innerHTML = '<div class="msg erro">Informe um valor válido.</div>'; return; }
     b.disabled = true;
-    try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#adi-o').value, p_parceiro: S.previa ? S.parc.id : null })); secaoAdiantamento(c); }
+    try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#adi-o').value, p_parceiro: P })); secaoAdiantamento(c); }
     catch (e) { b.disabled = false; $('#adi-m').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+  };
+  const ba = $('#ant-ok');
+  if (ba) ba.onclick = async () => {
+    ba.disabled = true;
+    try { await q(sb.rpc('solicitar_antecipacao', { p_comp: c.id, p_obs: $('#ant-o').value, p_parceiro: P })); secaoAdiantamento(c); secaoNF(c); }
+    catch (e) { ba.disabled = false; $('#ant-m').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
   };
 }
 
+const ST_ANT = { solicitada: ['Pedido em aberto', 'alerta'], liberada: ['Liberada', 'escuro'], recusada: ['Recusada', 'marca'] };
 async function vAdiantamentos() {
   const m = $('#main');
-  m.innerHTML = `<div class="topo"><div><h1>Adiantamentos</h1><p>Pedidos dos parceiros. Você libera (podendo ajustar o valor e a data) ou recusa com motivo. O valor liberado é descontado da NF do fechamento, que sai pelo líquido.</p></div>${seletorComp(false)}</div><div id="adis" class="carregando">Carregando…</div>`;
+  m.innerHTML = `<div class="topo"><div><h1>Adiantamentos e antecipações</h1><p>Adiantamento: pedido antes da aprovação; o valor liberado é descontado da NF do fechamento. Antecipação: pedido depois da aprovação; a NF passa a ser pelo valor com o desconto. Você libera (com taxa e data) ou recusa com motivo.</p></div>${seletorComp(false)}</div><div id="adis" class="carregando">Carregando…</div>`;
   ligarSeletor(vAdiantamentos);
   const c = comp();
   const [ads, prev, fech, parcs] = await Promise.all([
     todas(() => sb.from('adiantamentos').select('*').eq('competencia_id', c.id).order('solicitado_em', { ascending: false })),
     todas(() => sb.from('previsao_realizado').select('parceiro_id,previsto').eq('competencia_id', c.id)),
-    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado').eq('competencia_id', c.id)),
-    q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo').order('regiao')),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,a_pagar,lote_id,pago_em,antec_status,antec_taxa,antec_desconto,antec_data,antec_obs,antec_motivo,antec_solicitada_em').eq('competencia_id', c.id)),
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo,dia_pagamento').order('regiao')),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
+  const antecs = fech.filter(f => f.antec_status).sort((a, b) => (a.antec_status === 'solicitada' ? 0 : 1) - (b.antec_status === 'solicitada' ? 0 : 1));
   const ativo = a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status);
   const jaAd = id => ads.filter(a => a.parceiro_id === id && ativo(a)).reduce((s, a) => s + Number(a.valor || 0), 0);
   const soma = f => ads.filter(f).reduce((s, a) => s + Number(a.valor ?? a.valor_solicitado ?? 0), 0);
@@ -1469,8 +1497,17 @@ async function vAdiantamentos() {
       <div class="kpi ${ads.some(a => a.status === 'solicitado') ? 'alerta' : 'neutro'}"><small>Pedidos em aberto</small><b>${ads.filter(a => a.status === 'solicitado').length}</b><span>${BRL(soma(a => a.status === 'solicitado'))} solicitados</span></div>
       <div class="kpi"><small>Liberados a pagar</small><b>${BRL(soma(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)))}</b><span>${ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)).length} adiantamento(s)</span></div>
       <div class="kpi neutro"><small>Pagos</small><b>${BRL(soma(a => a.status === 'pago'))}</b><span>${ads.filter(a => a.status === 'pago').length} adiantamento(s)</span></div>
-      <div class="kpi"><small>Economia com adiantamentos (save)</small><b>${BRL2(ads.filter(ativo).reduce((s2, a) => s2 + Number(a.valor_desconto || 0), 0))}</b><span>desconto aplicado nos adiantamentos do mês</span></div>
+      <div class="kpi"><small>Economia (save)</small><b>${BRL2(ads.filter(ativo).reduce((s2, a) => s2 + Number(a.valor_desconto || 0), 0) + fech.reduce((s2, f) => s2 + Number(f.antec_desconto || 0), 0))}</b><span>desconto de adiantamentos e antecipações do mês</span></div>
     </div>
+    ${antecs.length ? `<section class="bloco"><h2>Antecipações do fechamento</h2><p class="sub">Parceiros com o mês aprovado que pediram para receber antes. Ao liberar, a NF passa a ser pelo valor com o desconto e o parceiro entra no grupo "Antecipação" do Pacote do financeiro.</p>
+      <div class="tabela"><table id="antab"><thead><tr><th>Parceiro</th><th>Pedido</th><th class="n">A receber sem desconto</th><th class="n">Desconto</th><th class="n">NF / pagamento</th><th>Situação</th><th></th></tr></thead><tbody>
+      ${antecs.map(f => { const p = pm[f.parceiro_id] || {}; const base = Number(f.valor_aprovado) - Number(f.adiantado || 0); const [r, k] = ST_ANT[f.antec_status] || [f.antec_status, ''];
+        return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(p.dia_pagamento || 'sem dia')}</span></td><td style="font-size:13px">${f.antec_solicitada_em ? fmtDH(f.antec_solicitada_em) : '—'}${f.antec_obs ? `<br><span class="nota">${esc(f.antec_obs)}</span>` : ''}</td>
+          <td class="n">${BRL2(base)}</td><td class="n">${f.antec_status === 'liberada' ? `${BRL2(f.antec_desconto)}<br><span class="nota">${String(f.antec_taxa).replace('.', ',')}%</span>` : '—'}</td>
+          <td class="n">${f.antec_status === 'liberada' ? `<b>${BRL2(f.a_pagar)}</b><br><span class="nota">pagar ${fmtD(f.antec_data)}</span>` : '—'}</td>
+          <td><span class="pill ${k}">${r}</span>${f.antec_motivo ? `<div class="nota">${esc(f.antec_motivo)}</div>` : ''}</td>
+          <td style="white-space:nowrap">${f.lote_id || f.pago_em || c.status !== 'aberta' ? '' : f.antec_status === 'solicitada' ? `<button class="btn peq" data-alib="${f.parceiro_id}">Liberar</button> <button class="btn sec peq" data-arec="${f.parceiro_id}">Recusar</button>` : f.antec_status === 'liberada' ? `<button class="btn sec peq" data-acan="${f.parceiro_id}">Cancelar</button>` : ''}</td></tr>`; }).join('')}
+      </tbody></table></div></section>` : ''}
     ${c.status === 'aberta' ? `<section class="bloco"><h2>Lançar pedido em nome do parceiro</h2><div class="linha"><select class="peq" id="na-p" style="flex:1 1 260px"><option value="">Parceiro…</option>${parcs.filter(p => p.ativo !== false).map(p => `<option value="${p.id}">${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select>
       <input class="peq" id="na-v" placeholder="Valor (R$)" style="width:140px"><input class="peq" id="na-o" placeholder="Observação" style="flex:1 1 220px"><button class="btn sec peq" id="na-ok">Lançar pedido</button></div></section>` : ''}
     <section class="bloco"><div class="linha">${[['todos', 'Todos', ads.length], ['solicitado', 'Em aberto', ads.filter(a => a.status === 'solicitado').length], ['apagar', 'A pagar', ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)).length], ['pago', 'Pagos', ads.filter(a => a.status === 'pago').length], ['recusado', 'Recusados', ads.filter(a => a.status === 'recusado').length]]
@@ -1503,6 +1540,20 @@ async function vAdiantamentos() {
     l.querySelector('#cok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: b.dataset.can, p_decisao: 'cancelar', p_motivo: l.querySelector('#cm').value }))); });
   tab.querySelectorAll('[data-pag]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo">Pago em<input class="peq" type="date" id="pd" value="${hoje}"></label><button class="btn peq" id="pok">Confirmar pagamento</button>`);
     l.querySelector('#pok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('pagar_adiantamento', { p_id: b.dataset.pag, p_data: l.querySelector('#pd').value || null }))); });
+  const atab = $('#antab');
+  if (atab) {
+    const linhaA = (b, html) => { atab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="7" style="background:var(--field)"><div class="linha" style="align-items:flex-end">${html}</div><div class="am"></div></td>`; b.closest('tr').after(l); return l; };
+    atab.querySelectorAll('[data-alib]').forEach(b => b.onclick = () => { const f = fech.find(x => x.parceiro_id === b.dataset.alib); const base = Number(f.valor_aprovado) - Number(f.adiantado || 0);
+      const ult = ads.filter(x => x.parceiro_id === f.parceiro_id && Number(x.taxa_pct)).map(x => x.taxa_pct)[0];
+      const l = linhaA(b, `<label class="campo">Desconto (%)<input class="peq" id="at" value="${ult != null ? String(ult).replace('.', ',') : ''}" placeholder="0" style="width:80px"></label><label class="campo">Data do pagamento antecipado<input class="peq" type="date" id="ad" value="${hoje}"></label><button class="btn peq" id="aok">Confirmar antecipação</button><span class="nota" id="acalc" style="flex-basis:100%"></span>`);
+      const calc = () => { const t = numBR(l.querySelector('#at').value) || 0; const d = Math.round(base * t) / 100; l.querySelector('#acalc').textContent = `Desconto de ${BRL2(d)} · a NF passa a ser de ${BRL2(base - d)} (antes ${BRL2(base)}).`; };
+      l.querySelector('#at').oninput = calc; calc();
+      l.querySelector('#aok').onclick = ev => { const t = numBR(l.querySelector('#at').value); rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_antecipacao', { p_comp: c.id, p_parceiro: f.parceiro_id, p_decisao: 'liberar', p_taxa: t == null || Number.isNaN(t) ? 0 : t, p_data: l.querySelector('#ad').value || null }))); }; });
+    atab.querySelectorAll('[data-arec]').forEach(b => b.onclick = () => { const l = linhaA(b, `<label class="campo" style="flex:1 1 300px">Motivo (o parceiro vê)<input class="peq" id="arm"></label><button class="btn peq" id="arok">Recusar</button>`);
+      l.querySelector('#arok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_antecipacao', { p_comp: c.id, p_parceiro: b.dataset.arec, p_decisao: 'recusar', p_motivo: l.querySelector('#arm').value }))); });
+    atab.querySelectorAll('[data-acan]').forEach(b => b.onclick = () => { const l = linhaA(b, `<span class="nota" style="flex:1 1 300px">Cancelar volta a NF para o valor sem desconto.</span><button class="btn peq" id="acok">Cancelar antecipação</button>`);
+      l.querySelector('#acok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_antecipacao', { p_comp: c.id, p_parceiro: b.dataset.acan, p_decisao: 'cancelar' }))); });
+  }
   const na = $('#na-ok');
   if (na) na.onclick = async () => { const v = numBR($('#na-v').value); if (!$('#na-p').value) return alertaTopo('Escolha o parceiro.'); if (v == null || Number.isNaN(v) || v <= 0) return alertaTopo('Informe o valor.');
     na.disabled = true; try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#na-o').value, p_parceiro: $('#na-p').value })); vAdiantamentos(); } catch (e) { na.disabled = false; alertaTopo(e.message); } };
@@ -1535,7 +1586,7 @@ async function dadosLote(lote) {
   const linhas = fech.map(f => { const p = pm[f.parceiro_id] || {}; const minhas = nfs.filter(x => x.parceiro_id === f.parceiro_id);
     const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[f.parceiro_id] ?? 0); const final = n(f.valor_aprovado ?? f.valor_final);
     return { id: f.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(f.parceiro_id), calend, malote: n(f.malote), caixas: n(f.kits), extrasMal: n(f.fora_umov), desc: n(f.descontos),
-      final, dif: final - calend, pagar: final - n(f.adiantado), adiantado: n(f.adiantado), data: lote.data_pagamento, status: f.pago_em ? 'Pago' : sit[f.parceiro_id] === 'conferida' ? 'Ok' : 'Aguardando NF',
+      final, dif: final - calend, pagar: f.a_pagar != null ? n(f.a_pagar) : final - n(f.adiantado), adiantado: n(f.adiantado), data: lote.data_pagamento, status: f.pago_em ? 'Pago' : sit[f.parceiro_id] === 'conferida' ? 'Ok' : 'Aguardando NF',
       doc: p.tipo_documento, nf: minhas.map(x => x.numero).join(' / ') || '-', emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: p.modelo_capa, nfs: minhas, pago: f.pago_em }; })
     .concat(adis.map(a => { const p = pm[a.parceiro_id] || {}; const f = fechMes.find(x => x.parceiro_id === a.parceiro_id) || {}; const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[a.parceiro_id] ?? 0); const final = f.valor_aprovado != null ? n(f.valor_aprovado) : null;
       return { id: a.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(a.parceiro_id), calend, malote: f.malote != null ? n(f.malote) : null, caixas: f.kits != null ? n(f.kits) : null, extrasMal: f.fora_umov != null ? n(f.fora_umov) : null, desc: f.descontos != null ? n(f.descontos) : null,
@@ -1627,30 +1678,32 @@ async function vPacote() {
   ligarSeletor(vPacote);
   const c = comp();
   const [fech, res, parcs, adisLib] = await Promise.all([
-    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,lote_id,pago_em').eq('competencia_id', c.id)),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,a_pagar,antec_status,antec_taxa,antec_desconto,antec_data,lote_id,pago_em').eq('competencia_id', c.id)),
     todas(() => sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', c.id)),
     q(sb.from('parceiros').select('id,regiao,nome,dia_pagamento,forma_pagamento,tipo_documento')),
     q(sb.from('adiantamentos').select('*').eq('competencia_id', c.id).eq('status', 'liberado').is('lote_id', null).order('data_pagamento')),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const sit = Object.fromEntries(res.map(r => [r.parceiro_id, r.situacao]));
   const livres = fech.filter(f => f.valor_aprovado != null && !f.lote_id);
-  const grupos = {}; livres.forEach(f => { const d = pm[f.parceiro_id]?.dia_pagamento || 'Sem data cadastrada'; (grupos[d] = grupos[d] || []).push(f); });
+  const grupos = {}; const grpAntec = f => `Antecipação ${fmtD(f.antec_data)}`;
+  livres.forEach(f => { const d = f.antec_status === 'liberada' ? grpAntec(f) : pm[f.parceiro_id]?.dia_pagamento || 'Sem data cadastrada'; (grupos[d] = grupos[d] || []).push(f); });
   const ord = ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal', 'Sem data cadastrada'];
-  const gs = Object.entries(grupos).sort((a, b) => ord.indexOf(a[0]) - ord.indexOf(b[0]));
+  const io = k => k.startsWith('Antecipação') ? -1 : ord.indexOf(k);
+  const gs = Object.entries(grupos).sort((a, b) => io(a[0]) - io(b[0]) || a[0].localeCompare(b[0]));
   S.pacGrupo = S.pacGrupo && grupos[S.pacGrupo] ? S.pacGrupo : gs[0]?.[0];
   const sel = grupos[S.pacGrupo] || [];
-  const sugData = () => { const n = (S.pacGrupo || '').match(/\d+/); if (!n || /útil/.test(S.pacGrupo)) return ''; const [y, mm] = c.mes.split('-').map(Number); const dt = new Date(Date.UTC(y, mm, +n[0])); return dt.toISOString().slice(0, 10); };
+  const sugData = () => { const fa = sel.find(f => f.antec_status === 'liberada'); if (fa && S.pacGrupo.startsWith('Antecipação')) return fa.antec_data; const n = (S.pacGrupo || '').match(/\d+/); if (!n || /útil/.test(S.pacGrupo)) return ''; const [y, mm] = c.mes.split('-').map(Number); const dt = new Date(Date.UTC(y, mm, +n[0])); return dt.toISOString().slice(0, 10); };
   $('#montar').className = '';
   $('#montar').innerHTML = c.status === 'fechada' ? '<p class="nota">Competência fechada: não recebe novos lotes.</p>' : !livres.length && !adisLib.length ? '<p class="nota">Nenhum parceiro aprovado ou adiantamento liberado fora de lote neste mês.</p>' : `
     <div class="linha">${gs.map(([d, ls]) => `<button class="btn ${d === S.pacGrupo ? '' : 'sec'} peq" data-grp="${esc(d)}">${esc(d)} (${ls.length})</button>`).join('')}</div>
-    <div class="tabela"><table><thead><tr><th><input type="checkbox" id="tudo" checked></th><th>Parceiro</th><th>Pagamento</th><th class="n">A pagar (aprovado − adiantado)</th><th>NF</th></tr></thead><tbody>
+    <div class="tabela"><table><thead><tr><th><input type="checkbox" id="tudo" checked></th><th>Parceiro</th><th>Pagamento</th><th class="n">A pagar (aprovado − adiantado − antecipação)</th><th>NF</th></tr></thead><tbody>
       ${sel.map(f => { const p = pm[f.parceiro_id] || {}; const s = sit[f.parceiro_id]; return `<tr><td><input type="checkbox" class="pck" value="${f.parceiro_id}" checked></td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td><td style="font-size:13px">${esc(p.forma_pagamento || '—')}</td>
-        <td class="n">${BRL2(Number(f.valor_aprovado) - Number(f.adiantado || 0))}</td><td><span class="pill ${s === 'conferida' ? 'escuro' : 'alerta'}">${(SIT_NF[s] || ['—'])[0]}</span></td></tr>`; }).join('')}
+        <td class="n">${BRL2(f.a_pagar ?? (Number(f.valor_aprovado) - Number(f.adiantado || 0)))}${f.antec_status === 'liberada' ? `<br><span class="nota">antecipação: −${BRL2(f.antec_desconto)} (${String(f.antec_taxa).replace('.', ',')}%)</span>` : f.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida, sem resposta</span>' : ''}</td><td><span class="pill ${s === 'conferida' ? 'escuro' : 'alerta'}">${(SIT_NF[s] || ['—'])[0]}</span></td></tr>`; }).join('')}
     </tbody></table></div>
     ${adisLib.length ? `<h3 style="margin:8px 0 0;font-size:15px">Adiantamentos liberados</h3><div class="tabela"><table><thead><tr><th></th><th>Parceiro</th><th>Pagar em</th><th class="n">Liberado</th><th class="n">Desconto</th><th class="n">A pagar</th></tr></thead><tbody>
       ${adisLib.map(a => `<tr><td><input type="checkbox" class="ack" value="${a.id}"></td><td><b>${esc(pm[a.parceiro_id]?.regiao || '—')}</b></td><td>${fmtD(a.data_pagamento)}</td><td class="n">${BRL2(a.valor)}</td><td class="n">${Number(a.taxa_pct) ? BRL2(a.valor_desconto) + ` (${String(a.taxa_pct).replace('.', ',')}%)` : '—'}</td><td class="n"><b>${BRL2(a.valor_liquido)}</b></td></tr>`).join('')}
       </tbody></table></div><p class="nota">Marque os adiantamentos que saem neste lote. Na capa eles aparecem com Modelo "Parceiro (Adiantamento)" e o valor líquido na coluna de pagamento.</p>` : ''}
-    <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="Pagamento ${esc(((S.pacGrupo || '').match(/\d+/) || [''])[0])}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
+    <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="${(S.pacGrupo || '').startsWith('Antecipação') ? 'Antecipação' : `Pagamento ${esc(((S.pacGrupo || '').match(/\d+/) || [''])[0])}`}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
     <p class="nota">Parceiros aguardando NF podem entrar no lote (aparecem como "Aguardando NF" na capa, como hoje), mas só são marcados como pagos depois da NF conferida.</p>`;
   m.querySelectorAll('[data-grp]').forEach(b => b.onclick = () => { S.pacGrupo = b.dataset.grp; vPacote(); });
   const tudo = $('#tudo'); if (tudo) tudo.onchange = () => m.querySelectorAll('.pck').forEach(x => x.checked = tudo.checked);
@@ -1758,13 +1811,14 @@ async function secaoNF(c) {
     <div class="kpis">
       <div class="kpi"><small>Valor aprovado</small><b>${BRL2(res.valor_aprovado)}</b><span>aprovado pela GSM</span></div>
       <div class="kpi neutro"><small>Adiantamento</small><b>${BRL2(res.adiantado)}</b><span>já pago no mês</span></div>
-      <div class="kpi"><small>Valor da NF (líquido)</small><b>${BRL2(esp)}</b><span>aprovado − adiantamento</span></div>
+      ${res.antec_status === 'liberada' ? `<div class="kpi neutro"><small>Desconto da antecipação</small><b>${BRL2(res.antec_desconto)}</b><span>${String(res.antec_taxa).replace('.', ',')}% · pagamento em ${fmtD(res.antec_data)}</span></div>` : ''}
+      <div class="kpi"><small>Valor da NF (líquido)</small><b>${BRL2(esp)}</b><span>aprovado − adiantamento${res.antec_status === 'liberada' ? ' − antecipação' : ''}</span></div>
       <div class="kpi ${Math.abs(falta) > 0.009 ? 'alerta' : 'neutro'}"><small>${falta >= 0 ? 'Falta emitir' : 'Enviado a mais'}</small><b>${BRL2(Math.abs(falta))}</b><span>${fmtN(res.nfs)} NF(s) enviada(s): ${BRL2(env)}</span></div>
     </div>
     ${nfs.length ? `<div class="tabela"><table><thead><tr><th>NF</th><th>Emissão</th><th>CNPJ emitente</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
       ${nfs.map(n => { const [r, k] = ST_NF[n.status] || [n.status, '']; return `<tr><td><b>${esc(n.numero)}</b>${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">PDF</a>` : ''}</td><td>${fmtD(n.data_emissao)}</td><td class="num">${esc(fmtCNPJ(n.cnpj_emitente))}</td><td class="n">${BRL2(n.valor)}</td>
         <td><span class="pill ${k}">${r}</span>${n.motivo_recusa ? `<div class="nota">GSM: ${esc(n.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
-    ${res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ, tomador e valor e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png')}<div id="nfform"></div>` : ''}`;
+    ${res.antec_status === 'solicitada' ? '<div class="msg alerta">Você pediu a antecipação do pagamento. Aguarde a resposta da GSM: se ela for liberada, a NF passa a ser emitida pelo valor com o desconto.</div>' : res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ, tomador e valor e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png')}<div id="nfform"></div>` : ''}`;
   box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
   if ($('#arqnf')) ligarZona('arqnf', f => formNF(f, c, falta > 0.009 ? falta : esp));
 }
@@ -1856,7 +1910,7 @@ async function vNotas() {
     <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th class="n">NFs enviadas</th><th class="n">Diferença</th><th>Situação</th></tr></thead><tbody>
     ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
       const minhas = nfs.filter(n => n.parceiro_id === r.parceiro_id);
-      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b></td>
+      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
         <td class="n">${r.nfs ? `${BRL2(r.valor_nfs)}<br><span class="nota">${r.nfs} NF(s)</span>` : '—'}</td><td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td></tr>
       ${minhas.map(n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, '']; const sinais = [
           ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '<span class="pill">CNPJ confere</span>',
@@ -2048,7 +2102,7 @@ async function vDiretoria(el) {
   const [comps, parcs, fech, prev, efic, adis] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
-    todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,pago_em,data_pagamento')),
+    todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento')),
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
@@ -2146,7 +2200,7 @@ function desenharDiretoria(el) {
   if (D.aba === 'lotes') listaLotes($('#dlotes'), c.id, false);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
-  pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, pago: r.pago_em, fechado: fechado(r) })));
+  pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
   graficoPrev($('#gprev'), $('#tprev'), serieP, c.id);
   clientesMes($('#dcli'), c.id, op, null);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
@@ -2248,10 +2302,11 @@ function visaoGeral(box, D, c, ant) {
   const difPrev = malComPrev - prevComReal;
   const parceirosMes = new Set([...fe.map(r => r.parceiro_id), ...Object.keys(prevPor)]).size;
   const nFech = fe.filter(fechado).length;
-  const pago = fe.filter(r => r.pago_em).reduce((a, r) => a + total(r) - n(r.adiantado), 0);
+  const pago = fe.filter(r => r.pago_em).reduce((a, r) => a + total(r) - n(r.adiantado) - n(r.antec_desconto), 0);
   const adiantado = fe.reduce((a, r) => a + n(r.adiantado), 0);
-  const aPagar = Math.max(0, custo - adiantado - pago);
-  const save = (D.adis || []).filter(a => a.competencia_id === c.id).reduce((a, x) => a + n(x.valor_desconto), 0);
+  const antecTot = fe.reduce((a, r) => a + n(r.antec_desconto), 0);
+  const aPagar = Math.max(0, custo - adiantado - pago - antecTot);
+  const save = (D.adis || []).filter(a => a.competencia_id === c.id).reduce((a, x) => a + n(x.valor_desconto), 0) + antecTot;
   const economia = -desc + save;
   const semReal = !fe.length;
   const semRegistroPag = c.status === 'fechada' && !fe.some(r => r.pago_em);
@@ -2290,13 +2345,13 @@ function visaoGeral(box, D, c, ant) {
         <div class="gbar"><i style="width:${parceirosMes ? Math.round(100 * nFech / parceirosMes) : 0}%"></i></div></div>
       ${semRegistroPag ? `<div><small>Pagamento</small><b>Mês fechado</b><span style="font-size:13px;color:var(--on-dark)">pagamentos feitos antes do portal${adiantado ? ` · ${BRL(adiantado)} em adiantamentos` : ''}</span></div>`
       : `<div><small>Pagamento</small><b>${BRL(pago + adiantado)} pago · ${BRL(aPagar)} a pagar</b>
-        <div class="gbar"><i style="width:${custo ? Math.min(100, Math.round(100 * (pago + adiantado) / custo)) : 0}%"></i></div></div>`}
+        <div class="gbar"><i style="width:${custo ? Math.min(100, Math.round(100 * (pago + adiantado + antecTot) / custo)) : 0}%"></i></div></div>`}
     </div>
   </div>
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
     ${!previsto || semReal || !prevComReal ? tile('Malote realizado x previsto', '—', !previsto ? 'sem previsão no mês' : 'sem realizado ainda') : tile('Malote realizado x previsto', (difPrev > 0 ? '+' : '') + BRL(difPrev), `${pct(difPrev / prevComReal)} · ${difPrev > 0 ? 'acima' : 'abaixo'} do previsto`, difPrev > 0 ? 'alerta' : 'bom')}
-    ${tile('Economia no mês', BRL(economia), `${desc ? BRL(-desc) + ' em descontos' : 'sem descontos'}${save ? ' · ' + BRL(save) + ' de save em adiantamentos' : ''}`, economia > 0 ? 'bom' : '')}
+    ${tile('Economia no mês', BRL(economia), `${desc ? BRL(-desc) + ' em descontos' : 'sem descontos'}${save ? ' · ' + BRL(save) + ' de save em adiantamentos e antecipações' : ''}`, economia > 0 ? 'bom' : '')}
     ${tile(`Acumulado ${ano}`, BRL(acum), `projeção do ano ${BRLk(proj)}`)}
   </div>
   <div class="ggrid">
@@ -2422,21 +2477,22 @@ function eficiencia(box, D, c) {
 
 // Caixa: o que vence em cada data, adiantamentos e saldo
 function pagamentos(box, adis, ls) {
-  const save = adis.reduce((a, x) => a + Number(x.valor_desconto || 0), 0); const adiBruto = adis.reduce((a, x) => a + Number(x.valor || 0), 0);
-  const g = {}; ls.forEach(t => { const x = g[t.dia] || (g[t.dia] = { n: 0, v: 0, adi: 0, pagos: 0, vp: 0, aberto: 0 }); x.n++; x.v += t.total; x.adi += t.adi; if (!t.fechado) x.aberto++; if (t.pago) { x.pagos++; x.vp += t.total - t.adi; } });
+  const antecTot = ls.reduce((a, t) => a + (t.antec || 0), 0);
+  const save = adis.reduce((a, x) => a + Number(x.valor_desconto || 0), 0) + antecTot; const adiBruto = adis.reduce((a, x) => a + Number(x.valor || 0), 0);
+  const g = {}; ls.forEach(t => { const x = g[t.dia] || (g[t.dia] = { n: 0, v: 0, adi: 0, pagos: 0, vp: 0, aberto: 0 }); x.n++; x.v += t.total; x.adi += t.adi; if (!t.fechado) x.aberto++; x.antec = (x.antec || 0) + (t.antec || 0); if (t.pago) { x.pagos++; x.vp += t.total - t.adi - (t.antec || 0); } });
   const ord = ['5º dia útil', 'Dia 15', 'Dia 20', 'Dia 30', 'Quinzenal', '—'];
   const lst = Object.entries(g).sort((a, b) => (ord.indexOf(a[0]) + 99) % 99 - (ord.indexOf(b[0]) + 99) % 99);
   const T = lst.reduce((a, [, x]) => ({ n: a.n + x.n, v: a.v + x.v, adi: a.adi + x.adi, vp: a.vp + x.vp, aberto: a.aberto + x.aberto }), { n: 0, v: 0, adi: 0, vp: 0, aberto: 0 });
-  const saldo = T.v - T.adi - T.vp;
+  const saldo = T.v - T.adi - T.vp - antecTot;
   box.innerHTML = `<div class="kpis">
       <div class="kpi"><small>Valor do mês</small><b>${BRL(T.v)}</b><span>${T.n} parceiros${T.aberto ? ` · ${T.aberto} ainda não fechados` : ''}</span></div>
       <div class="kpi neutro"><small>Adiantamentos já pagos</small><b>${BRL(T.adi)}</b><span>${T.v ? pct(T.adi / T.v).replace('+', '') : '—'} do mês</span></div>
       <div class="kpi neutro"><small>Pago no fechamento</small><b>${BRL(T.vp)}</b><span>registrado no portal</span></div>
       <div class="kpi ${saldo > 0 ? 'alerta' : ''}"><small>Saldo a pagar</small><b>${BRL(saldo)}</b><span>valor − adiantado − pago</span></div>
-      <div class="kpi"><small>Economia com adiantamentos (save)</small><b>${BRL2(save)}</b><span>${adis.length ? `${adis.length} adiantamento(s) · ${BRL(adiBruto)} adiantados` : 'nenhum adiantamento com desconto'}</span></div>
+      <div class="kpi"><small>Economia com adiantamentos e antecipações (save)</small><b>${BRL2(save)}</b><span>${adis.length ? `${adis.length} adiantamento(s) · ${BRL(adiBruto)} adiantados` : 'nenhum adiantamento com desconto'}${antecTot ? ` · ${BRL2(antecTot)} em antecipações` : ''}</span></div>
     </div>
     <div class="tabela"><table><thead><tr><th>Data de pagamento</th><th class="n">Parceiros</th><th class="n">Valor</th><th class="n">Adiantado</th><th class="n">Pago</th><th class="n">Saldo a pagar</th></tr></thead><tbody>
-    ${lst.map(([k, x]) => { const sd = x.v - x.adi - x.vp; return `<tr><td>${esc(k === '—' ? 'Sem data cadastrada' : k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}</td><td class="n">${x.adi ? BRL(x.adi) : '—'}</td><td class="n">${x.vp ? BRL(x.vp) : '—'}</td>
+    ${lst.map(([k, x]) => { const sd = x.v - x.adi - x.vp - (x.antec || 0); return `<tr><td>${esc(k === '—' ? 'Sem data cadastrada' : k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}</td><td class="n">${x.adi ? BRL(x.adi) : '—'}</td><td class="n">${x.vp ? BRL(x.vp) : '—'}</td>
       <td class="n"><b>${BRL(sd)}</b><div style="height:4px;background:#E9E7E3;border-radius:2px;margin-top:4px"><div style="height:4px;width:${T.v ? Math.max(0, 100 * sd / T.v) : 0}%;background:#121112;border-radius:2px"></div></div></td></tr>`; }).join('')}
     </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${T.n}</b></td><td class="n"><b>${BRL(T.v)}</b></td><td class="n"><b>${BRL(T.adi)}</b></td><td class="n"><b>${BRL(T.vp)}</b></td><td class="n"><b>${BRL(saldo)}</b></td></tr></tfoot></table></div>
     <p class="nota">Datas fixas do cadastro de cada parceiro. Valores com descontos. "Pago" passa a aparecer quando o pagamento for registrado no portal (etapa do financeiro).</p>`;
