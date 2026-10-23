@@ -2175,7 +2175,10 @@ function desenharDiretoria(el) {
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
     <p class="sub">Previsto = valor fixo do contrato + atendimentos calendarizados de cada ponto × valor unitário. Realizado = malote fechado do parceiro. Kits/Spot não entram na previsão.</p>
-    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section></div>
+    <div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
+  <section class="bloco"><h2>Projeção por parceiro até dezembro</h2>
+    <p class="sub">Calculada com a carteira de pontos de hoje e as mesmas regras do previsto do mês: frequência de cada ponto × dias úteis (sem feriados nacionais) × valor unitário, mais o valor fixo do contrato. Entram as inclusões e cancelamentos já cadastrados com data futura.</p>
+    <div id="pprev"><div class="carregando">Calculando a projeção…</div></div></section></div>
   <div data-sec="parceiros" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><div class="linha" style="justify-content:space-between"><h2>Parceiros</h2>
       <div class="linha"><input id="dfiltro" class="peq" placeholder="Filtrar parceiro" value="${esc(D.filtro || '')}" style="min-width:200px"><button class="btn sec peq" id="dcsv">Baixar tabela (CSV)</button></div></div>
@@ -2203,7 +2206,12 @@ function desenharDiretoria(el) {
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
-  graficoPrev($('#gprev'), $('#tprev'), serieP, c.id);
+  if (D.proj === undefined && D.aba === 'previsto') { D.proj = null; todas(() => sb.rpc('projecao_previsto', {})).then(r => { D.proj = r; if (D.aba === 'previsto') desenharDiretoria(el); }).catch(e => { D.proj = { erro: e.message }; desenharDiretoria(el); }); }
+  const proj = Array.isArray(D.proj) ? D.proj : [];
+  const mesesProj = [...new Set(proj.map(r => r.mes))].filter(m => !D.comps.some(x => x.mes === m)).sort();
+  const serieProj = mesesProj.map(m => ({ c: { id: 'proj-' + m, mes: m }, p: proj.filter(r => r.mes === m).reduce((a, r) => a + Number(r.calendarizado), 0), r: null, origem: 'projecao', proj: true }));
+  graficoPrev($('#gprev'), $('#tprev'), serieP.concat(serieProj), c.id);
+  projecaoParceiros($('#pprev'), D, proj, mesesProj);
   clientesMes($('#dcli'), c.id, op, null);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
   $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
@@ -2243,6 +2251,37 @@ function grafico(box, pts) {
   });
 }
 
+// Projeção por parceiro dos meses que ainda não têm base (carteira atual)
+function projecaoParceiros(box, D, proj, meses) {
+  if (!box) return;
+  if (D.proj && D.proj.erro) { box.innerHTML = `<div class="msg erro">${esc(D.proj.erro)}</div>`; return; }
+  if (!Array.isArray(D.proj)) return;
+  if (!meses.length) { box.innerHTML = '<p class="nota">Todos os meses até dezembro já têm base gerada.</p>'; return; }
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const ultimo = D.comps.filter(x => D.fech.some(f => f.competencia_id === x.id)).slice(-1)[0];
+  const ult = ultimo ? Object.fromEntries(D.fech.filter(f => f.competencia_id === ultimo.id).map(f => [f.parceiro_id, Number(f.malote) || 0])) : {};
+  const ids = [...new Set(proj.map(r => r.parceiro_id))];
+  const v = (id, m, k = 'calendarizado') => { const r = proj.find(x => x.parceiro_id === id && x.mes === m); return r ? Number(r[k]) : 0; };
+  D.projSort = D.projSort || ['total', -1];
+  const linhas = ids.map(id => ({ id, regiao: pm[id]?.regiao || '—', nome: pm[id]?.nome || '', tipo: pm[id]?.tipo || '', ult: ult[id], meses: meses.map(m => v(id, m)), atend: meses.map(m => v(id, m, 'atendimentos_previstos')), fixo: v(id, meses[0], 'valor_fixo') }))
+    .map(l => ({ ...l, total: l.meses.reduce((a, x) => a + x, 0) }));
+  const [sk, sd] = D.projSort; linhas.sort((a, b) => sk === 'regiao' ? sd * a.regiao.localeCompare(b.regiao) : sd * ((a[sk] ?? 0) - (b[sk] ?? 0)));
+  const tot = meses.map((_, i) => linhas.reduce((a, l) => a + l.meses[i], 0));
+  box.innerHTML = `<div class="linha" style="justify-content:space-between"><span class="nota">${linhas.length} parceiros · ${meses.map(nomeMes).join(', ')}</span><button class="btn sec peq" id="pjx">Baixar Excel</button></div>
+    <div class="tabela"><table><thead><tr><th data-ps="regiao" style="cursor:pointer">Parceiro</th><th class="n" data-ps="fixo" style="cursor:pointer">Fixo do contrato</th>${ultimo ? `<th class="n" data-ps="ult" style="cursor:pointer">Malote ${MES3[+ultimo.mes.slice(5, 7) - 1]} (realizado)</th>` : ''}${meses.map(m => `<th class="n">${MES3[+m.slice(5, 7) - 1]} (projeção)</th>`).join('')}<th class="n" data-ps="total" style="cursor:pointer">Total projetado</th></tr></thead><tbody>
+    ${linhas.map(l => `<tr><td><b>${esc(l.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(l.nome)}${l.tipo ? ' · ' + esc(l.tipo) : ''}</span></td><td class="n">${l.fixo ? BRL(l.fixo) : '—'}</td>${ultimo ? `<td class="n" style="color:var(--muted)">${l.ult != null ? BRL(l.ult) : '—'}</td>` : ''}
+      ${l.meses.map((x, i) => `<td class="n">${BRL(x)}<br><span style="font-size:12px;color:var(--muted)">${fmtN(l.atend[i])} atend.</span></td>`).join('')}<td class="n"><b>${BRL(l.total)}</b></td></tr>`).join('')}
+    </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(linhas.reduce((a, l) => a + l.fixo, 0))}</b></td>${ultimo ? `<td class="n"><b>${BRL(linhas.reduce((a, l) => a + (l.ult || 0), 0))}</b></td>` : ''}${tot.map(t => `<td class="n"><b>${BRL(t)}</b></td>`).join('')}<td class="n"><b>${BRL(tot.reduce((a, t) => a + t, 0))}</b></td></tr></tfoot></table></div>
+    <p class="nota">A projeção muda conforme a carteira muda: quando a base de um mês é gerada, aquele mês passa a usar o previsto do portal. Kits/Spot não entram na previsão.</p>`;
+  box.querySelectorAll('[data-ps]').forEach(th => th.onclick = () => { const k = th.dataset.ps; D.projSort = [k, D.projSort[0] === k ? -D.projSort[1] : (k === 'regiao' ? 1 : -1)]; projecaoParceiros(box, D, proj, meses); });
+  $('#pjx').onclick = () => {
+    const rows = linhas.map(l => { const o = { 'Parceiro': l.nome, 'Região': l.regiao, 'Tipo': l.tipo, 'Fixo do contrato': l.fixo };
+      if (ultimo) o[`Malote ${nomeMes(ultimo.mes)} (realizado)`] = l.ult ?? null;
+      meses.forEach((m, i) => { o[`${nomeMes(m)} - atendimentos`] = l.atend[i]; o[`${nomeMes(m)} - previsto`] = l.meses[i]; }); o['Total projetado'] = l.total; return o; });
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Projeção'); XLSX.writeFile(wb, `Projecao_previsto_ate_${meses.slice(-1)[0].slice(0, 7)}.xlsx`);
+  };
+}
+
 function kpiPrev(x) {
   if (!x || !x.p) return `<div class="kpi neutro"><small>Previsto (calendarizado)</small><b>—</b><span>sem base do mês gerada</span></div>`;
   if (x.r == null) return `<div class="kpi neutro"><small>Previsto (calendarizado) · malote</small><b>${BRL(x.p)}</b><span>previsão do mês · ainda sem realizado</span></div>`;
@@ -2256,11 +2295,11 @@ function graficoPrev(box, tbox, pts, atualId) {
   const max = Math.max(...pts.map(p => Math.max(p.p || 0, p.r || 0)), 1); const nice = Math.pow(10, Math.floor(Math.log10(max))); const top = Math.ceil(max / nice) * nice;
   const bw = (W - L - R) / pts.length; const y = v => T + (H - T - B) * (1 - v / top);
   const rot = p => MES3[+p.c.mes.slice(5, 7) - 1];
-  box.innerHTML = `<div class="linha" style="font-size:13px;color:var(--muted);gap:18px"><span><i style="display:inline-block;width:12px;height:12px;border:2px solid #121112;border-radius:2px;vertical-align:-2px"></i> Previsto</span><span><i style="display:inline-block;width:12px;height:12px;background:#DB2242;border-radius:2px;vertical-align:-2px"></i> Realizado</span></div>
+  box.innerHTML = `<div class="linha" style="font-size:13px;color:var(--muted);gap:18px"><span><i style="display:inline-block;width:12px;height:12px;border:2px solid #121112;border-radius:2px;vertical-align:-2px"></i> Previsto</span><span><i style="display:inline-block;width:12px;height:12px;background:#DB2242;border-radius:2px;vertical-align:-2px"></i> Realizado</span>${pts.some(p => p.proj) ? '<span><i style="display:inline-block;width:12px;height:12px;border:2px dashed #121112;border-radius:2px;vertical-align:-2px"></i> Projeção pela carteira atual</span>' : ''}</div>
   <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px;height:auto;display:block" role="img" aria-label="Previsto x realizado">
     ${[0, top / 2, top].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
     ${pts.map((p, i) => { const x0 = L + i * bw, w = bw * 0.3, g = 3;
-      const bar = (v, x, cheia) => v ? `<rect x="${x}" y="${y(v)}" width="${w}" height="${y(0) - y(v)}" rx="2" ${cheia ? 'fill="#DB2242"' : 'fill="#FBFAF8" stroke="#121112" stroke-width="1.5"'}/>` : '';
+      const bar = (v, x, cheia) => v ? `<rect x="${x}" y="${y(v)}" width="${w}" height="${y(0) - y(v)}" rx="2" ${cheia ? 'fill="#DB2242"' : `fill="#FBFAF8" stroke="#121112" stroke-width="1.5"${p.proj ? ' stroke-dasharray="4 3"' : ''}`}/>` : '';
       return `<g data-i="${i}"><rect x="${x0}" y="${T}" width="${bw}" height="${H - T - B}" fill="${p.c.id === atualId ? '#F6F5F2' : 'transparent'}"/>
         ${bar(p.p, x0 + bw / 2 - w - g / 2, false)}${bar(p.r, x0 + bw / 2 + g / 2, true)}
         <text x="${x0 + bw / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.c.id === atualId ? '#A3182F' : '#6E6E72'}" font-weight="${p.c.id === atualId ? 600 : 400}" font-family="Poppins">${rot(p)}</text></g>`; }).join('')}
@@ -2269,9 +2308,9 @@ function graficoPrev(box, tbox, pts, atualId) {
   box.querySelectorAll('g[data-i]').forEach(g => {
     const p = pts[+g.dataset.i];
     g.onmousemove = e => { tip.hidden = false;
-      tip.innerHTML = `<b>${rot(p)}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:#B8B6B4">${pct(p.r / p.p - 1)}</span>` : ''}`;
+      tip.innerHTML = `<b>${rot(p)}${p.proj ? ' · projeção' : ''}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:#B8B6B4">${pct(p.r / p.p - 1)}</span>` : ''}`;
       const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top - 70) + 'px'; };
-    g.onmouseleave = () => tip.hidden = true; g.style.cursor = 'pointer';
+    g.onmouseleave = () => tip.hidden = true; if (p.proj) return; g.style.cursor = 'pointer';
     g.onclick = () => { S.dir.compId = p.c.id; desenharDiretoria(box.closest('main') || $('#main')); };
   });
   const comAmbos = pts.filter(p => p.p && p.r != null);
@@ -2279,9 +2318,10 @@ function graficoPrev(box, tbox, pts, atualId) {
   tbox.innerHTML = `<div class="tabela"><table><thead><tr><th>Mês</th><th class="n">Previsto</th><th class="n">Realizado</th><th class="n">Diferença</th><th class="n">%</th><th>Origem da previsão</th></tr></thead><tbody>
     ${pts.map(p => `<tr${p.c.id === atualId ? ' style="background:var(--field);font-weight:600"' : ''}><td>${nomeMes(p.c.mes)}</td><td class="n">${p.p ? BRL(p.p) : '—'}</td><td class="n">${p.r != null ? BRL(p.r) : '—'}</td>
       <td class="n">${p.p && p.r != null ? ((p.r - p.p > 0 ? '+' : '') + BRL(p.r - p.p)) : '—'}</td><td class="n">${p.p && p.r != null ? pct(p.r / p.p - 1) : '—'}</td>
-      <td style="font-size:13px;color:var(--muted)">${p.origem === 'planilha' ? 'Planilha de fechamento' : p.origem === 'portal' ? 'Calculado no portal' : 'Base do mês ainda não gerada'}</td></tr>`).join('')}
-    </tbody><tfoot><tr><td><b>Acumulado</b></td><td class="n"><b>${BRL(tp)}</b></td><td class="n"><b>${BRL(tr)}</b></td><td class="n"><b>${(tr - tp > 0 ? '+' : '') + BRL(tr - tp)}</b></td><td class="n"><b>${tp ? pct(tr / tp - 1) : '—'}</b></td><td></td></tr></tfoot></table></div>
-    <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base).</p>`;
+      <td style="font-size:13px;color:var(--muted)">${p.origem === 'planilha' ? 'Planilha de fechamento' : p.origem === 'portal' ? 'Calculado no portal' : p.origem === 'projecao' ? 'Projeção pela carteira atual' : 'Base do mês ainda não gerada'}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td><b>Acumulado (meses com realizado)</b></td><td class="n"><b>${BRL(tp)}</b></td><td class="n"><b>${BRL(tr)}</b></td><td class="n"><b>${(tr - tp > 0 ? '+' : '') + BRL(tr - tp)}</b></td><td class="n"><b>${tp ? pct(tr / tp - 1) : '—'}</b></td><td></td></tr>
+    ${pts.some(p => p.proj) ? (() => { const pj = pts.filter(p => p.proj).reduce((a, p) => a + p.p, 0); const sr = pts.filter(p => !p.proj && p.r == null).reduce((a, p) => a + (p.p || 0), 0); return `<tr><td><b>Ano: realizado + previsão dos meses em aberto</b></td><td class="n"></td><td class="n"><b>${BRL(tr + sr + pj)}</b></td><td colspan="3" style="font-size:13px;color:var(--muted)">${BRL(tr)} realizado + ${BRL(sr + pj)} previsto até dezembro</td></tr>`; })() : ''}</tfoot></table></div>
+    <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base). Os meses sem base aparecem como projeção (barra tracejada), calculada com a carteira atual até dezembro.</p>`;
 }
 
 const ABAS_DIR = [['geral', 'Visão geral'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
