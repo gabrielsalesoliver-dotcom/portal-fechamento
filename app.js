@@ -1,12 +1,13 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js';
-import { gerarModelo } from './modelo.js';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-0905';
+import { gerarModelo } from './modelo.js?v=2026.10.23-0905';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
+const VERSAO = '2026.10.23-0905';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -181,7 +182,7 @@ function casca() {
         ${MENU.map(([g, itens]) => `<div class="grupo">${g}</div>` + itens.map(([id, nome]) =>
           id ? `<a href="#${id}" class="${S.view === id ? 'on' : ''}">${nome}</a>` : `<a class="off">${nome} <em>em construção</em></a>`).join('')).join('')}
       </nav>
-      <div class="rodape"><span>${esc(S.user.email)}</span><button id="sair">Sair</button></div>
+      <div class="rodape"><span>${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span><button id="sair">Sair</button></div>
     </aside>
     <main id="main"></main>
   </div>`;
@@ -1006,7 +1007,7 @@ function telaParceiro() {
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Portal do Parceiro</div><div style="font-size:18px;font-weight:600">${esc(p.nome)} · ${esc(p.regiao)}</div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span>${esc(S.user.email)}</span>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
           <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
@@ -2087,7 +2088,7 @@ async function iniciarConsulta() {
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Fechamento de última milha</div><div style="font-size:18px;font-weight:600">${S.perfil.papel === 'financeiro' ? 'Financeiro' : 'Diretoria'}</div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span>${esc(S.user.email)}</span>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
           <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
