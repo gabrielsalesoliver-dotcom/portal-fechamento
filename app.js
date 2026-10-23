@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1425';
-import BR from './brasil.js?v=2026.10.23-1425';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1425';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1440';
+import BR from './brasil.js?v=2026.10.23-1440';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1440';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1425';
+const VERSAO = '2026.10.23-1440';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2320,16 +2320,27 @@ function resumoAno(box, pts, kitsDe, projPronta) {
 }
 
 // ================= Mapa de custos por estado =================
+async function carregarMapa(D, c) {
+  D.mapa = D.mapa || {};
+  const [rows, contr] = await Promise.all([todas(() => sb.rpc('mapa_uf', { p_comp: c.id })), D.contr ? Promise.resolve(D.contr) : q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim'))]);
+  D.contr = contr; D.mapa[c.id] = rows;
+}
+// Fixo pago por atendimento previsto que não aconteceu (undefined = ainda não carregado; null = sem dado)
+function potencialMes(D, c) {
+  if (!D.mapa || !D.mapa[c.id] || !D.contr) return undefined;
+  const n = v => Number(v) || 0; const rows = D.mapa[c.id]; let tot = 0, tem = false;
+  D.fech.filter(f => f.competencia_id === c.id).forEach(f => { const rs = rows.filter(r => r.parceiro_id === f.parceiro_id); const prev = rs.reduce((a, r) => a + n(r.atend_previsto), 0), real = rs.reduce((a, r) => a + n(r.atend_realizado), 0);
+    const k = D.contr.filter(x => x.parceiro_id === f.parceiro_id && x.inicio <= c.mes && (!x.fim || x.fim >= c.mes)).sort((a, b) => b.inicio.localeCompare(a.inicio))[0];
+    if (prev && k) { tem = true; tot += n(k.valor_fixo) * Math.max(0, 1 - real / prev); } });
+  return tem ? tot : null;
+}
 const MAPA_MET = [['potencial', 'Onde agir (potencial de redução)'], ['custo', 'Custo do mês'], ['cpa', 'Custo por atendimento'], ['exec', 'Execução (realizado ÷ previsto)']];
 async function mapaCustos(box, D, c) {
   if (!box) return;
   D.mapa = D.mapa || {};
   if (!D.mapa[c.id]) {
     box.innerHTML = '<div class="carregando">Montando o mapa…</div>';
-    try {
-      const [rows, contr] = await Promise.all([todas(() => sb.rpc('mapa_uf', { p_comp: c.id })), D.contr ? Promise.resolve(D.contr) : q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim'))]);
-      D.contr = contr; D.mapa[c.id] = rows;
-    } catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
+    try { await carregarMapa(D, c); } catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
   }
   const rows = D.mapa[c.id]; const n = v => Number(v) || 0;
   const fech = D.fech.filter(f => f.competencia_id === c.id);
@@ -2465,6 +2476,17 @@ function visaoGeral(box, D, c, ant) {
   const antecTot = fe.reduce((a, r) => a + n(r.antec_desconto), 0);
   const aPagar = Math.max(0, custo - adiantado - pago - antecTot);
   const save = (D.adis || []).filter(a => a.competencia_id === c.id).reduce((a, x) => a + n(x.valor_desconto), 0) + antecTot;
+  // Resultado da gestão: o que a GSM deixou de pagar
+  const ganhos = id => { const f = doMes(id); const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
+    const comP = f.filter(r => pp[r.parceiro_id] != null && fechado(r)); const abaixo = comP.reduce((a, r) => a + Math.max(0, pp[r.parceiro_id] - n(r.malote)), 0), acimaV = comP.reduce((a, r) => a + Math.max(0, n(r.malote) - pp[r.parceiro_id]), 0);
+    const val = Math.max(0, abaixo - acimaV); const d = -f.reduce((a, r) => a + n(r.descontos), 0);
+    const sv = (D.adis || []).filter(a => a.competencia_id === id).reduce((a, x) => a + n(x.valor_desconto), 0) + f.reduce((a, r) => a + n(r.antec_desconto), 0);
+    return { val, abaixo, acima: acimaV, nAbaixo: comP.filter(r => pp[r.parceiro_id] > n(r.malote)).length, nAcima: comP.filter(r => n(r.malote) > pp[r.parceiro_id]).length, desc: d, save: sv, total: val + d + sv }; };
+  const G = ganhos(c.id);
+  const mesesAno = D.comps.filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && +x.mes.slice(5, 7) <= +c.mes.slice(5, 7));
+  const GA = mesesAno.map(x => ganhos(x.id)).reduce((a, g) => ({ val: a.val + g.val, desc: a.desc + g.desc, save: a.save + g.save, total: a.total + g.total }), { val: 0, desc: 0, save: 0, total: 0 });
+  const potM = potencialMes(D, c);
+  if (potM === undefined && !D.mapaCarregando) { D.mapaCarregando = true; carregarMapa(D, c).then(() => { D.mapaCarregando = false; if (D.aba === 'geral' && D.compId === c.id) visaoGeral(box, D, c, ant); }).catch(() => { D.mapaCarregando = false; }); }
   const economia = -desc + save;
   const semReal = !fe.length;
   const semRegistroPag = c.status === 'fechada' && !fe.some(r => r.pago_em);
@@ -2506,10 +2528,20 @@ function visaoGeral(box, D, c, ant) {
         <div class="gbar"><i style="width:${custo ? Math.min(100, Math.round(100 * (pago + adiantado + antecTot) / custo)) : 0}%"></i></div></div>`}
     </div>
   </div>
+  ${semReal ? '' : `<section class="gres">
+    <div class="gres-main"><small>Economia gerada pela GSM · ${nomeMes(c.mes)}</small><b>${BRL(G.total)}</b>
+      <span>${custo ? `${pct(G.total / (custo + G.total)).replace('+', '')} do que seria pago sem a validação` : ''}</span>
+      <span class="gres-ano">Acumulado ${c.mes.slice(0, 4)}: <b>${BRL(GA.total)}</b></span></div>
+    <div class="gres-itens">
+      <div><small>Validação do fechamento</small><b>${BRL(G.val)}</b><span>malote pago abaixo do previsto: só o realizado comprovado (${G.nAbaixo} parceiros${G.acima > 0.5 ? `; ${BRL(G.acima)} acima do previsto em ${G.nAcima}` : ''}) · ano ${BRL(GA.val)}</span></div>
+      <div><small>Descontos aplicados</small><b>${BRL(G.desc)}</b><span>glosas, penalidades e repasses · ano ${BRL(GA.desc)}</span></div>
+      <div><small>Adiantamentos e antecipações</small><b>${BRL(G.save)}</b><span>desconto cobrado no pagamento antecipado · ano ${BRL(GA.save)}</span></div>
+      <div class="gres-pot"><small>Ainda dá para reduzir</small><b>${potM === undefined ? '…' : potM === null ? '—' : BRL(potM)}</b><span>${potM === undefined ? 'calculando…' : potM === null ? 'sem execução do mês (Umov) para calcular' : 'fixo pago por atendimento previsto que não aconteceu'} · <a href="#" data-irmapa>ver no Mapa de custos</a></span></div>
+    </div></section>`}
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
-    ${!previsto || semReal || !prevComReal ? tile('Malote realizado x previsto', '—', !previsto ? 'sem previsão no mês' : 'sem realizado ainda') : tile('Malote realizado x previsto', (difPrev > 0 ? '+' : '') + BRL(difPrev), `${pct(difPrev / prevComReal)} · ${difPrev > 0 ? 'acima' : 'abaixo'} do previsto`, difPrev > 0 ? 'alerta' : 'bom')}
-    ${tile('Economia no mês', BRL(economia), `${desc ? BRL(-desc) + ' em descontos' : 'sem descontos'}${save ? ' · ' + BRL(save) + ' de save em adiantamentos e antecipações' : ''}`, economia > 0 ? 'bom' : '')}
+    ${tile('Malote realizado', semReal ? '—' : BRL(mal), !previsto || !prevComReal ? 'sem previsão no mês' : `${pct(difPrev / prevComReal)} sobre o previsto`)}
+    ${tile('Kits/Spot', semReal ? '—' : BRL(kit + fora), custo ? `${Math.round(100 * (kit + fora) / custo)}% do custo do mês` : '')}
     ${tile(`Acumulado ${ano}`, BRL(acum), `projeção do ano ${BRLk(proj)}`)}
   </div>
   <div class="ggrid">
@@ -2538,6 +2570,7 @@ function visaoGeral(box, D, c, ant) {
     </section>
   </div></div>`;
   box.querySelectorAll('[data-comp]').forEach(e => e.onclick = () => { D.compId = e.dataset.comp; desenharDiretoria(box.closest('main') || $('#main')); });
+  box.querySelectorAll('[data-irmapa]').forEach(e => e.onclick = ev => { ev.preventDefault(); D.aba = 'mapa'; desenharDiretoria(box.closest('main') || $('#main')); });
 }
 
 // Acumulado do ano e projeção: realizado dos meses fechados + previsto (calendarizado) dos que faltam

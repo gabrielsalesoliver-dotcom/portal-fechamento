@@ -146,3 +146,13 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 }
 
 @media (max-width:860px){.mapa-grid{grid-template-columns:1fr!important}}
+
+.gres{display:grid;grid-template-columns:minmax(220px,0.9fr) 2.6fr;gap:18px;background:#fff;border:1px solid var(--rule);border-left:6px solid var(--ink);border-radius:12px;padding:20px 22px}
+.gres-main{display:flex;flex-direction:column;gap:6px}.gres-main small{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.gres-main>b{font-size:38px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}.gres-main span{font-size:13px;color:var(--muted)}
+.gres-main .gres-ano{margin-top:6px;font-size:14px;color:var(--ink)}.gres-main .gres-ano b{font-size:16px}
+.gres-itens{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
+.gres-itens>div{display:flex;flex-direction:column;gap:4px;border-top:3px solid var(--ink);padding-top:10px}
+.gres-itens small{font-size:13px;color:var(--muted)}.gres-itens b{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}.gres-itens span{font-size:12.5px;color:var(--muted);line-height:1.45}
+.gres-itens .gres-pot{border-top-color:var(--brand)}.gres-itens .gres-pot b{color:var(--brand-deep)}.gres-itens a{color:var(--brand-deep)}
+@media (max-width:860px){.gres{grid-template-columns:1fr}}
