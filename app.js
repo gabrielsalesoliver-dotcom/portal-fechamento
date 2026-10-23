@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1450';
-import BR from './brasil.js?v=2026.10.23-1450';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1450';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1500';
+import BR from './brasil.js?v=2026.10.23-1500';
+import { gerarModelo } from './modelo.js?v=2026.10.23-1500';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1450';
+const VERSAO = '2026.10.23-1500';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2485,6 +2485,12 @@ function visaoGeral(box, D, c, ant) {
   const G = ganhos(c.id);
   const mesesAno = D.comps.filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && +x.mes.slice(5, 7) <= +c.mes.slice(5, 7));
   const GA = mesesAno.map(x => ganhos(x.id)).reduce((a, g) => ({ val: a.val + g.val, desc: a.desc + g.desc, save: a.save + g.save, total: a.total + g.total }), { val: 0, desc: 0, save: 0, total: 0 });
+  const ganhosParc = ids => { const L = {}; ids.forEach(id => { const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
+      doMes(id).forEach(r => { const x = L[r.parceiro_id] || (L[r.parceiro_id] = { id: r.parceiro_id, p: pm[r.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 });
+        if (pp[r.parceiro_id] != null && fechado(r)) { x.prev += pp[r.parceiro_id]; x.mal += n(r.malote); x.abaixo += Math.max(0, pp[r.parceiro_id] - n(r.malote)); x.acima += Math.max(0, n(r.malote) - pp[r.parceiro_id]); }
+        x.desc += -n(r.descontos); x.save += n(r.antec_desconto); });
+      (D.adis || []).filter(a => a.competencia_id === id).forEach(a => { const x = L[a.parceiro_id] || (L[a.parceiro_id] = { id: a.parceiro_id, p: pm[a.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 }); x.save += n(a.valor_desconto); }); });
+    return Object.values(L).map(x => ({ ...x, val: x.abaixo - x.acima, total: x.abaixo - x.acima + x.desc + x.save })); };
   const potM = potencialMes(D, c);
   if (potM === undefined && !D.mapaCarregando) { D.mapaCarregando = true; carregarMapa(D, c).then(() => { D.mapaCarregando = false; if (D.aba === 'geral' && D.compId === c.id) visaoGeral(box, D, c, ant); }).catch(() => { D.mapaCarregando = false; }); }
   const economia = -desc + save;
@@ -2528,7 +2534,7 @@ function visaoGeral(box, D, c, ant) {
         <div class="gbar"><i style="width:${custo ? Math.min(100, Math.round(100 * (pago + adiantado + antecTot) / custo)) : 0}%"></i></div></div>`}
     </div>
   </div>
-  ${semReal ? '' : `<section class="gres">
+  ${semReal ? '' : `<section class="gres" data-gres style="cursor:pointer" title="Clique para ver por praça">
     <div class="gres-main"><small>Economia gerada pela GSM · ${nomeMes(c.mes)}</small><b>${BRL(G.total)}</b>
       <span>${custo ? `${pct(G.total / (custo + G.total)).replace('+', '')} do que seria pago sem a validação` : ''}</span>
       <span class="gres-ano">Acumulado ${c.mes.slice(0, 4)}: <b>${BRL(GA.total)}</b></span></div>
@@ -2537,7 +2543,19 @@ function visaoGeral(box, D, c, ant) {
       <div><small>Descontos aplicados</small><b>${BRL(G.desc)}</b><span>glosas, penalidades e repasses · ano ${BRL(GA.desc)}</span></div>
       <div><small>Adiantamentos e antecipações</small><b>${BRL(G.save)}</b><span>desconto cobrado no pagamento antecipado · ano ${BRL(GA.save)}</span></div>
       <div class="gres-pot"><small>Ainda dá para reduzir</small><b>${potM === undefined ? '…' : potM === null ? '—' : BRL(potM)}</b><span>${potM === undefined ? 'calculando…' : potM === null ? 'sem execução do mês (Umov) para calcular' : 'fixo pago por atendimento previsto que não aconteceu'} · <a href="#" data-irmapa>ver no Mapa de custos</a></span></div>
-    </div></section>`}
+    </div><span class="gres-mais">${D.gresAberto ? '▲ fechar detalhe por praça' : '▼ ver por praça'}</span></section>`}
+  ${!semReal && D.gresAberto ? (() => { const per = D.gresPer || 'mes'; const ids = per === 'ano' ? mesesAno.map(x => x.id) : [c.id];
+    const L = ganhosParc(ids).filter(x => Math.abs(x.total) > 0.5 || x.acima > 0.5); const [sk, sd] = D.gresSort || ['total', -1];
+    L.sort((a, b) => sk === 'praca' ? sd * (a.p.regiao || '').localeCompare(b.p.regiao || '') : sd * (a[sk] - b[sk]));
+    const T = k => L.reduce((a, x) => a + x[k], 0);
+    const th = (k, t) => `<th class="n" data-gs="${k}" style="cursor:pointer;white-space:nowrap">${t}${sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+    D.gresLista = { L, per };
+    return `<section class="gcard" id="gresdet"><div class="linha" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Economia por praça · ${per === 'ano' ? 'acumulado ' + c.mes.slice(0, 4) + ' até ' + MES3[+c.mes.slice(5, 7) - 1] : nomeMes(c.mes)}</h3>
+      <div class="linha"><div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff">${[['mes', 'Mês'], ['ano', 'Acumulado do ano']].map(([k, t]) => `<button type="button" data-gp="${k}" style="font:inherit;font-size:13px;border:0;padding:6px 12px;border-radius:6px;cursor:pointer;${per === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div><button class="btn sec peq" id="gresx">Baixar Excel</button></div></div>
+      <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th data-gs="praca" style="cursor:pointer">Praça${sk === 'praca' ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>${th('prev', 'Previsto')}${th('mal', 'Malote pago')}${th('abaixo', 'Abaixo do previsto')}${th('acima', 'Acima do previsto')}${th('desc', 'Descontos')}${th('save', 'Save')}${th('total', 'Economia')}</tr></thead><tbody>
+      ${L.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.prev ? BRL(x.prev) : '—'}</td><td class="n">${x.mal ? BRL(x.mal) : '—'}</td><td class="n">${x.abaixo > 0.5 ? BRL(x.abaixo) : '—'}</td><td class="n" style="color:${x.acima > 0.5 ? 'var(--brand-deep)' : 'inherit'}">${x.acima > 0.5 ? '−' + BRL(x.acima) : '—'}</td><td class="n">${x.desc > 0.5 ? BRL(x.desc) : '—'}</td><td class="n">${x.save > 0.5 ? BRL(x.save) : '—'}</td><td class="n"><b style="color:${x.total < 0 ? 'var(--brand-deep)' : 'inherit'}">${BRL(x.total)}</b></td></tr>`).join('')}
+      </tbody><tfoot><tr><td><b>Total (${L.length} praças)</b></td><td class="n"><b>${BRL(T('prev'))}</b></td><td class="n"><b>${BRL(T('mal'))}</b></td><td class="n"><b>${BRL(T('abaixo'))}</b></td><td class="n"><b>−${BRL(T('acima'))}</b></td><td class="n"><b>${BRL(T('desc'))}</b></td><td class="n"><b>${BRL(T('save'))}</b></td><td class="n"><b>${BRL(T('total'))}</b></td></tr></tfoot></table></div>
+      <p class="nota" style="margin:6px 0 0">Economia = abaixo do previsto − acima do previsto + descontos + save. Praça em vermelho: pagou mais do que o previsto no período. Clique no título de uma coluna para ordenar.</p></section>`; })() : ''}
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
     ${tile('Malote realizado', semReal ? '—' : BRL(mal), !previsto || !prevComReal ? 'sem previsão no mês' : `${pct(difPrev / prevComReal)} sobre o previsto`)}
@@ -2570,7 +2588,14 @@ function visaoGeral(box, D, c, ant) {
     </section>
   </div></div>`;
   box.querySelectorAll('[data-comp]').forEach(e => e.onclick = () => { D.compId = e.dataset.comp; desenharDiretoria(box.closest('main') || $('#main')); });
-  box.querySelectorAll('[data-irmapa]').forEach(e => e.onclick = ev => { ev.preventDefault(); D.aba = 'mapa'; desenharDiretoria(box.closest('main') || $('#main')); });
+  box.querySelectorAll('[data-irmapa]').forEach(e => e.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); D.aba = 'mapa'; desenharDiretoria(box.closest('main') || $('#main')); });
+  const redes = () => visaoGeral(box, D, c, ant);
+  box.querySelectorAll('[data-gres]').forEach(e => e.onclick = () => { D.gresAberto = !D.gresAberto; redes(); if (D.gresAberto) setTimeout(() => { const d = $('#gresdet'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 50); });
+  box.querySelectorAll('[data-gp]').forEach(e => e.onclick = () => { D.gresPer = e.dataset.gp; redes(); });
+  box.querySelectorAll('[data-gs]').forEach(e => e.onclick = () => { const k = e.dataset.gs; const [sk, sd] = D.gresSort || ['total', -1]; D.gresSort = [k, sk === k ? -sd : (k === 'praca' ? 1 : -1)]; redes(); });
+  const gx = $('#gresx'); if (gx) gx.onclick = () => { const { L, per } = D.gresLista;
+    const ws = XLSX.utils.json_to_sheet(L.map(x => ({ 'Praça': x.p.regiao, 'Parceiro': x.p.nome, 'Tipo': x.p.tipo, 'Previsto': +x.prev.toFixed(2), 'Malote pago': +x.mal.toFixed(2), 'Abaixo do previsto': +x.abaixo.toFixed(2), 'Acima do previsto': +x.acima.toFixed(2), 'Descontos': +x.desc.toFixed(2), 'Save': +x.save.toFixed(2), 'Economia': +x.total.toFixed(2) })));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Economia por praça'); XLSX.writeFile(wb, `Economia_por_praca_${per === 'ano' ? c.mes.slice(0, 4) + '_ate_' + c.mes.slice(5, 7) : c.mes.slice(0, 7)}.xlsx`); };
 }
 
 // Acumulado do ano e projeção: realizado dos meses fechados + previsto (calendarizado) dos que faltam
