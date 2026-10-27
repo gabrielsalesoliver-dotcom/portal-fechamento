@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1055';
-import BR from './brasil.js?v=2026.10.27-1055';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1055';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1115';
+import BR from './brasil.js?v=2026.10.27-1115';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1115';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1055';
+const VERSAO = '2026.10.27-1115';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1623,8 +1623,8 @@ async function dadosLote(lote) {
 }
 
 // Capa no mesmo layout que o financeiro já recebe (Capa-Fechamento_DD.xlsx)
-async function baixarCapa(lote) {
-  const { linhas, comp } = await dadosLote(lote);
+async function baixarCapa(lote, soArquivo) {
+  const { linhas, comp } = soArquivo && soArquivo.dados ? soArquivo.dados : await dadosLote(lote);
   const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Planilha1');
   const F = { name: 'Aptos Narrow', size: 11 }; const MOEDA = '_-"R$ "* #,##0.00_-;"-R$ "* #,##0.00_-;_-"R$ "* \\-??_-;_-@_-';
   const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
@@ -1645,7 +1645,42 @@ async function baixarCapa(lote) {
   ['F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'].forEach(col => { const c = ws.getCell(`${col}1`); c.value = linhas.length ? { formula: `SUM(${col}4:${col}${ult})`, result: linhas.reduce((a, l) => a + (Number({ F: l.calend, G: l.malote, H: l.caixas, I: l.extrasMal, J: l.desc, K: l.final, L: l.dif, M: l.pagar }[col]) || 0), 0) } : 0;
     c.font = { ...F, bold: true }; c.fill = fill('FFD9D9D9'); c.numFmt = MOEDA; });
   const buf = await wb.xlsx.writeBuffer();
+  if (soArquivo) return { buf, nome: `Capa-Fechamento_${dd}.xlsx` };
   baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Capa-Fechamento_${dd}.xlsx`);
+}
+
+// Listagem de pontos (e kits) dos parceiros do lote, no formato da aba Atendimentos
+async function pontosLote(lote, dados) {
+  const { linhas, comp } = dados || await dadosLote(lote);
+  const ids = new Set(linhas.map(l => l.id)); const nomeMesC = nomeMes(comp.mes);
+  const [pts, kits] = await Promise.all([todas(() => sb.rpc('listagem_atendimentos', { p_comp: comp.id })), todas(() => sb.rpc('listagem_kits', { p_comp: comp.id }))]);
+  const P = pts.filter(r => ids.has(r.parceiro_id)), K = kits.filter(r => ids.has(r.parceiro_id));
+  const wb = XLSX.utils.book_new();
+  const resumo = linhas.map(l => { const ps = P.filter(r => r.parceiro_id === l.id), ks = K.filter(r => r.parceiro_id === l.id);
+    return { 'Região': l.regiao, 'Parceiro': l.nome, 'Lançamento': l.adiantamento ? 'Adiantamento' : 'Fechamento', 'Pontos': ps.length, 'Previsto (atend.)': ps.reduce((a, r) => a + (r.previsto || 0), 0), 'Realizado (atend.)': ps.reduce((a, r) => a + (r.realizado || 0), 0), 'V. Previsto': +ps.reduce((a, r) => a + Number(r.valor_previsto || 0), 0).toFixed(2), 'V. Realizado': +ps.reduce((a, r) => a + Number(r.valor_realizado || 0), 0).toFixed(2), 'Kits': ks.length, 'Valor kits': +ks.reduce((a, r) => a + Number(r.valor || 0), 0).toFixed(2), 'A pagar neste lote': l.pagar }; });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumo), 'Resumo');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(P.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Cliente': r.cliente, 'Cod. Int': r.cod_int, 'Loja': r.loja, 'Cidade': r.cidade, 'UF': r.uf, 'Frequência': r.frequencia, 'V. Unit': Number(r.v_unit), 'Previsto (Qtd atend.)': r.previsto, 'Umov retornados': r.umov_retornados, 'Realizado': r.realizado, 'Origem do realizado': r.origem_realizado, 'V. Previsto': Number(r.valor_previsto), 'V. Realizado': Number(r.valor_realizado) }))), 'Pontos');
+  if (K.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(K.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Ref. Umov': r.id_umov, 'Data': r.data, 'Kit': r.grupo_cliente, 'Cliente': r.cliente, 'Cidade': r.cidade, 'Situação': r.situacao, 'Valor': Number(r.valor), 'Origem do valor': r.origem_valor }))), 'Kits');
+  return { buf: XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }), nome: `Pontos_${lote.rotulo.replace(/\s+/g, '')}_${comp.mes.slice(0, 7)}.xlsx` };
+}
+
+// Pacote completo para o financeiro: capa + listagem de pontos + NFs, num zip só
+async function baixarPacote(lote, btn) {
+  if (!window.JSZip) return alertaTopo('Não foi possível carregar o compactador de arquivos. Recarregue a página.');
+  const txt = btn.textContent; btn.textContent = 'Montando…';
+  const dados = await dadosLote(lote); const zip = new JSZip(); const falhas = []; let n = 0;
+  const capa = await baixarCapa(lote, { dados }); zip.file(capa.nome, capa.buf);
+  btn.textContent = 'Listagem de pontos…'; const pts = await pontosLote(lote, dados); zip.file(pts.nome, pts.buf);
+  for (const l of dados.linhas) for (const nf of l.nfs) { if (!nf.arquivo_path) continue; btn.textContent = `NF ${++n}…`;
+    const { data, error } = await sb.storage.from('envios').download(nf.arquivo_path);
+    if (error || !data) { falhas.push(`${l.regiao} NF ${nf.numero}`); continue; }
+    const ext = (nf.arquivo_path.match(/\.(pdf|jpe?g|png)$/i) || ['', 'pdf'])[1].toLowerCase();
+    zip.file(`NFs/${safeName(`${l.regiao} - ${l.adiantamento ? 'Adiantamento - ' : ''}NF ${nf.numero}.${ext}`)}`, data); }
+  const semNF = dados.linhas.filter(l => !l.nfs.length).map(l => `${l.regiao}${l.adiantamento ? ' (adiantamento)' : ''}`);
+  if (semNF.length) zip.file('LEIA - sem NF.txt', 'Parceiros deste lote ainda sem NF enviada:\n' + semNF.join('\n'));
+  baixarBlob(await zip.generateAsync({ type: 'blob' }), `Pacote_${lote.rotulo.replace(/\s+/g, '')}_${lote.data_pagamento}.zip`);
+  btn.textContent = txt;
+  if (falhas.length || semNF.length) alertaTopo([falhas.length ? 'Não baixaram: ' + falhas.join(', ') : '', semNF.length ? 'Sem NF ainda: ' + semNF.join(', ') : ''].filter(Boolean).join(' · '));
 }
 
 async function baixarNFs(lote, btn) {
@@ -1656,7 +1691,7 @@ async function baixarNFs(lote, btn) {
     btn.textContent = `Baixando ${++n}…`;
     const { data, error } = await sb.storage.from('envios').download(nf.arquivo_path);
     if (error || !data) { falhas.push(`${l.regiao} NF ${nf.numero}`); continue; }
-    zip.file(safeName(`${l.regiao} - NF ${nf.numero}.pdf`), data);
+    zip.file(safeName(`${l.regiao} - ${l.adiantamento ? 'Adiantamento - ' : ''}NF ${nf.numero}.${(nf.arquivo_path.match(/\.(pdf|jpe?g|png)$/i) || ['', 'pdf'])[1].toLowerCase()}`), data);
   }
   if (!n) { btn.textContent = 'NFs (.zip)'; return alertaTopo('Nenhuma NF em PDF neste lote ainda.'); }
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -1677,7 +1712,7 @@ async function listaLotes(box, compId, admin) {
   box.innerHTML = lotes.map(l => { const fs = fech.filter(f => f.lote_id === l.id); const pagos = fs.filter(f => f.pago_em).length; const [r, k] = ST_LOTE[l.status] || [l.status, ''];
     return `<div class="bloco" style="border-top-color:var(--rule)" data-lote="${l.id}">
       <div class="linha" style="justify-content:space-between"><div><b style="font-size:16px">${esc(l.rotulo || l.descricao)}</b> · ${fmtD(l.data_pagamento)} <span class="pill ${k}">${r}</span></div>
-        <div class="linha"><button class="btn sec peq" data-capa="${l.id}">Capa (.xlsx)</button><button class="btn sec peq" data-zip="${l.id}">NFs (.zip)</button>
+        <div class="linha"><button class="btn peq" data-pac="${l.id}">Pacote completo (.zip)</button><button class="btn sec peq" data-capa="${l.id}">Capa (.xlsx)</button><button class="btn sec peq" data-pts="${l.id}">Pontos (.xlsx)</button><button class="btn sec peq" data-zip="${l.id}">NFs (.zip)</button>
         ${admin && l.status === 'gerado' ? `<button class="btn sec peq" data-env="${l.id}">Marcar enviado</button>` : ''}${admin && !pagos ? `<button class="btn sec peq" data-desf="${l.id}">Desfazer lote</button>` : ''}</div></div>
       <div class="kpis"><div class="kpi neutro"><small>A pagar neste lote</small><b>${BRL2(l.total)}</b><span>${fs.filter(f => !f.adi).length} fechamento(s)${fs.some(f => f.adi) ? ` · ${fs.filter(f => f.adi).length} adiantamento(s)` : ''}</span></div>
         <div class="kpi ${pagos < fs.length ? 'alerta' : ''}"><small>Pagos</small><b>${pagos} de ${fs.length}</b><span>${l.pago_em ? 'concluído em ' + fmtD(l.pago_em) : l.enviado_em ? 'enviado ' + fmtDH(l.enviado_em) : 'ainda não enviado'}</span></div></div>
@@ -1685,6 +1720,8 @@ async function listaLotes(box, compId, admin) {
         <span class="nota" style="align-self:flex-end">Parceiros ainda sem NF conferida ficam de fora e continuam pendentes.</span></div>` : ''}<div data-msg="${l.id}"></div></div>`; }).join('');
   const L = id => lotes.find(x => x.id === id);
   box.querySelectorAll('[data-capa]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarCapa(L(b.dataset.capa)); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
+  box.querySelectorAll('[data-pac]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarPacote(L(b.dataset.pac), b); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
+  box.querySelectorAll('[data-pts]').forEach(b => b.onclick = async () => { b.disabled = true; try { const r = await pontosLote(L(b.dataset.pts)); baixarBlob(new Blob([r.buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), r.nome); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
   box.querySelectorAll('[data-zip]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarNFs(L(b.dataset.zip), b); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
   box.querySelectorAll('[data-env]').forEach(b => b.onclick = async () => { try { await q(sb.rpc('marcar_lote_enviado', { p_lote: b.dataset.env })); listaLotes(box, compId, admin); } catch (e) { alertaTopo(e.message); } });
   box.querySelectorAll('[data-desf]').forEach(b => b.onclick = async () => { try { await q(sb.rpc('desfazer_lote_v2', { p_lote: b.dataset.desf })); admin ? vPacote() : listaLotes(box, compId, admin); } catch (e) { alertaTopo(e.message); } });
@@ -2172,11 +2209,13 @@ async function vDiretoria(el) {
     todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor')).catch(() => []),
   ]);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
-  const comComDados = comps.filter(c => fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
+  const hojeMes = new Date().toISOString().slice(0, 7) + '-01';
+  const comComDados = comps.filter(c => c.mes === hojeMes || fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
   if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
   S.dir = S.dir || {};
   const D = S.dir;
   D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.aba = D.aba || 'geral';
+  if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const vig = comComDados.find(c => c.mes === hojeMes); if (vig) D.compId = vig.id; }
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
   desenharDiretoria(el);
@@ -2559,6 +2598,8 @@ function visaoGeral(box, D, c, ant) {
         x.desc += dt - ant + Math.min(0, -n(r.descontos)); x.save += n(r.antec_desconto) + ant; });
       (D.adis || []).filter(a => a.competencia_id === id).forEach(a => { const x = L[a.parceiro_id] || (L[a.parceiro_id] = { id: a.parceiro_id, p: pm[a.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 }); x.save += n(a.valor_desconto); }); });
     return Object.values(L).map(x => ({ ...x, val: x.abaixo - x.acima, total: x.abaixo - x.acima + x.desc + x.save })); };
+  const projMes = Array.isArray(D.proj) ? D.proj.filter(r => r.mes === c.mes).reduce((a, r) => a + n(r.calendarizado), 0) : null;
+  if (!fe.length && !previsto && D.proj === undefined) { D.proj = null; todas(() => sb.rpc('projecao_previsto', {})).then(r => { D.proj = r; if (D.aba === 'geral' && D.compId === c.id) visaoGeral(box, D, c, ant); }).catch(e => { D.proj = { erro: e.message }; }); }
   const potM = potencialMes(D, c);
   if (potM === undefined && !D.mapaCarregando) { D.mapaCarregando = true; carregarMapa(D, c).then(() => { D.mapaCarregando = false; if (D.aba === 'geral' && D.compId === c.id) visaoGeral(box, D, c, ant); }).catch(() => { D.mapaCarregando = false; }); }
   const economia = -desc + save;
@@ -2591,8 +2632,8 @@ function visaoGeral(box, D, c, ant) {
   <div class="ghero">
     <div class="ghero-main">
       <small>Custo de última milha · ${nomeMes(c.mes)}</small>
-      <b>${semReal ? BRL(previsto) : BRL(custo)}</b>
-      <span>${semReal ? 'Previsto (calendarizado) · mês ainda sem fechamento' : `${ant && custoAnt ? `${pct(custo / custoAnt - 1)} sobre ${nomeMes(ant.mes)} (${BRL(custoAnt)})` : ''}`}</span>
+      <b>${semReal ? (previsto ? BRL(previsto) : projMes != null ? BRL(projMes) : '…') : BRL(custo)}</b>
+      <span>${semReal ? (previsto ? 'Previsto (calendarizado) · mês em andamento, ainda sem fechamento' : projMes != null ? 'Previsto pela carteira atual · mês em andamento, base ainda não gerada' : 'calculando o previsto…') : `${ant && custoAnt ? `${pct(custo / custoAnt - 1)} sobre ${nomeMes(ant.mes)} (${BRL(custoAnt)})` : ''}`}</span>
     </div>
     <div class="ghero-side">
       <div><small>Fechamento</small><b>${nFech} de ${parceirosMes} parceiros</b>
