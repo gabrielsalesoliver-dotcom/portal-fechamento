@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1250';
-import BR from './brasil.js?v=2026.10.27-1250';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1250';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1440';
+import BR from './brasil.js?v=2026.10.27-1440';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1440';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1250';
+const VERSAO = '2026.10.27-1440';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1924,20 +1924,21 @@ async function vPacote() {
   const io = k => k.startsWith('Antecipação') ? -1 : ord.indexOf(k);
   const gs = Object.entries(grupos).sort((a, b) => io(a[0]) - io(b[0]) || a[0].localeCompare(b[0]));
   S.pacGrupo = S.pacGrupo && grupos[S.pacGrupo] ? S.pacGrupo : gs[0]?.[0];
-  const sel = grupos[S.pacGrupo] || [];
+  const sel = grupos[S.pacGrupo] || []; const soAdi = !gs.length && adisLib.length;
   const sugData = () => { const fa = sel.find(f => f.antec_status === 'liberada'); if (fa && S.pacGrupo.startsWith('Antecipação')) return fa.antec_data; const n = (S.pacGrupo || '').match(/\d+/); if (!n || /útil/.test(S.pacGrupo)) return ''; const [y, mm] = c.mes.split('-').map(Number); const dt = new Date(Date.UTC(y, mm, +n[0])); return dt.toISOString().slice(0, 10); };
   $('#montar').className = '';
   $('#montar').innerHTML = c.status === 'fechada' ? '<p class="nota">Competência fechada: não recebe novos lotes.</p>' : !livres.length && !adisLib.length ? '<p class="nota">Nenhum parceiro aprovado ou adiantamento liberado fora de lote neste mês.</p>' : `
+    ${soAdi ? '<p class="nota" style="margin:0">Nenhum parceiro aprovado fora de lote neste mês. Abaixo, os adiantamentos que podem ir para pagamento: marque, confira a data e gere o lote.</p>' : ''}
     <div class="linha">${gs.map(([d, ls]) => `<button class="btn ${d === S.pacGrupo ? '' : 'sec'} peq" data-grp="${esc(d)}">${esc(d)} (${ls.length})</button>`).join('')}</div>
-    <div class="tabela"><table><thead><tr><th><input type="checkbox" id="tudo" checked></th><th>Parceiro</th><th>Pagamento</th><th class="n">A pagar (aprovado − adiantado − antecipação)</th><th>NF</th></tr></thead><tbody>
+    <div class="tabela" ${soAdi ? 'hidden' : ''}><table><thead><tr><th><input type="checkbox" id="tudo" checked></th><th>Parceiro</th><th>Pagamento</th><th class="n">A pagar (aprovado − adiantado − antecipação)</th><th>NF</th></tr></thead><tbody>
       ${sel.map(f => { const p = pm[f.parceiro_id] || {}; const s = sit[f.parceiro_id]; return `<tr><td><input type="checkbox" class="pck" value="${f.parceiro_id}" checked></td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td><td style="font-size:13px">${esc(p.forma_pagamento || '—')}</td>
         <td class="n">${BRL2(f.a_pagar ?? (Number(f.valor_aprovado) - Number(f.adiantado || 0)))}${f.antec_status === 'liberada' ? `<br><span class="nota">antecipação: −${BRL2(f.antec_desconto)} (${String(f.antec_taxa).replace('.', ',')}%)</span>` : f.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida, sem resposta</span>' : ''}</td><td><span class="pill ${s === 'conferida' ? 'escuro' : 'alerta'}">${(SIT_NF[s] || ['—'])[0]}</span></td></tr>`; }).join('')}
     </tbody></table></div>
     ${adisLib.length ? `<h3 style="margin:8px 0 0;font-size:15px">Adiantamentos liberados</h3><div class="tabela"><table><thead><tr><th></th><th>Parceiro</th><th>Pagar em</th><th class="n">Liberado</th><th class="n">Desconto</th><th class="n">A pagar</th><th>NF</th></tr></thead><tbody>
       ${adisLib.map(a => `<tr><td><input type="checkbox" class="ack" value="${a.id}" ${nfAdOk(a.id) ? '' : 'disabled title="Confira a NF do adiantamento antes"'}></td><td><b>${esc(pm[a.parceiro_id]?.regiao || '—')}</b></td><td>${fmtD(a.data_pagamento)}</td><td class="n">${BRL2(a.valor)}</td><td class="n">${Number(a.taxa_pct) ? BRL2(a.valor_desconto) + ` (${String(a.taxa_pct).replace('.', ',')}%)` : '—'}</td><td class="n"><b>${BRL2(a.valor_liquido)}</b></td><td>${nfAdOk(a.id) ? '<span class="pill escuro">NF conferida</span>' : a.status === 'nf_recebida' ? '<span class="pill alerta">NF a conferir</span>' : '<span class="pill alerta">Sem NF</span>'}</td></tr>`).join('')}
       </tbody></table></div><p class="nota">Só dá para marcar adiantamentos com a NF do adiantamento conferida (em Adiantamentos e antecipações). Marque os adiantamentos que saem neste lote. Na capa eles aparecem com Modelo "Parceiro (Adiantamento)" e o valor líquido na coluna de pagamento.</p>` : ''}
-    <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="${(S.pacGrupo || '').startsWith('Antecipação') ? 'Antecipação' : `Pagamento ${esc(((S.pacGrupo || '').match(/\d+/) || [''])[0])}`}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
-    <p class="nota">Parceiros aguardando NF podem entrar no lote (aparecem como "Aguardando NF" na capa, como hoje), mas só são marcados como pagos depois da NF conferida.</p>`;
+    <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="${soAdi ? 'Adiantamento' : (S.pacGrupo || '').startsWith('Antecipação') ? 'Antecipação' : `Pagamento ${esc(((S.pacGrupo || '').match(/\d+/) || [''])[0])}`}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${soAdi ? (adisLib[0].data_pagamento || '') : sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
+    <p class="nota"><b>A data de pagamento do lote é a que vale:</b> ela substitui a data prevista de cada parceiro ou adiantamento marcado e vai na capa para o financeiro. Parceiros aguardando NF podem entrar no lote (aparecem como "Aguardando NF" na capa, como hoje), mas só são marcados como pagos depois da NF conferida.</p>`;
   m.querySelectorAll('[data-grp]').forEach(b => b.onclick = () => { S.pacGrupo = b.dataset.grp; vPacote(); });
   const tudo = $('#tudo'); if (tudo) tudo.onchange = () => m.querySelectorAll('.pck').forEach(x => x.checked = tudo.checked);
   const g = $('#lgerar'); if (g) g.onclick = async () => { const ids = [...m.querySelectorAll('.pck:checked')].map(x => x.value); const aids = [...m.querySelectorAll('.ack:checked')].map(x => x.value);
