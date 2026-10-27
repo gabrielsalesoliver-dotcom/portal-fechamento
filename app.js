@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1440';
-import BR from './brasil.js?v=2026.10.27-1440';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1440';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1450';
+import BR from './brasil.js?v=2026.10.27-1450';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1450';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1440';
+const VERSAO = '2026.10.27-1450';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -258,8 +258,7 @@ async function vPendencias() {
     if (['analise'].includes(x.k)) { S.confParc = x.p.id; location.hash = '#conferencia'; } else if (x.k === 'nf_conferir') location.hash = '#notas'; else if (g === 'financeiro' || x.k === 'pago') location.hash = '#pacote';
     else { S.previaParc = x.p.id; S.compPId = c.id; location.hash = '#verparceiro'; } });
   $('#pd-mail').onclick = async () => { const em = [...new Set(vis.map(x => x.p.email_contato).filter(Boolean))].join('; '); if (!em) return alertaTopo('Nenhum e-mail cadastrado nesta lista.'); try { await navigator.clipboard.writeText(em); $('#pd-mail').textContent = `${em.split(';').length} e-mails copiados`; } catch (e) { alertaTopo(e.message); } };
-  $('#pd-xls').onclick = () => { const ws = XLSX.utils.json_to_sheet(vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Pendências'); XLSX.writeFile(wb, `Pendencias_${c.mes.slice(0, 7)}.xlsx`); };
+  $('#pd-xls').onclick = () => baixarXlsx(`Pendencias_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Pendências e cobrança', sub: `Competência ${nomeMes(c.mes)}`, abas: [{ nome: 'Pendências', linhas: vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })) }] });
 }
 
 async function vVerParceiro() {
@@ -1741,6 +1740,52 @@ async function dadosLote(lote) {
   return { lote, comp, linhas };
 }
 
+// ---------- Planilhas no padrão GSM (todas as exportações, exceto a capa do financeiro) ----------
+const RX_MOEDA = /^(V\. |Valor|Fixo|Malote|Previsto$|Abaixo|Acima|Descontos|Save|Economia|Diferença|Ticket|Total|A pagar)|- previsto$|\(realizado\)$/;
+const RX_SOMA_INT = /^(Pontos|Kits|Realizado|Umov |Previsto \(|Realizado \(|Previsto \(Qtd)|atendimentos$/;
+async function planilhaPadrao({ titulo, sub, abas }) {
+  const wb = new ExcelJS.Workbook(); wb.creator = 'Portal de Fechamento GSM'; wb.created = new Date();
+  const F = { name: 'Calibri', size: 11 }; const MOEDA = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"-"';
+  const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  const fino = { style: 'thin', color: { argb: 'FFD9D9D9' } }; const borda = { top: fino, left: fino, bottom: fino, right: fino };
+  const gerado = `Gerado em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} por ${S.user?.email || ''}`;
+  for (const aba of abas) {
+    const ws = wb.addWorksheet(aba.nome.replace(/[\\\/?*\[\]:]/g, ' ').slice(0, 31), { views: [{ state: 'frozen', ySplit: 4, showGridLines: false }] });
+    const L = aba.linhas || []; const cols = aba.colunas || (L.length ? Object.keys(L[0]) : ['(sem dados)']);
+    const tipo = cols.map(k => { const vs = L.map(r => r[k]).filter(v => v != null && v !== ''); if (!vs.length) return 'txt';
+      if (vs.every(v => typeof v === 'number')) return RX_MOEDA.test(k) ? 'moeda' : vs.every(Number.isInteger) ? 'int' : 'num';
+      if (vs.every(v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v))) return 'data'; return 'txt'; });
+    const nc = cols.length;
+    ws.getCell(1, 1).value = titulo; ws.getCell(1, 1).font = { ...F, size: 15, bold: true, color: { argb: 'FF121112' } };
+    ws.getCell(2, 1).value = [sub, aba.sub, gerado].filter(Boolean).join(' · '); ws.getCell(2, 1).font = { ...F, size: 10, italic: true, color: { argb: 'FF6B6466' } };
+    for (let j = 1; j <= nc; j++) ws.getCell(2, j).border = { bottom: { style: 'medium', color: { argb: 'FFDB2242' } } };
+    const h = ws.getRow(4); h.height = 30;
+    cols.forEach((k, j) => { const c = h.getCell(j + 1); c.value = k; c.font = { ...F, bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill('FF262626'); c.border = borda;
+      c.alignment = { vertical: 'middle', horizontal: ['moeda', 'int', 'num'].includes(tipo[j]) ? 'right' : 'left', wrapText: true }; });
+    L.forEach((r, i) => { const row = ws.getRow(5 + i);
+      cols.forEach((k, j) => { const c = row.getCell(j + 1); let v = r[k];
+        if (tipo[j] === 'data' && v) { const [y, m, d] = v.slice(0, 10).split('-').map(Number); v = new Date(Date.UTC(y, m - 1, d)); c.numFmt = 'dd/mm/yyyy'; }
+        c.value = v === undefined || v === '' ? null : v; c.font = F; c.border = borda;
+        if (tipo[j] === 'moeda') c.numFmt = MOEDA; else if (tipo[j] === 'int') c.numFmt = '#,##0'; else if (tipo[j] === 'num') c.numFmt = '#,##0.00';
+        if (i % 2) c.fill = fill('FFF7F6F4'); }); });
+    const somar = cols.map((k, j) => (tipo[j] === 'moeda' && !/^(Ticket|V\. Unit)/.test(k)) || (tipo[j] === 'int' && RX_SOMA_INT.test(k)));
+    if (L.length && somar.some(Boolean)) { const tr = ws.getRow(5 + L.length); const ini = 5, fim = 4 + L.length;
+      cols.forEach((k, j) => { const c = tr.getCell(j + 1); c.font = { ...F, bold: true }; c.fill = fill('FFEDEBE8'); c.border = { ...borda, top: { style: 'medium', color: { argb: 'FF262626' } } };
+        if (j === 0) c.value = 'Total';
+        else if (somar[j]) { const col = ws.getColumn(j + 1).letter; c.value = { formula: `SUBTOTAL(9,${col}${ini}:${col}${fim})`, result: L.reduce((a, r) => a + (Number(r[k]) || 0), 0) }; c.numFmt = tipo[j] === 'moeda' ? MOEDA : '#,##0'; } }); }
+    if (L.length) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + L.length, column: nc } };
+    cols.forEach((k, j) => { const amostra = L.slice(0, 400).map(r => r[k] == null ? '' : tipo[j] === 'moeda' ? 'R$ ' + Number(r[k]).toFixed(2) + '000' : String(r[k]));
+      const w = Math.max(Math.min(String(k).length, 22), ...amostra.map(x => x.length)) + 2; ws.getColumn(j + 1).width = Math.max(9, Math.min(w, 48)); });
+    ws.pageSetup = { orientation: nc > 7 ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '4:4', margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
+    ws.headerFooter = { oddFooter: '&L&8Portal de Fechamento GSM&R&8Página &P de &N' };
+  }
+  return wb.xlsx.writeBuffer();
+}
+async function baixarXlsx(nome, opts) {
+  try { const buf = await planilhaPadrao(opts); baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nome); }
+  catch (e) { alertaTopo('Não foi possível gerar a planilha: ' + e.message); }
+}
+
 // Capa no mesmo layout que o financeiro já recebe (Capa-Fechamento_DD.xlsx)
 async function baixarCapa(lote, soArquivo) {
   const { linhas, comp } = soArquivo && soArquivo.dados ? soArquivo.dados : await dadosLote(lote);
@@ -1774,13 +1819,12 @@ async function pontosLote(lote, dados) {
   const ids = new Set(linhas.map(l => l.id)); const nomeMesC = nomeMes(comp.mes);
   const [pts, kits] = await Promise.all([todas(() => sb.rpc('listagem_atendimentos', { p_comp: comp.id })), todas(() => sb.rpc('listagem_kits', { p_comp: comp.id }))]);
   const P = pts.filter(r => ids.has(r.parceiro_id)), K = kits.filter(r => ids.has(r.parceiro_id));
-  const wb = XLSX.utils.book_new();
   const resumo = linhas.map(l => { const ps = P.filter(r => r.parceiro_id === l.id), ks = K.filter(r => r.parceiro_id === l.id);
     return { 'Região': l.regiao, 'Parceiro': l.nome, 'Lançamento': l.adiantamento ? 'Adiantamento' : 'Fechamento', 'Pontos': ps.length, 'Previsto (atend.)': ps.reduce((a, r) => a + (r.previsto || 0), 0), 'Realizado (atend.)': ps.reduce((a, r) => a + (r.realizado || 0), 0), 'V. Previsto': +ps.reduce((a, r) => a + Number(r.valor_previsto || 0), 0).toFixed(2), 'V. Realizado': +ps.reduce((a, r) => a + Number(r.valor_realizado || 0), 0).toFixed(2), 'Kits': ks.length, 'Valor kits': +ks.reduce((a, r) => a + Number(r.valor || 0), 0).toFixed(2), 'A pagar neste lote': l.pagar }; });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumo), 'Resumo');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(P.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Cliente': r.cliente, 'Cod. Int': r.cod_int, 'Loja': r.loja, 'Cidade': r.cidade, 'UF': r.uf, 'Frequência': r.frequencia, 'V. Unit': Number(r.v_unit), 'Previsto (Qtd atend.)': r.previsto, 'Umov retornados': r.umov_retornados, 'Realizado': r.realizado, 'Origem do realizado': r.origem_realizado, 'V. Previsto': Number(r.valor_previsto), 'V. Realizado': Number(r.valor_realizado) }))), 'Pontos');
-  if (K.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(K.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Ref. Umov': r.id_umov, 'Data': r.data, 'Kit': r.grupo_cliente, 'Cliente': r.cliente, 'Cidade': r.cidade, 'Situação': r.situacao, 'Valor': Number(r.valor), 'Origem do valor': r.origem_valor }))), 'Kits');
-  return { buf: XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }), nome: `Pontos_${lote.rotulo.replace(/\s+/g, '')}_${comp.mes.slice(0, 7)}.xlsx` };
+  const abas = [{ nome: 'Resumo', linhas: resumo }, { nome: 'Atendimentos', linhas: P.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Cliente': r.cliente, 'Cod. Int': r.cod_int, 'Loja': r.loja, 'Cidade': r.cidade, 'UF': r.uf, 'Frequência': r.frequencia, 'V. Unit': Number(r.v_unit), 'Previsto (Qtd atend.)': r.previsto, 'Umov retornados': r.umov_retornados, 'Realizado': r.realizado, 'Origem do realizado': r.origem_realizado, 'V. Previsto': Number(r.valor_previsto), 'V. Realizado': Number(r.valor_realizado) })) }];
+  if (K.length) abas.push({ nome: 'Kits', linhas: K.map(r => ({ 'Mês': nomeMesC, 'Região': r.regiao, 'Parceiro': r.parceiro, 'Ref. Umov': r.id_umov, 'Data': r.data, 'Kit': r.grupo_cliente, 'Cliente': r.cliente, 'Cidade': r.cidade, 'Situação': r.situacao, 'Valor': Number(r.valor), 'Origem do valor': r.origem_valor })) });
+  const buf = await planilhaPadrao({ titulo: `Listagem de pontos · ${lote.rotulo}`, sub: `Competência ${nomeMesC} · pagamento em ${fmtD(lote.data_pagamento)}`, abas });
+  return { buf, nome: `Pontos_${lote.rotulo.replace(/\s+/g, '')}_${comp.mes.slice(0, 7)}.xlsx` };
 }
 
 // Pacote completo para o financeiro: capa + listagem de pontos + NFs, num zip só
@@ -2559,7 +2603,7 @@ function projecaoParceiros(box, D, proj, meses) {
     const rows = linhas.map(l => { const o = { 'Parceiro': l.nome, 'Região': l.regiao, 'Tipo': l.tipo, 'Fixo do contrato': l.fixo };
       if (ultimo) o[`Malote ${nomeMes(ultimo.mes)} (realizado)`] = l.ult ?? null;
       meses.forEach((m, i) => { o[`${nomeMes(m)} - atendimentos`] = l.atend[i]; o[`${nomeMes(m)} - previsto`] = l.meses[i]; }); o['Total projetado'] = l.total; return o; });
-    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Projeção'); XLSX.writeFile(wb, `Projecao_previsto_ate_${meses.slice(-1)[0].slice(0, 7)}.xlsx`);
+    baixarXlsx(`Projecao_previsto_ate_${meses.slice(-1)[0].slice(0, 7)}.xlsx`, { titulo: 'Projeção do previsto por parceiro', sub: `${nomeMes(meses[0])} a ${nomeMes(meses.slice(-1)[0])}`, abas: [{ nome: 'Projeção', linhas: rows }] });
   };
 }
 
@@ -2876,8 +2920,7 @@ function visaoGeral(box, D, c, ant) {
   box.querySelectorAll('[data-gp]').forEach(e => e.onclick = () => { D.gresPer = e.dataset.gp; redes(); });
   box.querySelectorAll('[data-gs]').forEach(e => e.onclick = () => { const k = e.dataset.gs; const [sk, sd] = D.gresSort || ['total', -1]; D.gresSort = [k, sk === k ? -sd : (k === 'praca' ? 1 : -1)]; redes(); });
   const gx = $('#gresx'); if (gx) gx.onclick = () => { const { L, per } = D.gresLista;
-    const ws = XLSX.utils.json_to_sheet(L.map(x => ({ 'Praça': x.p.regiao, 'Parceiro': x.p.nome, 'Tipo': x.p.tipo, 'Previsto': +x.prev.toFixed(2), 'Malote pago': +x.mal.toFixed(2), 'Abaixo do previsto': +x.abaixo.toFixed(2), 'Acima do previsto': +x.acima.toFixed(2), 'Descontos': +x.desc.toFixed(2), 'Save': +x.save.toFixed(2), 'Economia': +x.total.toFixed(2) })));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Economia por praça'); XLSX.writeFile(wb, `Economia_por_praca_${per === 'ano' ? c.mes.slice(0, 4) + '_ate_' + c.mes.slice(5, 7) : c.mes.slice(0, 7)}.xlsx`); };
+    baixarXlsx(`Economia_por_praca_${per === 'ano' ? c.mes.slice(0, 4) + '_ate_' + c.mes.slice(5, 7) : c.mes.slice(0, 7)}.xlsx`, { titulo: 'Economia gerada pela GSM por praça', sub: per === 'ano' ? `${c.mes.slice(0, 4)} até ${nomeMes(c.mes)}` : nomeMes(c.mes), abas: [{ nome: 'Economia por praça', linhas: L.map(x => ({ 'Praça': x.p.regiao, 'Parceiro': x.p.nome, 'Tipo': x.p.tipo, 'Previsto': +x.prev.toFixed(2), 'Malote pago': +x.mal.toFixed(2), 'Abaixo do previsto': +x.abaixo.toFixed(2), 'Acima do previsto': +x.acima.toFixed(2), 'Descontos': +x.desc.toFixed(2), 'Save': +x.save.toFixed(2), 'Economia': +x.total.toFixed(2) })) }] }); };
 }
 
 // Acumulado do ano e projeção: realizado dos meses fechados + previsto (calendarizado) dos que faltam
@@ -2989,9 +3032,7 @@ async function listaKits(box, D, c) {
   $('#kt-x').onclick = () => {
     const linhas = vis.map(r => ({ 'Mês': nomeMes(c.mes), 'Parceiro': r.parceiro, 'Região': r.regiao, 'Ref. Umov': r.id_umov, 'Data': r.data, 'Kit (grupo cliente)': r.grupo_cliente, 'Cliente': r.cliente, 'Cidade': r.cidade, 'UF': r.uf, 'Motorista': r.motorista,
       'Situação': r.situacao, 'Ticket médio': r.ticket != null ? Number(r.ticket) : null, 'Valor informado pelo parceiro': r.valor_parceiro != null ? Number(r.valor_parceiro) : null, 'Situação do ajuste': r.ajuste_situacao, 'Valor': Number(r.valor), 'Origem do valor': r.origem_valor }));
-    const ws = XLSX.utils.json_to_sheet(linhas); ws['!cols'] = [10, 18, 26, 12, 11, 26, 30, 20, 5, 22, 18, 10, 12, 12, 10, 30].map(w => ({ wch: w }));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Kits');
-    XLSX.writeFile(wb, `Kits_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => (x[0] || '-') === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`);
+    baixarXlsx(`Kits_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => (x[0] || '-') === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`, { titulo: 'Kits/Spot', sub: `Competência ${nomeMes(c.mes)}${F.parc ? ' · ' + (parcs.find(x => (x[0] || '-') === F.parc)?.[1] || '') : ''}`, abas: [{ nome: 'Kits', linhas }] });
   };
 }
 
@@ -3043,9 +3084,7 @@ async function listaAtendimentos(box, D, c) {
     const linhas = vis.map(r => ({ 'Mês': nomeMes(c.mes), 'Parceiro': r.parceiro, 'Região': r.regiao, 'Tipo': r.tipo, 'Cliente': r.cliente, 'Cod. Int': r.cod_int, 'Loja': r.loja, 'Cidade': r.cidade, 'UF': r.uf, 'Frequência': r.frequencia,
       'V. Unit': Number(r.v_unit), 'Previsto (Qtd atend.)': r.previsto, 'Umov programados': r.umov_programados, 'Umov retornados': r.umov_retornados, 'Ajuste do parceiro': r.ajuste_parceiro, 'Situação do ajuste': r.ajuste_situacao,
       'Realizado': r.realizado, 'Origem do realizado': r.origem_realizado, 'V. Previsto': Number(r.valor_previsto), 'V. Realizado': Number(r.valor_realizado), 'Diferença': Number(r.diferenca) }));
-    const ws = XLSX.utils.json_to_sheet(linhas); ws['!cols'] = [10, 18, 26, 10, 26, 12, 34, 20, 5, 22, 10, 10, 10, 10, 10, 12, 10, 22, 12, 12, 12].map(w => ({ wch: w }));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Atendimentos');
-    XLSX.writeFile(wb, `Atendimentos_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => x[0] === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`);
+    baixarXlsx(`Atendimentos_${c.mes.slice(0, 7)}${F.parc ? '_' + (parcs.find(x => x[0] === F.parc)?.[1] || '').replace(/[^\w-]+/g, '_') : ''}.xlsx`, { titulo: 'Atendimentos de malote', sub: `Competência ${nomeMes(c.mes)}${F.parc ? ' · ' + (parcs.find(x => x[0] === F.parc)?.[1] || '') : ''}`, abas: [{ nome: 'Atendimentos', linhas }] });
   };
 }
 
