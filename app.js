@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1010';
-import BR from './brasil.js?v=2026.10.27-1010';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1010';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1055';
+import BR from './brasil.js?v=2026.10.27-1055';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1055';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1010';
+const VERSAO = '2026.10.27-1055';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1058,6 +1058,7 @@ async function baseParceiro(c) {
     q(sb.from('envios').select('id,versao,status,enviado_em,totais').eq('competencia_id', c.id).eq('parceiro_id', pid).order('versao', { ascending: false }).limit(1)),
     q(sb.from('umov_importacoes').select('importado_em,arquivo').eq('competencia_id', c.id).eq('status', 'ativa').limit(1)),
   ]);
+  const adiMes = (await q(sb.from('adiantamentos').select('valor,status').eq('competencia_id', c.id).eq('parceiro_id', pid).in('status', ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago']))).reduce((a, x) => a + Number(x.valor || 0), 0);
   box.className = '';
   if (!pts.length && !kits.length) { box.innerHTML = '<div class="msg alerta">A GSM ainda não gerou a sua base deste mês.</div>'; return; }
   const ult = envs[0]; const aprovado = ult?.status === 'aprovado'; const fechada = c.status === 'fechada'; const trava = aprovado || fechada;
@@ -1082,6 +1083,7 @@ async function baseParceiro(c) {
       <div class="kpi"><small>Valor pela base GSM</small><b>${BRL2(calcGSM)}</b><span>${fixo ? `fixo ${BRL2(fixo)} + ` : ''}Umov × valores cadastrados</span></div>
       <div class="kpi ${Math.abs(totalParc - calcGSM) > 0.009 ? 'alerta' : 'neutro'}"><small>Seus ajustes</small><b>${(totalParc - calcGSM >= 0 ? '+' : '') + BRL2(totalParc - calcGSM)}</b><span>${fmtN(nAjustes)} ajuste(s) com explicação</span></div>
       <div class="kpi"><small>Valor que você vai enviar</small><b>${BRL2(totalParc)}</b><span>${ult ? `último envio: ${fmtDH(ult.enviado_em)}` : 'ainda não enviado'}</span></div>
+      ${adiMes ? `<div class="kpi neutro"><small>A receber no fechamento</small><b>${BRL2(totalParc - adiMes)}</b><span>valor do mês − ${BRL2(adiMes)} já adiantado</span></div>` : ''}
     </div>
     <p class="nota" style="margin:0">Umov ${imp[0] ? `atualizado em ${fmtDH(imp[0].importado_em)}` : 'ainda não importado neste mês'}. ${ticket != null ? `Kits retornados valem o ticket médio de ${BRL2(ticket)} cada; se um kit foi maior, ajuste o valor e explique.` : '<b>Ticket médio de kits ainda não cadastrado pela GSM.</b>'}</p>
     ${trava ? `<div class="msg ok">${aprovado ? 'Mês aprovado pela GSM: a base não pode mais ser alterada.' : 'Mês fechado.'}</div>` : ''}
@@ -1155,7 +1157,9 @@ async function baseParceiro(c) {
     alvo.innerHTML = `<div class="tabela" style="max-width:560px"><table><tbody>
         <tr><td>Valor fixo do contrato</td><td class="n">${BRL2(t.fixo)}</td></tr><tr><td>Malote (atendimentos × valor unitário)</td><td class="n">${BRL2(t.mal)}</td></tr>
         <tr><td>Kits/Spot</td><td class="n">${BRL2(t.kits)}</td></tr><tr><td>Serviços fora do Umov</td><td class="n">${BRL2(t.serv)}</td></tr>
-        <tr><td><b>Total a enviar</b></td><td class="n"><b style="font-size:18px">${BRL2(totalParc)}</b></td></tr></tbody></table></div>
+        <tr><td><b>Total a enviar</b></td><td class="n"><b style="font-size:18px">${BRL2(totalParc)}</b></td></tr>
+        ${adiMes ? `<tr><td>Adiantamento já liberado (descontado na NF do fechamento)</td><td class="n">−${BRL2(adiMes)}</td></tr><tr><td><b>A receber no fechamento</b></td><td class="n"><b>${BRL2(totalParc - adiMes)}</b></td></tr>` : ''}</tbody></table></div>
+      ${adiMes ? '<p class="nota" style="margin:0">O valor enviado é o do mês inteiro (é ele que a GSM valida). O adiantamento sai na NF do fechamento, que é emitida pelo valor aprovado menos o adiantado.</p>' : ''}
       ${nAjustes ? `<p class="sub" style="margin:0">${fmtN(nAjustes)} ajuste(s) seguem com a sua explicação para a GSM analisar.</p>` : '<p class="sub" style="margin:0">Nenhum ajuste: você está de acordo com a base da GSM.</p>'}
       ${trava ? '' : `<label class="linha"><input type="checkbox" id="conf"> Conferi a base e os ajustes estão corretos.</label>
         <div><button class="btn marca" id="envb" disabled>${ult && ult.status !== 'aprovado' ? 'Enviar de novo para validação' : 'Enviar para validação'}</button></div><div id="envm"></div>
