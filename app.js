@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.23-1530';
-import BR from './brasil.js?v=2026.10.23-1530';
-import { gerarModelo } from './modelo.js?v=2026.10.23-1530';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-0945';
+import BR from './brasil.js?v=2026.10.27-0945';
+import { gerarModelo } from './modelo.js?v=2026.10.27-0945';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.23-1530';
+const VERSAO = '2026.10.27-0945';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1533,7 +1533,7 @@ async function vAdiantamentos() {
   tab.querySelectorAll('[data-lib]').forEach(b => b.onclick = () => { const a = ads.find(x => x.id === b.dataset.lib);
     const ultTaxa = ads.filter(x => x.parceiro_id === a.parceiro_id && Number(x.taxa_pct)).map(x => x.taxa_pct)[0];
     const l = linha(b, `<label class="campo">Valor liberado<input class="peq" id="lv" value="${String(a.valor_solicitado ?? '').replace('.', ',')}" style="width:130px"></label><label class="campo">Desconto (%)<input class="peq" id="lt" value="${ultTaxa != null ? String(ultTaxa).replace('.', ',') : ''}" placeholder="0" style="width:80px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ld" value="${hoje}"></label><label class="campo" style="flex:1 1 200px">Observação<input class="peq" id="lo"></label><button class="btn peq" id="lok">Confirmar liberação</button><span class="nota" id="lcalc" style="flex-basis:100%"></span>`);
-    const calc = () => { const v = numBR(l.querySelector('#lv').value) || 0, t = numBR(l.querySelector('#lt').value) || 0; const d = Math.round(v * t) / 100; l.querySelector('#lcalc').textContent = `Desconto de ${BRL2(d)} · o parceiro recebe ${BRL2(v - d)} · na NF do fechamento é abatido ${BRL2(v)}.`; };
+    const calc = () => { const v = numBR(l.querySelector('#lv').value) || 0, t = numBR(l.querySelector('#lt').value) || 0; const d = Math.round(v * t) / 100; l.querySelector('#lcalc').textContent = t ? `Desconto de ${BRL2(d)} · o parceiro recebe ${BRL2(v - d)} · na NF do fechamento é abatido ${BRL2(v)}.` : `Sem desconto agora: o parceiro recebe ${BRL2(v)}. Para cobrar a taxa no fechamento, use Conferência e aprovação → Ajustes e descontos → Taxa de adiantamento (o portal sugere o valor).`; };
     l.querySelector('#lv').oninput = calc; l.querySelector('#lt').oninput = calc; calc();
     l.querySelector('#lok').onclick = ev => { const v = numBR(l.querySelector('#lv').value); const t = numBR(l.querySelector('#lt').value); rodar(l, ev.currentTarget, () => q(sb.rpc('liberar_adiantamento', { p_id: a.id, p_valor: Number.isNaN(v) ? null : v, p_data: l.querySelector('#ld').value || null, p_taxa: t == null || Number.isNaN(t) ? 0 : t, p_obs: l.querySelector('#lo').value }))); }; });
   tab.querySelectorAll('[data-rcs]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo" style="flex:1 1 300px">Motivo (o parceiro vê)<input class="peq" id="rm"></label><button class="btn peq" id="rok">Recusar</button>`);
@@ -1939,6 +1939,7 @@ async function vNotas() {
 
 // ================= Conferência e aprovação (admin) =================
 const ST_ENV = { recebido: ['Recebido', ''], validado: ['Sem pendências', 'escuro'], com_divergencias: ['Com pendências do parceiro', 'alerta'], aprovado: ['Aprovado', 'escuro'], recusado: ['Devolvido', 'marca'], substituido: ['Substituído', ''] };
+const CAT_AJ = { antecipacao: 'Taxa de adiantamento (save)', repasse: 'Repasse de custo', penalidade: 'Penalidade', ajuste: 'Outro desconto' };
 async function vConferencia() {
   const m = $('#main');
   if (S.confParc) return detalheConferencia();
@@ -1992,12 +1993,16 @@ async function detalheConferencia() {
   m.innerHTML = '<div class="carregando">Carregando…</div>';
   const envs = await q(sb.from('envios').select('*').eq('competencia_id', c.id).eq('parceiro_id', p.id).order('versao', { ascending: false }));
   const e = envs.find(x => x.status !== 'substituido') || envs[0];
-  const [divs, acoes, ajs, res] = await Promise.all([
+  const [divs, acoes, ajs, res, adisP] = await Promise.all([
     todas(() => sb.from('divergencias').select('*').eq('envio_id', e.id).order('operacao').order('ref_linha')),
     todas(() => sb.from('acoes_parceiro').select('*').eq('parceiro_id', p.id).order('criado_em')),
     q(sb.from('ajustes').select('*').eq('competencia_id', c.id).eq('parceiro_id', p.id).order('criado_em')),
     q(sb.rpc('resumo_aprovacao', { p_envio: e.id })),
+    q(sb.from('adiantamentos').select('id,valor,taxa_pct,liberado_em,status').eq('competencia_id', c.id).eq('parceiro_id', p.id).in('status', ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'])),
   ]);
+  // adiantamento liberado sem desconto e ainda sem taxa lançada no fechamento
+  const taxaLancada = ajs.filter(a => a.categoria === 'antecipacao').reduce((s2, a) => s2 + Math.abs(Number(a.valor) || 0), 0);
+  const semTaxa = (adisP || []).filter(a => !Number(a.taxa_pct)); const baseTaxa = semTaxa.reduce((s2, a) => s2 + Number(a.valor || 0), 0);
   const acPor = {}; acoes.forEach(a => (acPor[a.divergencia_id] = acPor[a.divergencia_id] || []).push(a));
   const t = e.totais || {}; const aberto = !['aprovado', 'recusado', 'substituido'].includes(e.status) && c.status !== 'fechada';
   const [rot, cls] = ST_ENV[e.status] || [e.status, ''];
@@ -2027,10 +2032,11 @@ async function detalheConferencia() {
       ${info.length ? `<details><summary style="cursor:pointer;font-size:14px">Itens informativos (${info.length}) · não bloqueiam a aprovação</summary><div class="tabela"><table><tbody>${info.map(linhaDiv).join('')}</tbody></table></div></details>` : ''}
     </section>
     <section class="bloco"><h2>Ajustes e descontos</h2>
-      <p class="sub">Descontos ou acréscimos que não vêm do relatório (ex.: multa contratual, devolução). Cada um fica registrado com o motivo.</p>
-      ${ajs.length ? `<div class="tabela"><table><thead><tr><th>Data</th><th>Operação</th><th>Tipo</th><th>Motivo</th><th class="n">Valor</th></tr></thead><tbody>${ajs.map(a => `<tr><td>${fmtD(a.criado_em)}</td><td>${esc(a.operacao)}</td><td>${esc(a.tipo)}</td><td>${esc(a.motivo || '')}</td><td class="n">${BRL2(a.valor)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <p class="sub">Descontos ou acréscimos que não vêm do relatório. Escolha o tipo: a taxa de adiantamento/antecipação entra como save na visão da diretoria; repasses, penalidades e outros entram em Descontos.</p>
+      ${aberto && baseTaxa && !taxaLancada ? `<div class="msg alerta">Adiantamento de ${BRL2(baseTaxa)} liberado sem desconto neste mês. Lançar a taxa: <input id="tx-pct" class="peq" value="5" style="width:60px">% = <b id="tx-val">${BRL2(baseTaxa * 0.05)}</b> <button class="btn peq" id="tx-ok">Lançar taxa</button></div>` : ''}
+      ${ajs.length ? `<div class="tabela"><table><thead><tr><th>Data</th><th>Operação</th><th>Tipo</th><th>Motivo</th><th class="n">Valor</th></tr></thead><tbody>${ajs.map(a => `<tr><td>${fmtD(a.criado_em)}</td><td>${esc(a.operacao)}</td><td>${esc(CAT_AJ[a.categoria] || a.tipo)}</td><td>${esc(a.motivo || '')}</td><td class="n">${BRL2(a.valor)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       ${aberto ? `<div class="linha"><select id="aj-op" class="peq"><option>Desconto</option><option>Malote</option><option>Kits/Spot</option><option>Fora do Umov</option></select>
-        <select id="aj-tipo" class="peq"><option value="desconto">Desconto (−)</option><option value="acrescimo">Acréscimo (+)</option></select>
+        <select id="aj-tipo" class="peq"><option value="desconto:antecipacao">Taxa de adiantamento/antecipação (−, save)</option><option value="desconto:penalidade">Penalidade: embarque errado, extravio, multa (−)</option><option value="desconto:repasse">Repasse de custo: aluguel, locação, luz (−)</option><option value="desconto:ajuste" selected>Outro desconto (−)</option><option value="acrescimo:">Acréscimo (+)</option></select>
         <input id="aj-valor" class="peq" placeholder="Valor (R$)" style="width:120px"><input id="aj-motivo" class="peq" placeholder="Motivo" style="min-width:260px;flex:1"><button class="btn sec peq" id="aj-add">Registrar ajuste</button></div>` : ''}
     </section>
     <section class="bloco"><h2>Valor do mês</h2>
@@ -2061,10 +2067,13 @@ async function detalheConferencia() {
       rodar(ev.currentTarget, () => q(sb.rpc('decidir_divergencia', { p_div: b.dataset.gl, p_decisao: 'glosada', p_comentario: l.querySelector('#gm').value, p_glosa: v }))); };
   });
   const add = $('#aj-add');
-  if (add) add.onclick = () => { const v = numBR($('#aj-valor').value); const mot = $('#aj-motivo').value.trim(); const tipo = $('#aj-tipo').value;
+  const txp = $('#tx-pct'); if (txp) { txp.oninput = () => { $('#tx-val').textContent = BRL2(baseTaxa * (numBR(txp.value) || 0) / 100); };
+    $('#tx-ok').onclick = () => { const pc = numBR(txp.value); if (!pc || pc <= 0 || pc >= 100) return erro(null, 'Percentual inválido.'); const v = Math.round(baseTaxa * pc) / 100;
+      rodar($('#tx-ok'), () => q(sb.from('ajustes').insert({ competencia_id: c.id, parceiro_id: p.id, operacao: 'Desconto', tipo: 'desconto', categoria: 'antecipacao', valor: -v, motivo: `Desconto de ${String(pc).replace('.', ',')}% sobre adiantamento de ${BRL2(baseTaxa)}`, criado_por: S.user.id }))); }; }
+  if (add) add.onclick = () => { const v = numBR($('#aj-valor').value); const mot = $('#aj-motivo').value.trim(); const [tipo, categoria] = $('#aj-tipo').value.split(':');
     if (v == null || Number.isNaN(v) || v <= 0) return erro(null, 'Informe o valor do ajuste (positivo; o tipo define o sinal).');
     if (!mot) return erro(null, 'Informe o motivo do ajuste.');
-    rodar(add, () => q(sb.from('ajustes').insert({ competencia_id: c.id, parceiro_id: p.id, operacao: $('#aj-op').value, tipo, valor: tipo === 'desconto' ? -v : v, motivo: mot, criado_por: S.user.id }))); };
+    rodar(add, () => q(sb.from('ajustes').insert({ competencia_id: c.id, parceiro_id: p.id, operacao: $('#aj-op').value, tipo, categoria: categoria || null, valor: tipo === 'desconto' ? -v : v, motivo: mot, criado_por: S.user.id }))); };
   const ap = $('#aprovar'); if (ap) ap.onclick = () => rodar(ap, async () => { await q(sb.rpc('aprovar_envio', { p_envio: e.id, p_comentario: $('#ap-com').value })); });
   const dv = $('#devolver'); if (dv) dv.onclick = () => rodar(dv, () => q(sb.rpc('devolver_envio', { p_envio: e.id, p_comentario: $('#ap-com').value })));
   const rb = $('#reabrir'); if (rb) rb.onclick = () => rodar(rb, () => q(sb.rpc('reabrir_envio', { p_envio: e.id, p_motivo: $('#re-mot').value })));
