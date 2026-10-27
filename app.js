@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-0945';
-import BR from './brasil.js?v=2026.10.27-0945';
-import { gerarModelo } from './modelo.js?v=2026.10.27-0945';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-0955';
+import BR from './brasil.js?v=2026.10.27-0955';
+import { gerarModelo } from './modelo.js?v=2026.10.27-0955';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-0945';
+const VERSAO = '2026.10.27-0955';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1019,6 +1019,7 @@ function telaParceiro() {
 }
 
 async function vParceiroInicio() {
+  if (S.baseFechada === undefined) S.baseFechada = !!S.previa;
   const m = S.previa && $('#pvcorpo') ? $('#pvcorpo') : $('#main');
   if (!S.compsP.length) {
     m.innerHTML = `<div class="bloco"><h2>Nenhum mês liberado</h2><p class="sub" style="margin:0">Assim que a GSM liberar a competência, a base do mês aparece aqui.</p></div>`;
@@ -1028,11 +1029,15 @@ async function vParceiroInicio() {
   m.innerHTML = `<div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>A sua base do mês já está no portal: pontos, o que o Umov registrou e os kits. Confira, ajuste só o que não bate (com explicação) e envie para a GSM validar. Depois de aprovado, a NF é enviada aqui mesmo.</p></div>
     <label class="campo" style="min-width:220px">Competência<select id="compP">${S.compsP.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select></label></div>
     ${S.previa ? `<div class="msg alerta">Você está agindo em nome de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>. ${c.liberada_parceiros ? 'Mês liberado para o parceiro.' : 'Este mês ainda não está liberado para o parceiro.'} Tudo fica registrado como feito pela GSM.</div>` : ''}
-    <section class="bloco" id="secbase"><h2>1. Base do mês</h2><div id="basep" class="carregando">Carregando…</div></section>
+    <nav class="linha" style="gap:8px;font-size:14px">${[['secbase', '1. Base do mês'], ['situacao', '2. Validação da GSM'], ['secnf', '3. Nota fiscal'], ['secadi', 'Adiantamento e antecipação']].map(([id, t]) => `<a href="#" data-ir="${id}" class="btn sec peq">${t}</a>`).join('')}</nav>
+    <section class="bloco${S.baseFechada ? ' fechada' : ''}" id="secbase"><h2 id="basetit" style="cursor:pointer;user-select:none" title="Clique para abrir ou fechar a lista de pontos">${S.baseFechada ? '▸' : '▾'} 1. Base do mês <span class="nota" style="font-weight:400;font-size:13px">${S.baseFechada ? '(clique para abrir os pontos)' : '(clique para fechar)'}</span></h2><div id="basep" class="carregando">Carregando…</div></section>
     <section class="bloco" id="situacao"><h2>2. Validação da GSM</h2><div id="sitr" class="carregando">Carregando…</div></section>
     <section class="bloco" id="secnf"><h2>3. Nota fiscal</h2><div id="nfp" class="carregando">Carregando…</div></section>
-    <section class="bloco"><h2>Adiantamento e antecipação</h2><p class="sub">Antes da aprovação, peça um adiantamento: o valor adiantado é descontado da NF do fechamento. Depois da aprovação, peça a antecipação do pagamento: a NF sai pelo valor com o desconto.</p><div id="adip" class="carregando">Carregando…</div></section>`;
+    <section class="bloco" id="secadi"><h2>Adiantamento e antecipação</h2><p class="sub">Antes da aprovação, peça um adiantamento: o valor adiantado é descontado da NF do fechamento. Depois da aprovação, peça a antecipação do pagamento: a NF sai pelo valor com o desconto.</p><div id="adip" class="carregando">Carregando…</div></section>`;
   $('#compP').onchange = e => { S.compPId = e.target.value; S.baseAba = null; vParceiroInicio(); };
+  m.querySelectorAll('[data-ir]').forEach(b => b.onclick = ev => { ev.preventDefault(); const id = b.dataset.ir; if (id === 'secbase' && S.baseFechada) $('#basetit').click(); const el = $('#' + id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  $('#basetit').onclick = () => { S.baseFechada = !S.baseFechada; const t = $('#basetit'); t.firstChild.textContent = (S.baseFechada ? '▸' : '▾') + ' 1. Base do mês ';
+    t.querySelector('.nota').textContent = S.baseFechada ? '(clique para abrir os pontos)' : '(clique para fechar)'; $('#secbase').classList.toggle('fechada', S.baseFechada); };
   baseParceiro(c);
   situacaoParceiro(c);
   secaoNF(c);

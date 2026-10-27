@@ -157,3 +157,5 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .gres-itens .gres-pot{border-top-color:var(--brand)}.gres-itens .gres-pot b{color:var(--brand-deep)}.gres-itens a{color:var(--brand-deep)}
 .gres{position:relative}.gres:hover{border-color:#B8B6B4}.gres-mais{position:absolute;right:18px;bottom:10px;font-size:12px;color:var(--brand-deep);font-weight:600}
 @media (max-width:860px){.gres{grid-template-columns:1fr}}
+
+#secbase.fechada nav.abas,#secbase.fechada #baseaba{display:none}
