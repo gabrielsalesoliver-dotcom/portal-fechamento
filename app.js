@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1215';
-import BR from './brasil.js?v=2026.10.27-1215';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1215';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1120';
+import BR from './brasil.js?v=2026.10.27-1120';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1120';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1215';
+const VERSAO = '2026.10.27-1120';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -29,6 +29,44 @@ async function q(promise) {
   return count != null && data == null ? count : data;
 }
 
+// ---------- privacidade (LGPD) e sessão ----------
+const PRIV_VERSAO = '2026-10-v1';
+const PRIV_CONTATO = 'sales@gsmlogistica.com.br';
+const textoPrivacidade = () => `
+  <p><b>Quem trata os dados:</b> GSM Group Logística, que usa este portal para o fechamento mensal e o pagamento dos serviços de última milha.</p>
+  <p><b>Quais dados:</b> nome e razão social, CPF ou CNPJ, e-mail de acesso, dados para pagamento (chave PIX ou boleto), notas fiscais e relatórios que você envia, e os atendimentos registrados no Umov (pontos, datas e nome do motorista ou responsável).</p>
+  <p><b>Para quê:</b> conferir os atendimentos, calcular e aprovar o valor do mês, receber e conferir as notas fiscais e fazer o pagamento. A base legal é a execução do contrato de prestação de serviços e o cumprimento de obrigações fiscais.</p>
+  <p><b>Quem vê:</b> você vê só os dados da sua empresa. Na GSM, o acesso é restrito à equipe de fechamento e ao financeiro; a diretoria vê apenas valores e indicadores, sem CPF/CNPJ nem dados bancários. Os dados ficam em servidores no Brasil (São Paulo) e não são vendidos nem compartilhados para outras finalidades.</p>
+  <p><b>Por quanto tempo:</b> notas fiscais e valores pagos ficam guardados pelo prazo exigido pela legislação fiscal (5 anos). Nomes de motoristas e responsáveis do Umov são apagados após 12 meses; os atendimentos ficam sem identificação.</p>
+  <p><b>Seus direitos:</b> você pode pedir acesso, correção ou exclusão dos seus dados (respeitados os prazos legais) pelo e-mail <a href="mailto:${PRIV_CONTATO}">${PRIV_CONTATO}</a>.</p>
+  <p><b>Segurança:</b> acesso só por convite, com senha individual; a sessão encerra sozinha após 30 minutos sem uso.</p>`;
+function telaPrivacidade() {
+  app.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg)">
+    <section class="bloco" style="max-width:720px;width:100%"><div class="eyebrow">Portal do Parceiro · GSM</div><h1 style="margin:4px 0 8px">Aviso de privacidade</h1>
+      <p class="sub">Antes do primeiro uso, leia como o portal trata os seus dados (Lei Geral de Proteção de Dados, LGPD).</p>
+      <div style="font-size:14px;line-height:1.55">${textoPrivacidade()}</div>
+      <div class="linha" style="margin-top:12px"><button class="btn" id="priv-ok">Li e concordo</button><button class="btn sec" id="priv-sair">Sair</button></div></section></div>`;
+  $('#priv-sair').onclick = sair;
+  $('#priv-ok').onclick = async () => { const b = $('#priv-ok'); b.disabled = true;
+    try { await q(sb.rpc('aceitar_privacidade', { p_versao: PRIV_VERSAO })); S.perfil.aceite_privacidade_versao = PRIV_VERSAO; iniciar(); }
+    catch (e) { b.disabled = false; alertaTopo('Não foi possível registrar: ' + e.message); } };
+}
+function verPrivacidade(ev) { if (ev) ev.preventDefault(); const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = `<section class="bloco" style="max-width:720px;width:100%;max-height:90vh;overflow:auto"><h2>Aviso de privacidade</h2><div style="font-size:14px;line-height:1.55">${textoPrivacidade()}</div><button class="btn sec" style="margin-top:8px">Fechar</button></section>`;
+  d.onclick = e => { if (e.target === d || e.target.tagName === 'BUTTON') d.remove(); }; document.body.appendChild(d); }
+const INATIVO_MS = 30 * 60 * 1000;
+function vigiarInatividade() {
+  if (S.vigiando) return; S.vigiando = true;
+  const marcar = () => { try { localStorage.setItem('gsm-ult-uso', String(Date.now())); } catch (e) {} S.ultUso = Date.now(); };
+  ['click', 'keydown', 'scroll', 'mousemove', 'touchstart'].forEach(ev => window.addEventListener(ev, () => { if (Date.now() - (S.ultUso || 0) > 15000) marcar(); }, { passive: true }));
+  let ult = 0; try { ult = +localStorage.getItem('gsm-ult-uso') || 0; } catch (e) {}
+  if (ult && Date.now() - ult > INATIVO_MS) { sairPorInatividade(); return; }
+  marcar();
+  setInterval(() => { let u = S.ultUso || 0; try { u = Math.max(u, +localStorage.getItem('gsm-ult-uso') || 0); } catch (e) {} if (Date.now() - u > INATIVO_MS) sairPorInatividade(); }, 60000);
+}
+async function sairPorInatividade() { try { await sb.auth.signOut(); } catch (e) {} try { localStorage.removeItem('gsm-ult-uso'); } catch (e) {} location.hash = ''; S.vigiando = false; telaLogin('entrar', '<div class="msg alerta">Sua sessão foi encerrada após 30 minutos sem uso. Entre de novo.</div>'); }
+
 // ---------- autenticação ----------
 async function iniciar() {
   const { data } = await sb.auth.getSession();
@@ -39,6 +77,8 @@ async function iniciar() {
   } catch (e) { S.perfil = null; }
   if (!S.perfil) return telaSemPerfil();
   if (S.perfil.ativo === false) return telaSimples('Acesso bloqueado', 'Seu login está bloqueado no portal. Fale com o Fechamento GSM.');
+  vigiarInatividade();
+  if (S.perfil.papel === 'parceiro' && S.perfil.aceite_privacidade_versao !== PRIV_VERSAO) return telaPrivacidade();
   if (S.perfil.papel === 'parceiro') return iniciarParceiro();
   if (S.perfil.papel === 'diretoria' || S.perfil.papel === 'financeiro') return iniciarConsulta();
   if (S.perfil.papel !== 'admin') return telaEmBreve();
@@ -107,6 +147,7 @@ function telaLogin(aba = 'entrar', msg = '') {
       }
       const { error } = await sb.auth.signInWithPassword({ email, password: senha });
       if (error) return erro(error.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos.' : error.message);
+      try { localStorage.setItem('gsm-ult-uso', String(Date.now())); } catch (e) {}
       iniciar();
     } catch (e) { erro('Falha de conexão: ' + e.message); }
   };
@@ -140,11 +181,12 @@ async function carregarBase() {
 
 // ---------- casca ----------
 const MENU = [
-  ['Visão geral', [['painel', 'Painel']]],
+  ['Visão geral', [['pendencias', 'Pendências e cobrança'], ['painel', 'Painel do mês']]],
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
-  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['pendencias', 'Pendências e cobrança'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)'], ['acessos', 'Acessos e convites']]],
-  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente'], ['backup', 'Cópia de segurança']]],
+  ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
+  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
+  ['Configurações', [['acessos', 'Acessos e convites'], ['backup', 'Cópia de segurança']]],
 ];
 const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), pendencias: () => vPendencias(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
 
@@ -174,6 +216,9 @@ async function vPendencias() {
   const fm = Object.fromEntries(fech.map(f => [f.parceiro_id, f])), nm = Object.fromEntries(nfr.map(r => [r.parceiro_id, r]));
   const libDesde = c.liberada_em ? c.liberada_em : null;
   const dias = d => d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 864e5)) : null;
+  const hojeISO = new Date(Date.now() - 3 * 36e5).toISOString().slice(0, 10);
+  const prazoDe = k => ['sem_envio', 'responder', 'devolvido'].includes(k) ? c.prazo_envio : ['sem_nf', 'nf_recusada'].includes(k) ? c.prazo_nf : null;
+  const atrasado = k => { const pz = prazoDe(k); return !!pz && hojeISO > pz; };
   const L = parcs.filter(p => p.ativo !== false).map(p => { const e = ult[p.id], f = fm[p.id], r = nm[p.id]; let k, desde = null;
     if (f && f.pago_em) { k = 'pago'; desde = f.pago_em; }
     else if (f && f.valor_aprovado != null) {
@@ -185,21 +230,23 @@ async function vPendencias() {
     else if (e.status === 'recusado') { k = 'devolvido'; desde = e.enviado_em; }
     else if (divs.some(d => d.envio_id === e.id)) { k = 'responder'; desde = e.enviado_em; }
     else { k = 'analise'; desde = e.enviado_em; }
-    return { p, k, desde, d: dias(desde), valor: f ? (f.a_pagar ?? f.valor_aprovado) : null }; });
+    return { p, k, desde, d: dias(desde), valor: f ? (f.a_pagar ?? f.valor_aprovado) : null, atr: atrasado(k) }; });
   S.pendGrupo = S.pendGrupo || 'parceiro';
-  const vis = L.filter(x => S.pendGrupo === 'todos' || ETAPAS_PEND[x.k][1] === S.pendGrupo).sort((a, b) => (b.d ?? -1) - (a.d ?? -1) || (a.p.regiao || '').localeCompare(b.p.regiao || ''));
+  const vis = L.filter(x => S.pendGrupo === 'todos' || ETAPAS_PEND[x.k][1] === S.pendGrupo).sort((a, b) => (b.atr - a.atr) || (b.d ?? -1) - (a.d ?? -1) || (a.p.regiao || '').localeCompare(b.p.regiao || ''));
   const cont = g => L.filter(x => g === 'todos' || ETAPAS_PEND[x.k][1] === g).length;
   const porEtapa = Object.keys(ETAPAS_PEND).map(k => [k, L.filter(x => x.k === k).length]).filter(([, n]) => n);
   const msg = x => { const nomeM = nomeMes(c.mes); const t = { sem_envio: `conferir e enviar a base de ${nomeM} no portal`, responder: `responder os itens da validação de ${nomeM} no portal`, devolvido: `corrigir e reenviar a base de ${nomeM} (a GSM devolveu com um comentário)`, sem_nf: `enviar a NF de ${nomeM} pelo portal${x.valor ? `, no valor de ${BRL2(x.valor)}` : ''}`, nf_recusada: `enviar uma nova NF de ${nomeM} (a anterior foi recusada ou a soma não bate)` }[x.k];
-    return t ? `Olá, ${x.p.nome}! Tudo bem? Para fecharmos ${nomeM}, falta ${t}: ${location.origin + location.pathname}. Qualquer dúvida, estou à disposição. Obrigado!` : ''; };
+    const pz = prazoDe(x.k); const tp = pz ? (x.atr ? ` O prazo era ${fmtD(pz)}.` : ` O prazo é ${fmtD(pz)}.`) : '';
+    return t ? `Olá, ${x.p.nome}! Tudo bem? Para fecharmos ${nomeM}, falta ${t}: ${location.origin + location.pathname}.${tp} Qualquer dúvida, estou à disposição. Obrigado!` : ''; };
   $('#pend').outerHTML = `
     <div class="kpis">${GRUPO_PEND.slice(0, 4).map(([g, t]) => `<div class="kpi ${g === 'parceiro' && cont(g) ? 'alerta' : 'neutro'}"><small>${t}</small><b>${cont(g)}</b><span>${g === 'ok' ? 'parceiros pagos' : 'parceiros'}</span></div>`).join('')}</div>
+    <p class="nota" style="margin:0"><b>Prazos do mês:</b> base até ${c.prazo_envio ? fmtD(c.prazo_envio) : '(não definido)'} · NF até ${c.prazo_nf ? fmtD(c.prazo_nf) : '(não definido)'}${L.some(x => x.atr) ? ` · <b style="color:var(--brand-deep)">${L.filter(x => x.atr).length} parceiro(s) com prazo vencido</b>` : ''}. Defina em Liberar competência.</p>
     <p class="nota" style="margin:0">${porEtapa.map(([k, n]) => `${esc(ETAPAS_PEND[k][0])}: <b>${n}</b>`).join(' · ')}${!c.liberada_parceiros ? ' · <b>Atenção: o mês ainda não foi liberado para os parceiros.</b>' : ''}</p>
     <section class="bloco"><div class="linha" style="justify-content:space-between"><div class="linha">${GRUPO_PEND.map(([g, t]) => `<button class="btn ${S.pendGrupo === g ? '' : 'sec'} peq" data-pg="${g}">${t} (${cont(g)})</button>`).join('')}</div>
       <div class="linha"><button class="btn sec peq" id="pd-mail">Copiar e-mails da lista</button><button class="btn sec peq" id="pd-xls">Baixar Excel</button></div></div>
       <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Etapa</th><th class="n">Há quantos dias</th><th class="n">Valor</th><th>Contato</th><th></th></tr></thead><tbody>
       ${vis.map((x, i) => { const [t, , cls] = ETAPAS_PEND[x.k]; const mm = msg(x);
-        return `<tr><td><b>${esc(x.p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}</span></td><td><span class="pill ${cls}">${esc(t)}</span></td>
+        return `<tr><td><b>${esc(x.p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}</span></td><td><span class="pill ${cls}">${esc(t)}</span>${x.atr ? ' <span class="pill marca">Prazo vencido</span>' : ''}</td>
         <td class="n" style="color:${(x.d ?? 0) > 5 && ETAPAS_PEND[x.k][1] === 'parceiro' ? 'var(--brand-deep)' : 'inherit'}">${x.d == null ? '—' : x.d}</td><td class="n">${x.valor != null ? BRL2(x.valor) : '—'}</td>
         <td style="font-size:13px">${x.p.email_contato ? `<a href="mailto:${esc(x.p.email_contato)}?subject=${encodeURIComponent('Fechamento ' + nomeMes(c.mes) + ' · GSM')}&body=${encodeURIComponent(mm)}">${esc(x.p.email_contato)}</a>` : '<span class="nota">sem e-mail no cadastro</span>'}</td>
         <td style="white-space:nowrap">${mm ? `<button class="btn sec peq" data-cp="${i}">Copiar mensagem</button> ` : ''}<button class="btn sec peq" data-ab="${i}">Abrir</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="nota">Ninguém nesta situação.</td></tr>'}
@@ -211,7 +258,7 @@ async function vPendencias() {
     if (['analise'].includes(x.k)) { S.confParc = x.p.id; location.hash = '#conferencia'; } else if (x.k === 'nf_conferir') location.hash = '#notas'; else if (g === 'financeiro' || x.k === 'pago') location.hash = '#pacote';
     else { S.previaParc = x.p.id; S.compPId = c.id; location.hash = '#verparceiro'; } });
   $('#pd-mail').onclick = async () => { const em = [...new Set(vis.map(x => x.p.email_contato).filter(Boolean))].join('; '); if (!em) return alertaTopo('Nenhum e-mail cadastrado nesta lista.'); try { await navigator.clipboard.writeText(em); $('#pd-mail').textContent = `${em.split(';').length} e-mails copiados`; } catch (e) { alertaTopo(e.message); } };
-  $('#pd-xls').onclick = () => { const ws = XLSX.utils.json_to_sheet(vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })));
+  $('#pd-xls').onclick = () => { const ws = XLSX.utils.json_to_sheet(vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Pendências'); XLSX.writeFile(wb, `Pendencias_${c.mes.slice(0, 7)}.xlsx`); };
 }
 
@@ -232,9 +279,9 @@ async function vVerParceiro() {
 }
 
 function rotear() {
-  const v = (location.hash || '#painel').slice(1);
+  const v = (location.hash || '#pendencias').slice(1);
   S.previa = false;
-  S.view = VIEWS[v] ? v : 'painel';
+  S.view = VIEWS[v] ? v : 'pendencias';
   casca();
   VIEWS[S.view]();
 }
@@ -663,7 +710,7 @@ async function vCompetencias() {
   ]);
   const impDe = id => imps.find(i => i.competencia_id === id); const baseDe = id => bases.find(i => i.competencia_id === id);
   $('#lista').outerHTML = `<section class="bloco"><div class="tabela"><table>
-    <thead><tr><th>Competência</th><th>Situação</th><th>Base de pontos</th><th>Umov</th><th>Parceiros</th><th></th></tr></thead>
+    <thead><tr><th>Competência</th><th>Situação</th><th>Base de pontos</th><th>Umov</th><th>Parceiros</th><th>Prazos do parceiro</th><th></th></tr></thead>
     <tbody>${S.comps.map(c => {
       const i = impDe(c.id); const bs = baseDe(c.id); const aberta = c.status === 'aberta';
       return `<tr><td><b>${nomeMes(c.mes)}</b></td>
@@ -671,13 +718,18 @@ async function vCompetencias() {
         <td>${bs ? `${fmtN(bs.pontos)} pontos · ${fmtD(bs.importado_em)}` : (aberta ? `<button class="btn sec peq" data-gerar="${c.id}">Gerar base do mês</button>` : '—')}</td>
         <td>${i ? `${fmtN(i.linhas)} linhas · ${fmtD(i.importado_em)}` : (aberta ? '<span class="nota">entra no fim do mês</span>' : '—')}</td>
         <td>${c.liberada_parceiros ? `Liberada em ${fmtDH(c.liberada_em)}` : (aberta ? 'Bloqueada' : '—')}</td>
+        <td style="white-space:nowrap;font-size:13px">${aberta ? `<label class="campo" style="margin:0">Base até<input type="date" class="peq" id="pz-e-${c.id}" value="${c.prazo_envio || ''}"></label><label class="campo" style="margin:4px 0 0">NF até<input type="date" class="peq" id="pz-n-${c.id}" value="${c.prazo_nf || ''}"></label><button class="btn sec peq" data-pz="${c.id}" style="margin-top:4px">Salvar prazos</button>` : (c.prazo_envio || c.prazo_nf ? `Base ${fmtD(c.prazo_envio)} · NF ${fmtD(c.prazo_nf)}` : '—')}</td>
         <td>${aberta ? (c.liberada_parceiros
           ? `<button class="btn sec peq" data-acao="bloquear" data-id="${c.id}">Bloquear</button>`
           : `<button class="btn peq" data-acao="liberar" data-id="${c.id}" ${bs ? '' : 'disabled title="Gere a base do mês antes"'}>Liberar</button>`) : ''}</td></tr>
-        <tr id="conf-${c.id}" hidden><td colspan="6"></td></tr>`;
+        <tr id="conf-${c.id}" hidden><td colspan="7"></td></tr>`;
     }).join('')}</tbody></table></div></section>`;
   $('#evt').innerHTML = evts.length ? `<section class="bloco"><h2>Registro</h2><div class="tabela"><table><thead><tr><th>Quando</th><th>Competência</th><th>O que aconteceu</th></tr></thead><tbody>
     ${evts.map(e => `<tr><td>${fmtDH(e.feito_em)}</td><td>${nomeMes(S.comps.find(c => c.id === e.competencia_id)?.mes)}</td><td>${({ liberada: 'Liberada aos parceiros', bloqueada: 'Bloqueada para os parceiros', fechada: 'Competência fechada' })[e.evento] || esc(e.evento)}${e.detalhe ? ` <span class="nota">${esc(e.detalhe)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></section>` : '';
+  app.querySelectorAll('[data-pz]').forEach(b => b.onclick = async () => { const id = b.dataset.pz;
+    const e = $(`#pz-e-${id}`).value || null, n = $(`#pz-n-${id}`).value || null;
+    if (e && n && n < e) return alertaTopo('O prazo da NF não pode ser antes do prazo da base.');
+    try { await q(sb.from('competencias').update({ prazo_envio: e, prazo_nf: n }).eq('id', id)); await carregarBase(); vCompetencias(); alertaOk('Prazos salvos. Eles aparecem para os parceiros e na tela de Pendências.'); } catch (er) { alertaTopo(er.message); } });
   app.querySelectorAll('[data-gerar]').forEach(b => b.onclick = async () => {
     b.disabled = true; b.textContent = 'Gerando…';
     try { const r = await q(sb.rpc('gerar_base_mes', { p_comp: b.dataset.gerar })); await vCompetencias(); alertaOk(`Base gerada: ${fmtN(r.pontos)} pontos.${r.sem_parceiro ? ` ${fmtN(r.sem_parceiro)} pontos ativos ficaram de fora por não ter parceiro — complete em Carteira de pontos e gere de novo.` : ''}`); }
@@ -1074,13 +1126,13 @@ function telaParceiro() {
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Portal do Parceiro</div><div style="font-size:18px;font-weight:600">${esc(p.nome)} · ${esc(p.regiao)}</div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO} · <a href="#" id="lnkpriv" style="color:inherit">Privacidade</a></small></span>
           <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
     <main id="main" style="max-width:1100px;width:100%;margin:0 auto"></main>
   </div>`;
-  $('#sair').onclick = sair;
+  $('#sair').onclick = sair; $('#lnkpriv').onclick = verPrivacidade;
   vParceiroInicio();
 }
 
@@ -1095,6 +1147,7 @@ async function vParceiroInicio() {
   m.innerHTML = `<div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>A sua base do mês já está no portal: pontos, o que o Umov registrou e os kits. Confira, ajuste só o que não bate (com explicação) e envie para a GSM validar. Depois de aprovado, a NF é enviada aqui mesmo.</p></div>
     <label class="campo" style="min-width:220px">Competência<select id="compP">${S.compsP.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select></label></div>
     ${S.previa ? `<div class="msg alerta">Você está agindo em nome de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>. ${c.liberada_parceiros ? 'Mês liberado para o parceiro.' : 'Este mês ainda não está liberado para o parceiro.'} Tudo fica registrado como feito pela GSM.</div>` : ''}
+    ${c.prazo_envio || c.prazo_nf ? `<div class="msg" style="margin:0"><b>Prazos de ${nomeMes(c.mes)}:</b> ${c.prazo_envio ? `enviar a base até <b>${fmtD(c.prazo_envio)}</b>` : ''}${c.prazo_envio && c.prazo_nf ? ' · ' : ''}${c.prazo_nf ? `enviar a NF até <b>${fmtD(c.prazo_nf)}</b>` : ''}.</div>` : ''}
     <nav class="linha" style="gap:8px;font-size:14px">${[['secbase', '1. Base do mês'], ['situacao', '2. Validação da GSM'], ['secnf', '3. Nota fiscal'], ['secadi', 'Adiantamento e antecipação']].map(([id, t]) => `<a href="#" data-ir="${id}" class="btn sec peq">${t}</a>`).join('')}</nav>
     <section class="bloco${S.baseFechada ? ' fechada' : ''}" id="secbase"><h2 id="basetit" style="cursor:pointer;user-select:none" title="Clique para abrir ou fechar a lista de pontos">${S.baseFechada ? '▸' : '▾'} 1. Base do mês <span class="nota" style="font-weight:400;font-size:13px">${S.baseFechada ? '(clique para abrir os pontos)' : '(clique para fechar)'}</span></h2><div id="basep" class="carregando">Carregando…</div></section>
     <section class="bloco" id="situacao"><h2>2. Validação da GSM</h2><div id="sitr" class="carregando">Carregando…</div></section>
@@ -1855,12 +1908,14 @@ async function vPacote() {
     <section class="bloco"><h2>Fechar a competência</h2><div id="fechar"></div></section>`;
   ligarSeletor(vPacote);
   const c = comp();
-  const [fech, res, parcs, adisLib] = await Promise.all([
+  const [fech, res, parcs, adisLib, nfsAd] = await Promise.all([
     todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,a_pagar,antec_status,antec_taxa,antec_desconto,antec_data,lote_id,pago_em').eq('competencia_id', c.id)),
     todas(() => sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', c.id)),
     q(sb.from('parceiros').select('id,regiao,nome,dia_pagamento,forma_pagamento,tipo_documento')),
     q(sb.from('adiantamentos').select('*').eq('competencia_id', c.id).in('status', ['liberado', 'nf_recebida']).is('lote_id', null).order('data_pagamento')),
+    q(sb.from('notas_fiscais').select('adiantamento_id,status').eq('competencia_id', c.id).eq('tipo', 'adiantamento')),
   ]);
+  const nfAdOk = id => nfsAd.some(n => n.adiantamento_id === id && n.status === 'conferida');
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const sit = Object.fromEntries(res.map(r => [r.parceiro_id, r.situacao]));
   const livres = fech.filter(f => f.valor_aprovado != null && !f.lote_id);
   const grupos = {}; const grpAntec = f => `Antecipação ${fmtD(f.antec_data)}`;
@@ -1879,8 +1934,8 @@ async function vPacote() {
         <td class="n">${BRL2(f.a_pagar ?? (Number(f.valor_aprovado) - Number(f.adiantado || 0)))}${f.antec_status === 'liberada' ? `<br><span class="nota">antecipação: −${BRL2(f.antec_desconto)} (${String(f.antec_taxa).replace('.', ',')}%)</span>` : f.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida, sem resposta</span>' : ''}</td><td><span class="pill ${s === 'conferida' ? 'escuro' : 'alerta'}">${(SIT_NF[s] || ['—'])[0]}</span></td></tr>`; }).join('')}
     </tbody></table></div>
     ${adisLib.length ? `<h3 style="margin:8px 0 0;font-size:15px">Adiantamentos liberados</h3><div class="tabela"><table><thead><tr><th></th><th>Parceiro</th><th>Pagar em</th><th class="n">Liberado</th><th class="n">Desconto</th><th class="n">A pagar</th><th>NF</th></tr></thead><tbody>
-      ${adisLib.map(a => `<tr><td><input type="checkbox" class="ack" value="${a.id}"></td><td><b>${esc(pm[a.parceiro_id]?.regiao || '—')}</b></td><td>${fmtD(a.data_pagamento)}</td><td class="n">${BRL2(a.valor)}</td><td class="n">${Number(a.taxa_pct) ? BRL2(a.valor_desconto) + ` (${String(a.taxa_pct).replace('.', ',')}%)` : '—'}</td><td class="n"><b>${BRL2(a.valor_liquido)}</b></td><td>${a.status === 'nf_recebida' ? '<span class="pill escuro">NF recebida</span>' : '<span class="pill alerta">Sem NF</span>'}</td></tr>`).join('')}
-      </tbody></table></div><p class="nota">Marque os adiantamentos que saem neste lote. Na capa eles aparecem com Modelo "Parceiro (Adiantamento)" e o valor líquido na coluna de pagamento.</p>` : ''}
+      ${adisLib.map(a => `<tr><td><input type="checkbox" class="ack" value="${a.id}" ${nfAdOk(a.id) ? '' : 'disabled title="Confira a NF do adiantamento antes"'}></td><td><b>${esc(pm[a.parceiro_id]?.regiao || '—')}</b></td><td>${fmtD(a.data_pagamento)}</td><td class="n">${BRL2(a.valor)}</td><td class="n">${Number(a.taxa_pct) ? BRL2(a.valor_desconto) + ` (${String(a.taxa_pct).replace('.', ',')}%)` : '—'}</td><td class="n"><b>${BRL2(a.valor_liquido)}</b></td><td>${nfAdOk(a.id) ? '<span class="pill escuro">NF conferida</span>' : a.status === 'nf_recebida' ? '<span class="pill alerta">NF a conferir</span>' : '<span class="pill alerta">Sem NF</span>'}</td></tr>`).join('')}
+      </tbody></table></div><p class="nota">Só dá para marcar adiantamentos com a NF do adiantamento conferida (em Adiantamentos e antecipações). Marque os adiantamentos que saem neste lote. Na capa eles aparecem com Modelo "Parceiro (Adiantamento)" e o valor líquido na coluna de pagamento.</p>` : ''}
     <div class="linha" style="align-items:flex-end"><label class="campo">Nome do lote<input class="peq" id="lrot" value="${(S.pacGrupo || '').startsWith('Antecipação') ? 'Antecipação' : `Pagamento ${esc(((S.pacGrupo || '').match(/\d+/) || [''])[0])}`}" style="width:180px"></label><label class="campo">Data de pagamento<input class="peq" type="date" id="ldata" value="${sugData()}"></label><button class="btn marca" id="lgerar">Gerar lote</button></div>
     <p class="nota">Parceiros aguardando NF podem entrar no lote (aparecem como "Aguardando NF" na capa, como hoje), mas só são marcados como pagos depois da NF conferida.</p>`;
   m.querySelectorAll('[data-grp]').forEach(b => b.onclick = () => { S.pacGrupo = b.dataset.grp; vPacote(); });
@@ -2317,7 +2372,7 @@ async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
   const [comps, parcs, fech, prev, efic, adis, ddet] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
-    q(sb.from('parceiros').select('id,codigo,regiao,nome,tipo,dia_pagamento,ativo')),
+    q(sb.rpc('parceiros_resumo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento')),
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
@@ -2379,7 +2434,7 @@ function desenharDiretoria(el) {
     ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi neutro"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
-  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
   <div data-sec="geral" style="display:flex;flex-direction:column;gap:22px"><div id="dgeral"></div></div>
   <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
@@ -2668,6 +2723,7 @@ function graficoPrev(box, tbox, pts, atualId) {
     <p class="nota">Meses fechados usam o calendarizado da planilha de fechamento. A partir de outubro, a previsão é calculada pelo portal quando a base do mês é gerada (Carteira de pontos → Gerar base). Os meses sem base aparecem como projeção (barra tracejada), calculada com a carteira atual até dezembro.</p>`;
 }
 
+const SO_FIN = ['atendimentos', 'eficiencia']; // abas operacionais: financeiro e GSM
 const ABAS_DIR = [['geral', 'Visão geral'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
