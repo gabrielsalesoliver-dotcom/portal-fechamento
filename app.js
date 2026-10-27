@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-0955';
-import BR from './brasil.js?v=2026.10.27-0955';
-import { gerarModelo } from './modelo.js?v=2026.10.27-0955';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1010';
+import BR from './brasil.js?v=2026.10.27-1010';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1010';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-0955';
+const VERSAO = '2026.10.27-1010';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1437,6 +1437,8 @@ async function secaoAdiantamento(c) {
     q(sb.from('fechamento_parceiro').select('valor_aprovado,adiantado,a_pagar,lote_id,pago_em,antec_status,antec_taxa,antec_desconto,antec_data,antec_motivo,antec_solicitada_em').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)).then(r => r[0]),
     q(sb.from('nf_resumo').select('nfs').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).limit(1)).then(r => r[0]),
   ]);
+  const nfsAd = ads.length ? await q(sb.from('notas_fiscais').select('id,adiantamento_id,numero,valor,status,motivo_recusa,arquivo_path').eq('tipo', 'adiantamento').in('adiantamento_id', ads.map(a => a.id)).order('enviado_em', { ascending: false })) : [];
+  const nfDe = id => nfsAd.find(n => n.adiantamento_id === id && n.status !== 'recusada') || nfsAd.find(n => n.adiantamento_id === id);
   box.className = '';
   const aprovado = fe && fe.valor_aprovado != null;
   const pendente = ads.some(a => a.status === 'solicitado');
@@ -1457,10 +1459,11 @@ async function secaoAdiantamento(c) {
           : !semNF ? '<span class="nota">A NF do mês já foi enviada. Para antecipar, fale com a GSM.</span>' : fe.lote_id || fe.pago_em ? '<span class="nota">O pagamento deste mês já está com o financeiro.</span>' : ''}`}
     </div>`;
   }
-  box.innerHTML = `${ads.length ? `<div class="tabela"><table><thead><tr><th>Pedido</th><th class="n">Solicitado</th><th class="n">Liberado</th><th class="n">Você recebe</th><th>Pagamento</th><th>Situação</th></tr></thead><tbody>
-      ${ads.map(a => { const [r, k] = ST_ADI[a.status] || [a.status, '']; return `<tr><td>${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td><td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor_liquido) + (Number(a.taxa_pct) ? `<br><span class="nota">desconto de ${String(a.taxa_pct).replace('.', ',')}%</span>` : '') : '—'}</td>
-        <td>${a.pago_em ? 'pago em ' + fmtD(a.pago_em) : a.data_pagamento ? 'previsto ' + fmtD(a.data_pagamento) : '—'}</td><td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">GSM: ${esc(a.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}
-      </tbody></table></div>${comprometido ? `<p class="nota" style="margin:0">Adiantado no mês: ${BRL2(comprometido)}. Esse valor (liberado) é descontado da NF do fechamento.</p>` : ''}` : aprovado ? '' : '<p class="nota" style="margin:0">Nenhum pedido de adiantamento neste mês.</p>'}
+  box.innerHTML = `${ads.length ? `<div class="tabela"><table><thead><tr><th>Pedido</th><th class="n">Solicitado</th><th class="n">Liberado</th><th class="n">Você recebe</th><th>Pagamento</th><th>Situação</th><th>NF do adiantamento</th></tr></thead><tbody>
+      ${ads.map(a => { const [r, k] = ST_ADI[a.status] || [a.status, '']; const nf = nfDe(a.id); const podeNF = ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status) && (!nf || nf.status === 'recusada'); return `<tr><td>${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td><td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor) : '—'}</td><td class="n">${a.valor != null ? BRL2(a.valor_liquido) + (Number(a.taxa_pct) ? `<br><span class="nota">desconto de ${String(a.taxa_pct).replace('.', ',')}%</span>` : '') : '—'}</td>
+        <td>${a.pago_em ? 'pago em ' + fmtD(a.pago_em) : a.data_pagamento ? 'previsto ' + fmtD(a.data_pagamento) : '—'}</td><td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">GSM: ${esc(a.motivo_recusa)}</div>` : ''}</td>
+        <td>${nf && nf.status !== 'recusada' ? `NF ${esc(nf.numero)} · <span class="pill ${nf.status === 'conferida' ? 'escuro' : ''}">${nf.status === 'conferida' ? 'Conferida' : 'Em conferência'}</span>` : ''}${nf && nf.status === 'recusada' ? `<div class="nota">NF ${esc(nf.numero)} recusada: ${esc(nf.motivo_recusa || '')}</div>` : ''}${podeNF ? `<button class="btn peq" data-nfad="${a.id}">Enviar NF</button>` : (!nf ? '<span class="nota">—</span>' : '')}</td></tr>`; }).join('')}
+      </tbody></table></div><div id="adinf"></div>${comprometido ? `<p class="nota" style="margin:0">Adiantado no mês: ${BRL2(comprometido)}. Esse valor (liberado) é descontado da NF do fechamento.</p>` : ''}` : aprovado ? '' : '<p class="nota" style="margin:0">Nenhum pedido de adiantamento neste mês.</p>'}
     ${pode ? `<div class="linha" style="align-items:flex-end"><label class="campo">Valor (R$)<input class="peq" id="adi-v" style="width:140px"></label><label class="campo" style="flex:1 1 260px">Observação (opcional)<input class="peq" id="adi-o" placeholder="ex.: combustível da primeira quinzena"></label><button class="btn peq" id="adi-ok">Pedir adiantamento</button></div><div id="adi-m"></div>`
       : pendente ? '<p class="nota" style="margin:0">Há um pedido aguardando a GSM.</p>' : ''}
     ${antec}`;
@@ -1472,6 +1475,9 @@ async function secaoAdiantamento(c) {
     try { await q(sb.rpc('solicitar_adiantamento', { p_comp: c.id, p_valor: v, p_obs: $('#adi-o').value, p_parceiro: P })); secaoAdiantamento(c); }
     catch (e) { b.disabled = false; $('#adi-m').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
   };
+  box.querySelectorAll('[data-nfad]').forEach(b => b.onclick = () => { const a = ads.find(x => x.id === b.dataset.nfad); const z = $('#adinf');
+    z.innerHTML = `<div class="confirma"><b>NF do adiantamento de ${BRL2(a.valor)}</b><span class="nota">Emita a NF pelo valor liberado (${BRL2(a.valor)}), com a GSM como tomadora.</span>${zonaArquivo('arqnfad', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ e valor.', '.pdf,.jpg,.jpeg,.png')}<div id="nfadform"></div></div>`;
+    ligarZona('arqnfad', f => formNFAdi(f, c, a)); z.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
   const ba = $('#ant-ok');
   if (ba) ba.onclick = async () => {
     ba.disabled = true;
@@ -1492,6 +1498,8 @@ async function vAdiantamentos() {
     todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,adiantado,a_pagar,lote_id,pago_em,antec_status,antec_taxa,antec_desconto,antec_data,antec_obs,antec_motivo,antec_solicitada_em').eq('competencia_id', c.id)),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,ativo,dia_pagamento').order('regiao')),
   ]);
+  const nfsAd = ads.length ? await q(sb.from('notas_fiscais').select('id,adiantamento_id,numero,valor,status,motivo_recusa,arquivo_path,checagens').eq('tipo', 'adiantamento').eq('competencia_id', c.id).order('enviado_em', { ascending: false })) : [];
+  const nfDe = id => nfsAd.find(n => n.adiantamento_id === id && n.status !== 'recusada') || nfsAd.find(n => n.adiantamento_id === id);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
   const antecs = fech.filter(f => f.antec_status).sort((a, b) => (a.antec_status === 'solicitada' ? 0 : 1) - (b.antec_status === 'solicitada' ? 0 : 1));
   const ativo = a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status);
@@ -1519,20 +1527,23 @@ async function vAdiantamentos() {
       <input class="peq" id="na-v" placeholder="Valor (R$)" style="width:140px"><input class="peq" id="na-o" placeholder="Observação" style="flex:1 1 220px"><button class="btn sec peq" id="na-ok">Lançar pedido</button></div></section>` : ''}
     <section class="bloco"><div class="linha">${[['todos', 'Todos', ads.length], ['solicitado', 'Em aberto', ads.filter(a => a.status === 'solicitado').length], ['apagar', 'A pagar', ads.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status)).length], ['pago', 'Pagos', ads.filter(a => a.status === 'pago').length], ['recusado', 'Recusados', ads.filter(a => a.status === 'recusado').length]]
       .map(([k, n, qq]) => `<button class="btn ${S.adiFiltro === k ? '' : 'sec'} peq" data-af="${k}">${n} (${qq})</button>`).join('')}</div>
-    <div class="tabela"><table id="aditab"><thead><tr><th>Parceiro</th><th>Pedido</th><th class="n">Solicitado</th><th class="n">Previsto do mês</th><th class="n">Já adiantado</th><th class="n">Liberado</th><th class="n">Desconto (save)</th><th>Situação</th><th></th></tr></thead><tbody>
+    <div class="tabela"><table id="aditab"><thead><tr><th>Parceiro</th><th>Pedido</th><th class="n">Solicitado</th><th class="n">Previsto do mês</th><th class="n">Já adiantado</th><th class="n">Liberado</th><th class="n">Desconto (save)</th><th>Situação</th><th>NF</th><th></th></tr></thead><tbody>
     ${vis.map(a => { const p = pm[a.parceiro_id] || {}; const [r, k] = ST_ADI[a.status] || [a.status, '']; const prv = pv[a.parceiro_id];
       return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')}</span></td><td style="font-size:13px">${fmtDH(a.solicitado_em)}${a.observacao ? `<br><span class="nota">${esc(a.observacao)}</span>` : ''}</td>
         <td class="n">${a.valor_solicitado != null ? BRL2(a.valor_solicitado) : '—'}</td><td class="n">${prv ? BRL(prv) : '—'}</td><td class="n">${jaAd(a.parceiro_id) ? BRL(jaAd(a.parceiro_id)) : '—'}</td>
         <td class="n">${a.valor != null ? BRL2(a.valor) : '—'}${a.data_pagamento ? `<br><span class="nota">${a.pago_em ? 'pago ' + fmtD(a.pago_em) : 'pagar ' + fmtD(a.data_pagamento)}</span>` : ''}</td>
         <td class="n">${a.valor != null && Number(a.taxa_pct) ? `${BRL2(a.valor_desconto)}<br><span class="nota">${String(a.taxa_pct).replace('.', ',')}% · paga ${BRL2(a.valor_liquido)}</span>` : '—'}</td>
         <td><span class="pill ${k}">${r}</span>${a.motivo_recusa ? `<div class="nota">${esc(a.motivo_recusa)}</div>` : ''}</td>
+        <td style="font-size:13px;white-space:nowrap">${(() => { const nf = nfDe(a.id); if (!nf) return ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status) ? '<span class="nota">aguardando</span>' : '—';
+          const dif = Math.abs(Number(nf.valor) - Number(a.valor)) > 0.009;
+          return `<a href="#" data-nfpdf="${esc(nf.arquivo_path || '')}">NF ${esc(nf.numero)}</a> · ${BRL2(nf.valor)}${dif ? ' <span class="pill alerta">valor difere</span>' : ''}<br>${nf.status === 'recebida' ? `<button class="btn peq" data-nfok="${nf.id}">Conferir</button> <button class="btn sec peq" data-nfrec="${nf.id}">Recusar</button>` : `<span class="pill ${nf.status === 'conferida' ? 'escuro' : 'marca'}">${nf.status === 'conferida' ? 'Conferida' : 'Recusada'}</span>`}`; })()}</td>
         <td style="white-space:nowrap">${a.status === 'solicitado' ? `<button class="btn peq" data-lib="${a.id}">Liberar</button> <button class="btn sec peq" data-rcs="${a.id}">Recusar</button>`
-          : ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status) ? `<button class="btn peq" data-pag="${a.id}">Registrar pago</button> <button class="btn sec peq" data-can="${a.id}">Cancelar</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="9" class="nota">Nenhum adiantamento.</td></tr>'}
+          : ['liberado', 'nf_recebida', 'enviado_financeiro'].includes(a.status) ? `<button class="btn peq" data-pag="${a.id}">Registrar pago</button> <button class="btn sec peq" data-can="${a.id}">Cancelar</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="10" class="nota">Nenhum adiantamento.</td></tr>'}
     </tbody></table></div>
     <p class="nota">"Previsto do mês" é o calendarizado do parceiro, só como referência. O portal não impõe limite de valor.</p></section>`;
   m.querySelectorAll('[data-af]').forEach(b => b.onclick = () => { S.adiFiltro = b.dataset.af; vAdiantamentos(); });
   const tab = $('#aditab');
-  const linha = (b, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="9" style="background:var(--field)"><div class="linha" style="align-items:flex-end">${html}</div><div class="am"></div></td>`; b.closest('tr').after(l); return l; };
+  const linha = (b, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="10" style="background:var(--field)"><div class="linha" style="align-items:flex-end">${html}</div><div class="am"></div></td>`; b.closest('tr').after(l); return l; };
   const rodar = async (l, btn, fn) => { btn.disabled = true; try { await fn(); vAdiantamentos(); } catch (e) { btn.disabled = false; l.querySelector('.am').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; } };
   const hoje = new Date().toISOString().slice(0, 10);
   tab.querySelectorAll('[data-lib]').forEach(b => b.onclick = () => { const a = ads.find(x => x.id === b.dataset.lib);
@@ -1545,6 +1556,10 @@ async function vAdiantamentos() {
     l.querySelector('#rok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: b.dataset.rcs, p_decisao: 'recusar', p_motivo: l.querySelector('#rm').value }))); });
   tab.querySelectorAll('[data-can]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo" style="flex:1 1 300px">Motivo do cancelamento<input class="peq" id="cm"></label><button class="btn peq" id="cok">Cancelar adiantamento</button>`);
     l.querySelector('#cok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('decidir_adiantamento', { p_id: b.dataset.can, p_decisao: 'cancelar', p_motivo: l.querySelector('#cm').value }))); });
+  tab.querySelectorAll('[data-nfpdf]').forEach(a => a.onclick = async ev => { ev.preventDefault(); if (!a.dataset.nfpdf) return; const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfpdf, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
+  tab.querySelectorAll('[data-nfok]').forEach(b => b.onclick = async () => { b.disabled = true; try { await q(sb.rpc('conferir_nf', { p_nf: b.dataset.nfok, p_decisao: 'conferida' })); vAdiantamentos(); } catch (e) { b.disabled = false; alertaTopo(e.message); } });
+  tab.querySelectorAll('[data-nfrec]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo" style="flex:1 1 300px">Motivo da recusa da NF (o parceiro vê)<input class="peq" id="nrm"></label><button class="btn peq" id="nrok">Recusar NF</button>`);
+    l.querySelector('#nrok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('conferir_nf', { p_nf: b.dataset.nfrec, p_decisao: 'recusada', p_motivo: l.querySelector('#nrm').value }))); });
   tab.querySelectorAll('[data-pag]').forEach(b => b.onclick = () => { const l = linha(b, `<label class="campo">Pago em<input class="peq" type="date" id="pd" value="${hoje}"></label><button class="btn peq" id="pok">Confirmar pagamento</button>`);
     l.querySelector('#pok').onclick = ev => rodar(l, ev.currentTarget, () => q(sb.rpc('pagar_adiantamento', { p_id: b.dataset.pag, p_data: l.querySelector('#pd').value || null }))); });
   const atab = $('#antab');
@@ -1583,14 +1598,14 @@ async function dadosLote(lote) {
     q(sb.from('parceiros').select('*').in('id', ids)),
     q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim').in('parceiro_id', ids)),
     q(sb.from('previsao_realizado').select('parceiro_id,previsto').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
-    q(sb.from('notas_fiscais').select('parceiro_id,numero,arquivo_path,status,valor').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids).in('status', ['recebida', 'conferida'])),
+    q(sb.from('notas_fiscais').select('parceiro_id,numero,arquivo_path,status,valor,tipo,adiantamento_id').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids).in('status', ['recebida', 'conferida'])),
     q(sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
   const sit = Object.fromEntries(res.map(r => [r.parceiro_id, r.situacao]));
   const fixo = id => { const c = contr.filter(k => k.parceiro_id === id && k.inicio <= comp.mes && (!k.fim || k.fim >= comp.mes)).sort((a, b) => b.inicio.localeCompare(a.inicio))[0]; return c ? Number(c.valor_fixo) : 0; };
   const n = v => Number(v) || 0;
-  const linhas = fech.map(f => { const p = pm[f.parceiro_id] || {}; const minhas = nfs.filter(x => x.parceiro_id === f.parceiro_id);
+  const linhas = fech.map(f => { const p = pm[f.parceiro_id] || {}; const minhas = nfs.filter(x => x.parceiro_id === f.parceiro_id && x.tipo !== 'adiantamento');
     const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[f.parceiro_id] ?? 0); const final = n(f.valor_aprovado ?? f.valor_final);
     return { id: f.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(f.parceiro_id), calend, malote: n(f.malote), caixas: n(f.kits), extrasMal: n(f.fora_umov), desc: n(f.descontos),
       final, dif: final - calend, pagar: f.a_pagar != null ? n(f.a_pagar) : final - n(f.adiantado), adiantado: n(f.adiantado), data: lote.data_pagamento, status: f.pago_em ? 'Pago' : sit[f.parceiro_id] === 'conferida' ? 'Ok' : 'Aguardando NF',
@@ -1598,7 +1613,7 @@ async function dadosLote(lote) {
     .concat(adis.map(a => { const p = pm[a.parceiro_id] || {}; const f = fechMes.find(x => x.parceiro_id === a.parceiro_id) || {}; const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[a.parceiro_id] ?? 0); const final = f.valor_aprovado != null ? n(f.valor_aprovado) : null;
       return { id: a.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(a.parceiro_id), calend, malote: f.malote != null ? n(f.malote) : null, caixas: f.kits != null ? n(f.kits) : null, extrasMal: f.fora_umov != null ? n(f.fora_umov) : null, desc: f.descontos != null ? n(f.descontos) : null,
         final, dif: final != null ? final - calend : null, pagar: n(a.valor_liquido), adiantado: 0, data: lote.data_pagamento, status: a.status === 'pago' ? 'Pago' : 'Ok',
-        doc: p.tipo_documento, nf: '-', emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: /adiant/i.test(p.modelo_capa || '') ? p.modelo_capa : 'Parceiro (Adiantamento)', nfs: [], pago: a.pago_em, adiantamento: a }; }))
+        doc: p.tipo_documento, nf: nfs.filter(x => x.adiantamento_id === a.id).map(x => x.numero).join(' / ') || '-', emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: /adiant/i.test(p.modelo_capa || '') ? p.modelo_capa : 'Parceiro (Adiantamento)', nfs: nfs.filter(x => x.adiantamento_id === a.id), pago: a.pago_em, adiantamento: a }; }))
     .sort((a, b) => (a.status === 'Ok' ? 0 : 1) - (b.status === 'Ok' ? 0 : 1) || (a.regiao || '').localeCompare(b.regiao || ''));
   return { lote, comp, linhas };
 }
@@ -1808,7 +1823,7 @@ async function secaoNF(c) {
   const box = $('#nfp'); if (!box) return;
   const [res, nfs] = await Promise.all([
     q(sb.from('nf_resumo').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).maybeSingle()),
-    q(sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).order('enviado_em')),
+    q(sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('parceiro_id', S.parc.id).eq('tipo', 'fechamento').order('enviado_em')),
   ]);
   box.className = '';
   if (!res) { box.innerHTML = '<p class="nota">A NF é enviada aqui depois que a GSM aprovar o valor do mês.</p>'; return; }
@@ -1828,6 +1843,34 @@ async function secaoNF(c) {
     ${res.antec_status === 'solicitada' ? '<div class="msg alerta">Você pediu a antecipação do pagamento. Aguarde a resposta da GSM: se ela for liberada, a NF passa a ser emitida pelo valor com o desconto.</div>' : res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ, tomador e valor e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png')}<div id="nfform"></div>` : ''}`;
   box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
   if ($('#arqnf')) ligarZona('arqnf', f => formNF(f, c, falta > 0.009 ? falta : esp));
+}
+
+// NF do adiantamento: lê o arquivo, confere com o valor liberado e registra
+async function formNFAdi(file, c, a) {
+  const box = $('#nfadform');
+  if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie a NF em PDF (ou foto JPG/PNG).</div>'; return; }
+  box.innerHTML = '<div class="carregando" style="padding:10px 0" id="nfad-lendo">Lendo a NF…</div>';
+  const esperado = Number(a.valor); const ctx = { cnpjParceiro: S.parc.cnpj, esperado };
+  let lido = { texto: false }, ocr = false;
+  try { if (/\.pdf$/i.test(file.name)) lido = lerNF(await textoPDF(file), ctx); } catch (e) { lido = { texto: false }; }
+  if (!lido.texto || (!lido.numero && lido.valor == null)) { ocr = true; try { lido = lerNF(await textoOCR(file, p => { const e = $('#nfad-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo… ${p}%`; }), ctx); } catch (e) { lido = { texto: false }; } }
+  const cad = digitos(S.parc.cnpj); const valOk = lido.valor != null && Math.abs(lido.valor - esperado) < 0.01;
+  box.innerHTML = `<div class="linha" style="align-items:flex-end;margin-top:8px">
+      <label class="campo">Número<input class="peq" id="na-num" value="${esc(lido.numero || '')}" style="width:150px"></label>
+      <label class="campo">Emissão<input class="peq" id="na-dt" type="date" value="${esc(lido.data || '')}"></label>
+      <label class="campo">CNPJ emitente<input class="peq" id="na-cnpj" value="${esc(fmtCNPJ(lido.cnpj || cad))}" style="width:190px"></label>
+      <label class="campo">Valor (R$)<input class="peq" id="na-val" value="${lido.valor != null ? lido.valor.toFixed(2).replace('.', ',') : String(esperado.toFixed(2)).replace('.', ',')}" style="width:130px"></label>
+      <button class="btn marca" id="na-env">Enviar NF do adiantamento</button></div>
+    <div class="nota" style="margin-top:6px">${lido.texto ? `Dados lidos da NF${ocr ? ' (pela imagem)' : ''}; confira e corrija se a leitura errou.` : 'Não foi possível ler a NF: preencha os dados.'} ${lido.valor != null && !valOk ? `<b>Valor lido (${BRL2(lido.valor)}) diferente do liberado (${BRL2(esperado)}).</b>` : ''}</div><div id="na-msg"></div>`;
+  $('#na-env').onclick = async () => { const b = $('#na-env'); const v = numBR($('#na-val').value);
+    if (v == null || Number.isNaN(v)) { $('#na-msg').innerHTML = '<div class="msg erro">Valor inválido.</div>'; return; }
+    b.disabled = true; b.textContent = 'Enviando…';
+    try { const path = `${S.parc.id}/${c.mes.slice(0, 7)}/nf_adiantamento/${Date.now()}_${safeName(file.name)}`;
+      const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
+      await q(sb.rpc('registrar_nf_adiantamento', { p_adiant: a.id, p_arquivo: path, p_numero: $('#na-num').value.trim(), p_cnpj: digitos($('#na-cnpj').value), p_valor: v, p_data: $('#na-dt').value || null,
+        p_checagens: { texto: !!lido.texto, ocr, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, tomador_gsm: !!lido.tomador_gsm, numero_lido: lido.numero || null, valor_lido: lido.valor ?? null }, p_parceiro: S.previa ? S.parc.id : null }));
+      secaoAdiantamento(c);
+    } catch (e) { $('#na-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF do adiantamento'; } };
 }
 
 async function formNF(file, c, sugerido) {
@@ -1897,7 +1940,7 @@ async function vNotas() {
   const c = comp();
   const [res, nfs, parcs] = await Promise.all([
     todas(() => sb.from('nf_resumo').select('*').eq('competencia_id', c.id)),
-    todas(() => sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).order('enviado_em')),
+    todas(() => sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('tipo', 'fechamento').order('enviado_em')),
     q(sb.from('parceiros').select('id,codigo,regiao,nome,cnpj')),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
