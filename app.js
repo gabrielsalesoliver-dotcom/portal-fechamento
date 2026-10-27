@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1130';
-import BR from './brasil.js?v=2026.10.27-1130';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1130';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1150';
+import BR from './brasil.js?v=2026.10.27-1150';
+import { gerarModelo } from './modelo.js?v=2026.10.27-1150';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1130';
+const VERSAO = '2026.10.27-1150';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1702,6 +1702,53 @@ async function baixarNFs(lote, btn) {
 function baixarBlob(blob, nome) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
 
 // Lista de lotes (admin e financeiro)
+// Quadro igual à base geral: parceiro × coluna de pagamento (Adiantamento, 05, 15, 20, 30)
+const COLS_PAG = [['adi', 'Adiantamento'], ['antec', 'Antecipação'], ['05', 'Pagamento 05'], ['15', 'Pagamento 15'], ['20', 'Pagamento 20'], ['30', 'Pagamento 30'], ['sem', 'Sem data']];
+const colDia = d => /5º|util|útil/i.test(d || '') ? '05' : /15|quinzen/i.test(d || '') ? '15' : /20/.test(d || '') ? '20' : /30/.test(d || '') ? '30' : 'sem';
+async function quadroPagamentos(box, c) {
+  if (!box) return; box.innerHTML = '<div class="carregando">Carregando…</div>';
+  const [fech, adis, parcs, lotes] = await Promise.all([
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_final,valor_aprovado,adiantado,a_pagar,antec_status,lote_id,pago_em').eq('competencia_id', c.id)),
+    q(sb.from('adiantamentos').select('id,parceiro_id,valor,valor_liquido,status,lote_id,pago_em,data_pagamento').eq('competencia_id', c.id).in('status', ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'])),
+    q(sb.from('parceiros').select('id,regiao,nome,dia_pagamento,forma_pagamento')),
+    q(sb.from('lotes_financeiro').select('id,data_pagamento,rotulo,status').eq('competencia_id', c.id)),
+  ]);
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const lm = Object.fromEntries(lotes.map(l => [l.id, l])); const n = v => Number(v) || 0;
+  const L = {}; const lin = id => L[id] || (L[id] = { id, p: pm[id] || {}, final: null, cel: {} });
+  const put = (x, col, v, info) => { const k = x.cel[col] || (x.cel[col] = { v: 0, info: [] }); k.v += v; k.info.push(info); };
+  const sit = (lote_id, pago_em) => pago_em ? { t: 'pago ' + fmtD(pago_em), k: 'escuro' } : lote_id && lm[lote_id] ? { t: 'lote ' + fmtD(lm[lote_id].data_pagamento), k: 'marca' } : { t: 'sem lote', k: 'alerta' };
+  fech.forEach(f => { const x = lin(f.parceiro_id); x.final = n(f.valor_aprovado ?? f.valor_final); if (f.valor_aprovado == null && f.valor_final == null) return;
+    const v = f.a_pagar != null ? n(f.a_pagar) : x.final - n(f.adiantado); put(x, f.antec_status === 'liberada' ? 'antec' : colDia(x.p.dia_pagamento), v, sit(f.lote_id, f.pago_em)); });
+  adis.forEach(a => { const x = lin(a.parceiro_id); put(x, 'adi', n(a.valor_liquido ?? a.valor), sit(a.lote_id, a.pago_em)); });
+  const linhas = Object.values(L).filter(x => Object.keys(x.cel).length).sort((a, b) => (a.p.regiao || '').localeCompare(b.p.regiao || ''));
+  if (!linhas.length) { box.innerHTML = '<p class="nota">Ainda não há valores aprovados nem adiantamentos liberados nesta competência.</p>'; return; }
+  const cols = COLS_PAG.filter(([k]) => linhas.some(x => x.cel[k]));
+  const tot = k => linhas.reduce((a, x) => a + (x.cel[k]?.v || 0), 0);
+  const cel = (x, k) => { const c2 = x.cel[k]; if (!c2) return '<td class="n" style="color:var(--muted)">—</td>'; const s0 = c2.info[0];
+    return `<td class="n">${BRL2(c2.v)}<br><span class="pill ${c2.info.every(i => i.k === 'escuro') ? 'escuro' : s0.k}" style="font-size:11px">${esc(c2.info.length > 1 ? c2.info.map(i => i.t).join(' · ') : s0.t)}</span></td>`; };
+  box.innerHTML = `<div class="kpis">${cols.map(([k, t]) => `<div class="kpi neutro"><small>${t}</small><b>${BRL(tot(k))}</b><span>${linhas.filter(x => x.cel[k]).length} parceiro(s) · ${BRL(linhas.filter(x => x.cel[k] && x.cel[k].info.every(i => i.k === 'escuro')).reduce((a, x) => a + x.cel[k].v, 0))} pago</span></div>`).join('')}</div>
+    <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th>Parceiro</th><th class="n">Valor final</th>${cols.map(([, t]) => `<th class="n">${t}</th>`).join('')}<th>Forma</th></tr></thead><tbody>
+      ${linhas.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')} · ${esc(x.p.dia_pagamento || 'sem dia')}</span></td><td class="n">${x.final != null ? BRL2(x.final) : '<span class="nota">em aberto</span>'}</td>${cols.map(([k]) => cel(x, k)).join('')}<td style="font-size:13px">${esc(x.p.forma_pagamento || '—')}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(linhas.reduce((a, x) => a + (x.final || 0), 0))}</b></td>${cols.map(([k]) => `<td class="n"><b>${BRL(tot(k))}</b></td>`).join('')}<td></td></tr></tfoot></table></div>
+    <p class="nota">Adiantamento: valor líquido pago antes do fechamento. Nas colunas de pagamento, o valor da NF do fechamento (aprovado − adiantado − antecipação), na coluna do dia de pagamento do parceiro. Antecipação: parceiros que anteciparam o fechamento.</p>`;
+}
+
+// Agenda: lotes de todas as competências por data de pagamento
+async function agendaPagamentos(box) {
+  if (!box) return; box.innerHTML = '<div class="carregando">Carregando…</div>';
+  const desde = new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 10);
+  const lotes = (await q(sb.from('lotes_financeiro').select('id,competencia_id,data_pagamento,rotulo,status,total,pago_em').gte('data_pagamento', desde).order('data_pagamento'))).filter(l => l.status !== 'desfeito');
+  if (!lotes.length) { box.innerHTML = '<p class="nota">Nenhum lote com pagamento nos últimos 45 dias ou à frente.</p>'; return; }
+  const comps = await q(sb.from('competencias').select('id,mes').in('id', [...new Set(lotes.map(l => l.competencia_id))]));
+  const cm = Object.fromEntries(comps.map(x => [x.id, x.mes])); const [ad, fe] = await Promise.all([
+    q(sb.from('adiantamentos').select('lote_id').in('lote_id', lotes.map(l => l.id))), q(sb.from('fechamento_parceiro').select('lote_id').in('lote_id', lotes.map(l => l.id)))]);
+  const hoje = new Date().toISOString().slice(0, 10);
+  box.innerHTML = `<div class="tabela"><table><thead><tr><th>Data de pagamento</th><th>Lote</th><th>Competência</th><th>Conteúdo</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
+    ${lotes.map(l => { const [r, k] = ST_LOTE[l.status] || [l.status, '']; const na = ad.filter(a => a.lote_id === l.id).length, nf = fe.filter(f => f.lote_id === l.id).length;
+      return `<tr${l.data_pagamento < hoje && !/pago/.test(l.status) ? ' style="background:#FBF3E6"' : ''}><td><b>${fmtD(l.data_pagamento)}</b></td><td>${esc(l.rotulo || '')}</td><td>${cm[l.competencia_id] ? nomeMes(cm[l.competencia_id]) : '—'}</td><td style="font-size:13px">${[nf ? `${nf} fechamento(s)` : '', na ? `${na} adiantamento(s)` : ''].filter(Boolean).join(' · ')}</td><td class="n">${BRL2(l.total)}</td><td><span class="pill ${k}">${r}</span></td></tr>`; }).join('')}
+    </tbody></table></div><p class="nota">Linhas em destaque: data já passou e o lote ainda não foi registrado como pago.</p>`;
+}
+
 async function listaLotes(box, compId, admin) {
   box.innerHTML = '<div class="carregando">Carregando…</div>';
   const lotes = (await q(sb.from('lotes_financeiro').select('*').eq('competencia_id', compId).order('data_pagamento'))).filter(l => l.status !== 'desfeito');
@@ -1736,6 +1783,8 @@ async function vPacote() {
   const m = $('#main');
   m.innerHTML = `<div class="topo"><div><h1>Pacote do financeiro e pagamento</h1><p>Monte um lote por data de pagamento com os parceiros aprovados. A capa sai no mesmo layout que o financeiro já usa (Capa-Fechamento_DD.xlsx), junto com as NFs em PDF. O financeiro registra o pagamento no portal; depois que todos estiverem pagos, você fecha a competência.</p></div>${seletorComp(false)}</div>
     <section class="bloco"><h2>Montar lote</h2><div id="montar" class="carregando">Carregando…</div></section>
+    <section class="bloco"><h2>Quadro de pagamentos · ${nomeMes(comp().mes)}</h2><p class="sub">Igual à base geral do fechamento: o valor de cada parceiro na coluna da data em que é pago (adiantamento, 5º dia útil, dia 15, 20 e 30), com a situação de cada um.</p><div id="quadro"></div></section>
+    <section class="bloco"><h2>Agenda de pagamentos · todas as competências</h2><p class="sub">Os lotes por data de pagamento, inclusive de competências diferentes (ex.: adiantamento de outubro e fechamento de setembro pagos no mesmo mês).</p><div id="agenda"></div></section>
     <section class="bloco"><h2>Lotes do mês</h2><div id="lotes"></div></section>
     <section class="bloco"><h2>Fechar a competência</h2><div id="fechar"></div></section>`;
   ligarSeletor(vPacote);
@@ -1773,6 +1822,7 @@ async function vPacote() {
   const g = $('#lgerar'); if (g) g.onclick = async () => { const ids = [...m.querySelectorAll('.pck:checked')].map(x => x.value); const aids = [...m.querySelectorAll('.ack:checked')].map(x => x.value);
     g.disabled = true; try { await q(sb.rpc('gerar_lote_v2', { p_comp: c.id, p_data: $('#ldata').value || null, p_rotulo: $('#lrot').value, p_parceiros: ids, p_adiantamentos: aids })); vPacote(); } catch (e) { g.disabled = false; alertaTopo(e.message); } };
   listaLotes($('#lotes'), c.id, true);
+  quadroPagamentos($('#quadro'), c); agendaPagamentos($('#agenda'));
   const pend = fech.filter(f => !f.pago_em);
   $('#fechar').innerHTML = c.status === 'fechada' ? '<div class="msg ok">Competência fechada.</div>'
     : `<p class="sub" style="margin:0">${fech.length ? `${fech.length - pend.length} de ${fech.length} parceiros pagos.` : 'Nenhum parceiro com fechamento neste mês.'} O fechamento só é aceito com todos pagos e sem adiantamento pendente.</p>
@@ -2274,7 +2324,7 @@ function desenharDiretoria(el) {
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
   <div data-sec="mapa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Mapa de custos · ${nomeMes(c.mes)}</h2><p class="sub">Onde agir para reduzir custo. O custo de cada parceiro é dividido entre os estados pela quantidade de pontos que ele atende em cada um. Clique em um estado para ver os parceiros e a ação sugerida.</p><div id="dmapa"></div></section></div>
   <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
-  <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
+  <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Quadro de pagamentos · ${nomeMes(c.mes)}</h2><div id="dquadro"></div></section><section class="bloco"><h2>Agenda de pagamentos · todas as competências</h2><div id="dagenda"></div></section><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
@@ -2305,7 +2355,7 @@ function desenharDiretoria(el) {
   blocoAno($('#dano'), D, c);
   ponte($('#dponte'), D, c, ant);
   eficiencia($('#defic'), D, c);
-  if (D.aba === 'lotes') listaLotes($('#dlotes'), c.id, false);
+  if (D.aba === 'lotes') { listaLotes($('#dlotes'), c.id, false); quadroPagamentos($('#dquadro'), c); agendaPagamentos($('#dagenda')); }
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
   if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
 
