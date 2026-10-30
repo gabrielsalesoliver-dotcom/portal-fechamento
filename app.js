@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.30-1850';
-import BR from './brasil.js?v=2026.10.30-1850';
-import { gerarModelo } from './modelo.js?v=2026.10.30-1850';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.30-1900';
+import BR from './brasil.js?v=2026.10.30-1900';
+import { gerarModelo } from './modelo.js?v=2026.10.30-1900';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.30-1850';
+const VERSAO = '2026.10.30-1900';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -261,15 +261,66 @@ async function vPendencias() {
   $('#pd-xls').onclick = () => baixarXlsx(`Pendencias_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Pendências e cobrança', sub: `Competência ${nomeMes(c.mes)}`, abas: [{ nome: 'Pendências', linhas: vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })) }] });
 }
 
+// ---------- Base do mês do parceiro em Excel (para mandar enquanto nem todos usam o portal) ----------
+async function exportarBaseParceiro(c, parc) {
+  const pid = parc.id;
+  const [pts, upp, kits, contr] = await Promise.all([
+    todas(() => sb.from('pontos_vigentes').select('cod_int,cliente,loja,cidade,uf,frequencia,previsto,v_unit').eq('competencia_id', c.id).eq('parceiro_id', pid).order('cliente')),
+    todas(() => sb.from('umov_por_ponto').select('cod_int,retornadas,atendimentos').eq('competencia_id', c.id).eq('parceiro_id', pid)),
+    todas(() => sb.from('umov_vigente').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
+    q(sb.from('contratos').select('valor_fixo,inicio,fim').eq('parceiro_id', pid).order('inicio', { ascending: false })),
+  ]);
+  if (!pts.length && !kits.length) return null;
+  const fx = contr.find(k => k.inicio <= c.mes && (!k.fim || k.fim >= c.mes)); const fixo = fx ? Number(fx.valor_fixo) : 0;
+  const ticket = parc.ticket_kit != null ? Number(parc.ticket_kit) : 0;
+  const um = Object.fromEntries(upp.map(u => [u.cod_int, u]));
+  const vistos = new Set(); const kitsU = kits.filter(k => { if (vistos.has(k.id_umov)) return false; vistos.add(k.id_umov); return true; });
+  const M = pts.map(p => { const u = um[p.cod_int]; const feitos = u ? Number(u.retornadas) || 0 : 0; const vu = Number(p.v_unit) || 0;
+    return { 'Cliente': p.cliente, 'Cod. Int': p.cod_int, 'Loja': p.loja, 'Cidade': p.cidade, 'UF': p.uf, 'Frequência': p.frequencia, 'Previsto (atend.)': Number(p.previsto) || 0, 'Realizado Umov (atend.)': feitos, 'Diferença (atend.)': feitos - (Number(p.previsto) || 0), 'V. Unit': vu, 'Valor': +(feitos * vu).toFixed(2) }; });
+  const K = kitsU.map(k => { const ret = k.situacao === 'Retornada de Campo';
+    return { 'Ref. Umov': k.id_umov, 'Kit': k.grupo_cliente, 'Cliente': k.cliente, 'Cidade': k.cidade, 'Data prevista': (k.data_prevista || '').slice(0, 10), 'Data final': (k.data_final || '').slice(0, 10), 'Situação': k.situacao, 'Valor': ret ? ticket : 0 }; });
+  const vM = M.reduce((a, x) => a + x['Valor'], 0), vK = K.reduce((a, x) => a + x['Valor'], 0);
+  const resumo = [
+    { 'Item': 'Contrato fixo', 'Quantidade': null, 'Valor': fixo },
+    { 'Item': 'Malote: atendimentos registrados no Umov', 'Quantidade': M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), 'Valor': +vM.toFixed(2) },
+    { 'Item': `Kits/Spot retornados (ticket médio ${BRL2(ticket)})`, 'Quantidade': K.filter(x => x['Valor'] > 0).length, 'Valor': +vK.toFixed(2) },
+  ].filter(x => x['Valor'] || x['Quantidade']);
+  const prazo = c.prazo_envio ? ` · confira e devolva até ${fmtD(c.prazo_envio)}` : '';
+  const buf = await planilhaPadrao({ titulo: `Base do mês · ${parc.regiao} · ${parc.nome || ''}`, sub: `${nomeMes(c.mes)}${prazo}`, abas: [
+    { nome: 'Resumo', linhas: resumo, sub: 'Valores pela base GSM, antes dos ajustes do parceiro. Informe extras e divergências com explicação.' },
+    { nome: 'Malote', linhas: M.length ? M : [{ 'Cliente': '(sem pontos de malote)' }] },
+    { nome: 'Kits', linhas: K.length ? K : [{ 'Ref. Umov': '(sem kits no Umov)' }] }] });
+  return { buf, nome: `Base_${nomeMes(c.mes).replace('/', '_')}_${safeName(parc.regiao || 'parceiro')}.xlsx` };
+}
+async function baixarBaseParceiro(c, parc, btn) {
+  const t = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
+  try { const r = await exportarBaseParceiro(c, parc); if (!r) return alertaTopo('Este parceiro não tem base neste mês.');
+    baixarBlob(new Blob([r.buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), r.nome); }
+  catch (e) { alertaTopo('Não foi possível gerar a base: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = t; } }
+}
+async function baixarBasesTodos(c, btn) {
+  if (!window.JSZip) return alertaTopo('Não foi possível carregar o compactador de arquivos. Recarregue a página.');
+  const t = btn.textContent; btn.disabled = true;
+  try { const parcs = await q(sb.from('parceiros').select('id,regiao,nome,ticket_kit,ativo').order('regiao')); const ativos = parcs.filter(p => p.ativo !== false);
+    const zip = new JSZip(); let n = 0;
+    for (let i = 0; i < ativos.length; i++) { btn.textContent = `Gerando ${i + 1} de ${ativos.length}…`; const r = await exportarBaseParceiro(c, ativos[i]); if (r) { zip.file(r.nome, r.buf); n++; } }
+    if (!n) return alertaTopo('Nenhum parceiro tem base neste mês.');
+    btn.textContent = 'Compactando…'; baixarBlob(await zip.generateAsync({ type: 'blob' }), `Bases_parceiros_${c.mes.slice(0, 7)}.zip`); alertaOk(`${n} bases geradas.`); }
+  catch (e) { alertaTopo('Não foi possível gerar as bases: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = t; }
+}
+
 async function vVerParceiro() {
   const m = $('#main');
   const ativos = S.parceiros.filter(p => p.ativo !== false);
   S.previaParc = S.previaParc || ativos[0]?.id;
   m.innerHTML = `<div class="topo"><div><h1>Portal do parceiro</h1><p>A mesma tela que o parceiro vê, com os dados dele. Como gestor, você pode baixar o modelo, enviar o relatório e responder itens em nome do parceiro. Tudo fica registrado como feito pela GSM.</p></div>
     <label class="campo" style="min-width:300px">Parceiro<select id="pvp">${ativos.map(p => `<option value="${p.id}" ${p.id === S.previaParc ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select></label></div>
-    <div class="msg alerta">Acesso do gestor: você vê todos os meses, inclusive os ainda não liberados para o parceiro.</div>
+    <div class="msg alerta" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span>Acesso do gestor: você vê todos os meses, inclusive os ainda não liberados para o parceiro.</span><button class="btn sec peq" id="bx-todos">Baixar bases de todos os parceiros (.zip)</button></div>
     <div id="pvcorpo" style="display:flex;flex-direction:column;gap:22px;border:1px dashed var(--rule);border-radius:10px;padding:20px;background:#fff"><div class="carregando">Carregando…</div></div>`;
   $('#pvp').onchange = e => { S.previaParc = e.target.value; S.compPId = null; vVerParceiro(); };
+  $('#bx-todos').onclick = e => { const c = S.comps.find(x => x.id === S.compPId) || comp(); if (c) baixarBasesTodos(c, e.currentTarget); };
   S.previa = true;
   S.parc = await q(sb.from('parceiros').select('*').eq('id', S.previaParc).single());
   S.compsP = S.comps.slice().sort((a, b) => b.mes.localeCompare(a.mes));
@@ -1205,11 +1256,13 @@ async function baseParceiro(c) {
       <div class="kpi"><small>Valor que você vai enviar</small><b>${BRL2(totalParc)}</b><span>${ult ? `último envio: ${fmtDH(ult.enviado_em)}` : 'ainda não enviado'}</span></div>
       ${adiMes ? `<div class="kpi neutro"><small>A receber no fechamento</small><b>${BRL2(totalParc - adiMes)}</b><span>valor do mês − ${BRL2(adiMes)} já adiantado</span></div>` : ''}
     </div>
+    <div class="linha" style="justify-content:flex-end;margin:-6px 0 0"><button class="btn sec peq" id="bx-base">Baixar base em Excel</button></div>
     <p class="nota" style="margin:0">Umov ${imp[0] ? `atualizado em ${fmtDH(imp[0].importado_em)}` : 'ainda não importado neste mês'}. ${ticket != null ? `Kits retornados valem o ticket médio de ${BRL2(ticket)} cada; se um kit foi maior, ajuste o valor e explique.` : '<b>Ticket médio de kits ainda não cadastrado pela GSM.</b>'}</p>
     ${trava ? `<div class="msg ok">${aprovado ? 'Mês aprovado pela GSM: a base não pode mais ser alterada.' : 'Mês fechado.'}</div>` : ''}
     <nav class="abas">${abas.map(([k, n]) => `<button type="button" data-ba="${k}" class="${S.baseAba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
     <div id="baseaba"></div>`;
   box.querySelectorAll('[data-ba]').forEach(b => b.onclick = () => { S.baseAba = b.dataset.ba; baseParceiro(c); });
+  $('#bx-base').onclick = e => baixarBaseParceiro(c, S.parc, e.currentTarget);
   const alvo = $('#baseaba'); const P = S.previa ? pid : null;
   const recarregar = () => baseParceiro(c);
   const anexar = async (file, tag) => { if (!file) return null; const path = `${pid}/${c.mes.slice(0, 7)}/base/${tag}_${Date.now()}_${safeName(file.name)}`; const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Anexo: ' + up.error.message); return path; };
