@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.27-1450';
-import BR from './brasil.js?v=2026.10.27-1450';
-import { gerarModelo } from './modelo.js?v=2026.10.27-1450';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.30-1850';
+import BR from './brasil.js?v=2026.10.30-1850';
+import { gerarModelo } from './modelo.js?v=2026.10.30-1850';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.27-1450';
+const VERSAO = '2026.10.30-1850';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -497,8 +497,10 @@ function desenharPreviaUmov() {
 async function gravarUmov() {
   const p = S.umovPrev, c = comp();
   $('#gravar').disabled = true; $('#cancelar').disabled = true;
-  const prog = $('#prog');
-  const passo = (t, pct) => prog.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:14px">${t}</span><div class="barra"><i style="width:${pct}%"></i></div></div>`;
+  // A gravação continua mesmo se o usuário trocar de tela no meio (só o progresso deixa de aparecer)
+  const fake = { innerHTML: '' }; const progEl = () => $('#prog') || fake;
+  const passo = (t, pct) => progEl().innerHTML = `<div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:14px">${t}</span><div class="barra"><i style="width:${pct}%"></i></div></div>`;
+  window.onbeforeunload = () => 'A base do Umov ainda está sendo gravada. Sair agora interrompe a gravação.';
   let impId = null;
   try {
     passo('Guardando o arquivo original…', 2);
@@ -516,13 +518,13 @@ async function gravarUmov() {
     passo('Ativando a base…', 97);
     await q(sb.rpc('ativar_importacao_umov', { p_id: impId }));
     S.umovPrev = null;
-    prog.innerHTML = `<div class="msg ok">Base gravada: ${fmtN(regs.length)} linhas de ${nomeMes(c.mes)}.</div>`;
-    await umovAtivaEHist();
-    $('#prev').innerHTML = `<div class="msg ok">Base do Umov de ${nomeMes(c.mes)} gravada com ${fmtN(regs.length)} linhas.</div>`;
+    progEl().innerHTML = `<div class="msg ok">Base gravada: ${fmtN(regs.length)} linhas de ${nomeMes(c.mes)}.</div>`;
+    window.onbeforeunload = null; alertaOk(`Base do Umov de ${nomeMes(c.mes)} gravada e ativada: ${fmtN(regs.length)} linhas.`); if ($('#prev')) await umovAtivaEHist();
+    if ($('#prev')) $('#prev').innerHTML = `<div class="msg ok">Base do Umov de ${nomeMes(c.mes)} gravada com ${fmtN(regs.length)} linhas.</div>`;
   } catch (e) {
     if (impId) await sb.from('umov_importacoes').update({ status: 'falhou', observacao: e.message.slice(0, 200) }).eq('id', impId);
-    prog.innerHTML = `<div class="msg erro">A gravação parou: ${esc(e.message)}. A base ativa anterior (se havia) continua valendo. Pode tentar de novo.</div>`;
-    $('#gravar').disabled = false; $('#cancelar').disabled = false;
+    window.onbeforeunload = null; progEl().innerHTML = `<div class="msg erro">A gravação parou: ${esc(e.message)}. A base ativa anterior (se havia) continua valendo. Pode tentar de novo.</div>`;
+    if ($('#gravar')) { $('#gravar').disabled = false; $('#cancelar').disabled = false; }
   }
 }
 
