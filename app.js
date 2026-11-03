@@ -1,15 +1,15 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1410';
-import BR from './brasil.js?v=2026.11.03-1410';
-import { gerarModelo } from './modelo.js?v=2026.11.03-1410';
-import { lerLinhas, casar } from './importa.js?v=2026.11.03-1410';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
+import BR from './brasil.js?v=2026.11.03-1420';
+import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
+import { lerLinhas, casar } from './importa.js?v=2026.11.03-1420';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1410';
+const VERSAO = '2026.11.03-1420';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -622,11 +622,11 @@ async function rotasSemParceiro(ativa) {
     return null;
   };
   pendM.forEach(r => r.sug = r.cod_int ? sugerir(r.rotas, r.cidade) : null);
-  pend.forEach(r => { const sg = sugerir(r.rotas, r.cidade_norm); r.sug = sg && sg.v !== '__bp' ? sg : null; });
+  pend.forEach(r => { r.sug = sugerir(r.rotas, r.cidade_norm); });
   const barra = (pre, n) => `<div class="linha" style="align-items:flex-end;margin:6px 0">
       <input class="peq" id="${pre}-fil" placeholder="Filtrar cliente, cidade ou rota" style="min-width:220px">
       <span class="nota">Marcar: <a href="#" data-${pre}sel="todos">todos</a> · <a href="#" data-${pre}sel="sug">com sugestão</a> · <a href="#" data-${pre}sel="nada">nenhum</a></span>
-      <select class="peq" id="${pre}-lote"><option value="">Aplicar a todos os marcados…</option>${pre === 'm' ? '<option value="__bp">Base própria GSM (rota própria)</option>' : ''}${opts}</select>
+      <select class="peq" id="${pre}-lote"><option value="">Aplicar a todos os marcados…</option><option value="__bp">Base própria GSM${pre === 'm' ? ' (rota própria)' : ' (kits desta cidade)'}</option>${opts}</select>
       <button class="btn marca peq" id="${pre}-ok">${pre === 'm' ? 'Cadastrar' : 'Vincular'} marcados (<span id="${pre}-n">${n}</span>)</button><span id="${pre}-st" class="nota"></span></div>`;
   const cont = {}; vinc.forEach(v => cont[v.vinculo] = v.atendimentos);
   const opts = S.parceiros.filter(p => p.ativo).map(p => `<option value="${p.id}">${esc(p.codigo + ' · ' + p.regiao + ' · ' + p.nome)}</option>`).join('');
@@ -654,7 +654,11 @@ async function rotasSemParceiro(ativa) {
     ${barra('c', pend.filter(r => r.sug).length)}
     <div class="tabela" style="max-height:480px;overflow:auto"><table><thead><tr><th></th><th>Cidade</th><th>Rotas no Umov</th><th class="n">Atend.</th><th>Parceiro</th></tr></thead><tbody>
     ${pend.map((r, i) => `<tr data-crow="${i}" data-txt="${esc(norm(`${r.cidade_norm} ${r.uf_norm} ${r.rotas}`))}"><td><input type="checkbox" class="cck" value="${i}" ${r.sug ? 'checked' : ''} ${r.cidade_norm ? '' : 'disabled'}></td><td>${esc(r.cidade_norm || '(sem cidade)')}${r.uf_norm ? ' - ' + esc(r.uf_norm) : ''}</td><td style="font-size:13px;color:var(--muted)">${esc(r.rotas)}</td><td class="n">${fmtN(r.atendimentos)}</td>
-      <td><select class="peq" id="sel${i}"><option value="">Escolha…</option>${S.parceiros.filter(p => p.ativo).map(p => `<option value="${p.id}" ${r.sug?.v === p.id ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao + ' · ' + p.nome)}</option>`).join('')}</select>${r.sug ? `<br><span class="nota">sugestão ${r.sug.fonte}: ${esc(nomeP(r.sug.v))}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <td><select class="peq" id="sel${i}"><option value="">Escolha…</option><option value="__bp" ${r.sug?.v === '__bp' ? 'selected' : ''}>Base própria GSM (kits desta cidade)</option>${S.parceiros.filter(p => p.ativo).map(p => `<option value="${p.id}" ${r.sug?.v === p.id ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao + ' · ' + p.nome)}</option>`).join('')}</select>${r.sug ? `<br><span class="nota">sugestão ${r.sug.fonte}: ${r.sug.v === '__bp' ? 'base própria' : esc(nomeP(r.sug.v))}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>
+    ${(() => { const rc = {}; pend.forEach(r => (r.rotas || '').split(', ').filter(Boolean).forEach(x => rc[x] = (rc[x] || 0) + r.atendimentos));
+      const lst = Object.entries(rc).filter(([x]) => !S.rotas[x.toUpperCase().trim()]?.base_propria).sort((a, b) => b[1] - a[1]).slice(0, 30);
+      return lst.length ? `<p class="sub" style="margin:4px 0 0">Rotas destes kits. Se a rota é da GSM (base própria SP, RJ, BH ou uma pessoa da equipe), marque a rota: todos os kits e malotes dela passam a contar como base própria, também nos próximos meses.</p>
+        <div class="linha">${lst.map(([r, n]) => `<span class="pill" style="display:inline-flex;gap:8px;align-items:center;padding:4px 6px 4px 10px">${esc(r)} · ${fmtN(n)} kits <button class="btn sec peq" style="min-height:28px;padding:2px 8px" data-bp="${esc(r)}">Base própria</button></span>`).join('')}</div>` : ''; })()}` : ''}
   </section>`;
   app.querySelectorAll('#rotas button[data-bp]').forEach(b => b.onclick = async () => {
     b.disabled = true;
@@ -687,7 +691,9 @@ async function rotasSemParceiro(ativa) {
     const dados = { cod_int: r.cod_int, cliente: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null) };
     if (v === '__bp') await q(sb.rpc('marcar_ponto_base_propria', { p: dados, p_motivo: 'Cadastrado a partir do Umov como base própria' }));
     else await q(sb.rpc('salvar_ponto', { p: { ...dados, parceiro_id: v }, p_motivo: 'Cadastrado a partir do Umov' })); });
-  lote('c', 'cck', 'data-crow', async (i, v) => { const r = pend[i]; await q(sb.rpc('vincular_cidade', { p_cidade: r.cidade_norm, p_uf: r.uf_norm, p_parceiro: v })); });
+  lote('c', 'cck', 'data-crow', async (i, v) => { const r = pend[i];
+    if (v === '__bp') await q(sb.rpc('marcar_cidade_base_propria', { p_cidade: r.cidade_norm, p_uf: r.uf_norm }));
+    else await q(sb.rpc('vincular_cidade', { p_cidade: r.cidade_norm, p_uf: r.uf_norm, p_parceiro: v })); });
 }
 
 function alertaOk(t) { const d = document.createElement('div'); d.className = 'msg ok'; d.textContent = t; $('#main').prepend(d); }
