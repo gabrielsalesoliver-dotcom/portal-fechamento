@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1730';
+const VERSAO = '2026.11.03-1740';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2438,14 +2438,14 @@ async function formNF(file, c, sugerido, anexos = []) {
   }
   const hoje = new Date().toISOString().slice(0, 10);
   const cad = digitos(S.parc.cnpj);
-  const ck = { numero: !!lido.numero, data: !!lido.data && lido.data <= hoje && lido.data >= c.mes, cnpj: !!lido.cnpj_parceiro_no_pdf, tomador: !!lido.tomador_gsm, valor: lido.valor_confere === true };
-  const ok = ck.numero && ck.data && ck.cnpj && ck.tomador && ck.valor;
+  const ck = { numero: !!lido.numero, data: !!lido.data, cnpj: !!lido.cnpj_parceiro_no_pdf, tomador: !!lido.tomador_gsm, valor: lido.valor_confere === true };
+  const ok = ck.numero && ck.cnpj && ck.tomador && ck.valor; // a data de emissão é livre (há parceiro que emite depois ou com vencimento à frente)
   const linha = (rot, okk, val, msgRuim, okTxt = 'Confere') => `<tr><td>${rot}</td><td><b>${val || '—'}</b></td><td>${okk ? `<span class="pill escuro">${okTxt}</span>` : `<span class="pill alerta">${msgRuim}</span>`}</td></tr>`;
   box.innerHTML = lido.texto ? `<div class="confirma">
     <b>Dados lidos da NF · ${esc(file.name)}${ocr ? ' (lida pela imagem)' : ''}</b>
     <div class="tabela"><table><tbody>
       ${linha('Número', ck.numero, esc(lido.numero), 'Não encontrado', 'Lido')}
-      ${linha('Emissão', ck.data, lido.data ? fmtD(lido.data) : '', !lido.data ? 'Não encontrada' : lido.data > hoje ? 'Data futura' : 'Antes do mês da competência')}
+      ${linha('Emissão', ck.data, lido.data ? fmtD(lido.data) : '', 'Não encontrada (opcional)', 'Lida')}
       ${linha('CNPJ do emitente', ck.cnpj, esc(fmtCNPJ(lido.cnpj)), cad ? `Diferente do cadastro (${esc(fmtCNPJ(cad))})` : 'Parceiro sem CNPJ no cadastro')}
       ${linha('Tomador', ck.tomador, ck.tomador ? 'GSM Group Logística' : '', 'GSM não aparece como tomador')}
       ${linha('Valor', ck.valor, lido.valor != null ? BRL2(lido.valor) : '', `Esperado ${BRL2(sugerido)}`)}
