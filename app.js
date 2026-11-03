@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1720';
+const VERSAO = '2026.11.03-1730';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -384,17 +384,17 @@ function seletorComp(soAbertas = true) {
 }
 function ligarSeletor(fn) { const s = $('#comp'); if (s) s.onchange = () => { S.compId = s.value; S.umovPrev = null; fn(); }; }
 
-function zonaArquivo(id, titulo, dica, accept) {
+function zonaArquivo(id, titulo, dica, accept, multi = false) {
   return `<label class="soltar" id="${id}-zona" for="${id}">
     <strong>${titulo}</strong><span>${dica}</span>
-    <input id="${id}" type="file" accept="${accept}" style="font:inherit;font-size:13px;margin-top:6px"></label>`;
+    <input id="${id}" type="file" accept="${accept}"${multi ? ' multiple' : ''} style="font:inherit;font-size:13px;margin-top:6px"></label>`;
 }
 function ligarZona(id, fn) {
   const z = $(`#${id}-zona`), inp = $(`#${id}`);
-  inp.onchange = () => inp.files[0] && fn(inp.files[0]);
+  inp.onchange = () => inp.files[0] && fn(inp.files[0], [...inp.files]);
   z.ondragover = e => { e.preventDefault(); z.classList.add('sobre'); };
   z.ondragleave = () => z.classList.remove('sobre');
-  z.ondrop = e => { e.preventDefault(); z.classList.remove('sobre'); e.dataTransfer.files[0] && fn(e.dataTransfer.files[0]); };
+  z.ondrop = e => { e.preventDefault(); z.classList.remove('sobre'); e.dataTransfer.files[0] && fn(e.dataTransfer.files[0], [...e.dataTransfer.files]); };
 }
 
 async function lerPlanilha(file) {
@@ -2009,7 +2009,7 @@ async function dadosLote(lote) {
     q(sb.from('parceiros').select('*').in('id', ids)),
     q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim').in('parceiro_id', ids)),
     q(sb.from('previsao_realizado').select('parceiro_id,previsto').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
-    q(sb.from('notas_fiscais').select('parceiro_id,numero,arquivo_path,status,valor,tipo,adiantamento_id').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids).in('status', ['recebida', 'conferida'])),
+    q(sb.from('notas_fiscais').select('parceiro_id,numero,arquivo_path,status,valor,tipo,adiantamento_id,anexos').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids).in('status', ['recebida', 'conferida'])),
     q(sb.from('nf_resumo').select('parceiro_id,situacao').eq('competencia_id', lote.competencia_id).in('parceiro_id', ids)),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])); const pv = Object.fromEntries(prev.map(p => [p.parceiro_id, Number(p.previsto)]));
@@ -2144,6 +2144,8 @@ async function baixarNFs(lote, btn) {
     const { data, error } = await sb.storage.from('envios').download(nf.arquivo_path);
     if (error || !data) { falhas.push(`${l.regiao} NF ${nf.numero}`); continue; }
     zip.file(safeName(`${l.regiao} - ${l.adiantamento ? 'Adiantamento - ' : ''}NF ${nf.numero}.${(nf.arquivo_path.match(/\.(pdf|jpe?g|png)$/i) || ['', 'pdf'])[1].toLowerCase()}`), data);
+    for (const [k, x] of (nf.anexos || []).entries()) { const r = await sb.storage.from('envios').download(x.path); if (r.error || !r.data) { falhas.push(`${l.regiao} ${x.tipo || 'anexo'} da NF ${nf.numero}`); continue; }
+      zip.file(safeName(`${l.regiao} - NF ${nf.numero} - ${x.tipo || 'Anexo'}${k ? ' ' + (k + 1) : ''}.${(x.path.match(/\.(pdf|jpe?g|png)$/i) || ['', 'pdf'])[1].toLowerCase()}`), r.data); }
   }
   if (!n) { btn.textContent = 'NFs (.zip)'; return alertaTopo('Nenhuma NF em PDF neste lote ainda.'); }
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -2384,11 +2386,14 @@ async function secaoNF(c) {
       <div class="kpi ${Math.abs(falta) > 0.009 ? 'alerta' : 'neutro'}"><small>${falta >= 0 ? 'Falta emitir' : 'Enviado a mais'}</small><b>${BRL2(Math.abs(falta))}</b><span>${fmtN(res.nfs)} NF(s) enviada(s): ${BRL2(env)}</span></div>
     </div>
     ${nfs.length ? `<div class="tabela"><table><thead><tr><th>NF</th><th>Emissão</th><th>CNPJ emitente</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
-      ${nfs.map(n => { const [r, k] = ST_NF[n.status] || [n.status, '']; return `<tr><td><b>${esc(n.numero)}</b>${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">PDF</a>` : ''}</td><td>${fmtD(n.data_emissao)}</td><td class="num">${esc(fmtCNPJ(n.cnpj_emitente))}</td><td class="n">${BRL2(n.valor)}</td>
+      ${nfs.map(n => { const [r, k] = ST_NF[n.status] || [n.status, '']; return `<tr><td><b>${esc(n.numero)}</b>${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">PDF</a>` : ''}${(n.anexos || []).map(x => ` · <a href="#" data-nfarq="${esc(x.path)}">${esc(x.tipo || 'Anexo')}</a>`).join('')}</td><td>${fmtD(n.data_emissao)}</td><td class="num">${esc(fmtCNPJ(n.cnpj_emitente))}</td><td class="n">${BRL2(n.valor)}</td>
         <td><span class="pill ${k}">${r}</span>${n.motivo_recusa ? `<div class="nota">GSM: ${esc(n.motivo_recusa)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
-    ${res.antec_status === 'solicitada' ? '<div class="msg alerta">Você pediu a antecipação do pagamento. Aguarde a resposta da GSM: se ela for liberada, a NF passa a ser emitida pelo valor com o desconto.</div>' : res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ, tomador e valor e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png')}<div id="nfform"></div>` : ''}`;
+    ${res.antec_status === 'solicitada' ? '<div class="msg alerta">Você pediu a antecipação do pagamento. Aguarde a resposta da GSM: se ela for liberada, a NF passa a ser emitida pelo valor com o desconto.</div>' : res.situacao !== 'conferida' && c.status !== 'fechada' ? `${zonaArquivo('arqnf', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). Pode mandar junto outros arquivos, como fatura e boleto: selecione todos de uma vez. O portal lê número, emissão, CNPJ, tomador e valor da NF e confere com o fechamento aprovado.', '.pdf,.jpg,.jpeg,.png', true)}<div id="nfform"></div>` : ''}`;
   box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
-  if ($('#arqnf')) ligarZona('arqnf', f => formNF(f, c, falta > 0.009 ? falta : esp));
+  if ($('#arqnf')) ligarZona('arqnf', (f, fs) => { const v = (fs || [f]).filter(x => /\.(pdf|jpe?g|png)$/i.test(x.name));
+    // A NF é o arquivo com "nf"/"nota" no nome; se nenhum tiver, o primeiro que não pareça boleto ou fatura
+    const nf = v.find(x => /\b(nf|nfs-?e|nota)/i.test(x.name)) || v.find(x => !/boleto|fatura|duplicata|recibo/i.test(x.name)) || v[0] || f;
+    formNF(nf, c, falta > 0.009 ? falta : esp, v.filter(x => x !== nf)); });
 }
 
 // NF do adiantamento: lê o arquivo, confere com o valor liberado e registra
@@ -2419,7 +2424,7 @@ async function formNFAdi(file, c, a) {
     } catch (e) { $('#na-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF do adiantamento'; } };
 }
 
-async function formNF(file, c, sugerido) {
+async function formNF(file, c, sugerido, anexos = []) {
   const box = $('#nfform');
   if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie a NF em PDF (ou foto JPG/PNG).</div>'; return; }
   box.innerHTML = '<div class="carregando" style="padding:10px 0" id="nf-lendo">Lendo a NF…</div>';
@@ -2453,14 +2458,24 @@ async function formNF(file, c, sugerido) {
       <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(lido.cnpj || cad))}" style="width:190px"></label>
       <label class="campo">Valor (R$)<input class="peq" id="nf-val" value="${lido.valor != null ? lido.valor.toFixed(2).replace('.', ',') : ''}" style="width:130px"></label>
     </div></details>
+    <div id="nf-anx"></div>
     <div class="linha"><button class="btn marca" id="nf-env">${ok ? 'Confirmar e enviar NF' : 'Enviar mesmo assim'}</button><button class="btn sec" id="nf-canc">Cancelar</button></div><div id="nf-msg"></div></div>`
   : `<div class="confirma"><b>Não foi possível ler a NF · ${esc(file.name)}</b><span>${esc(lido.erro || 'O arquivo não tem texto legível.')} Preencha os dados abaixo.</span>
     <div class="linha" style="align-items:flex-end">
       <label class="campo">Número<input class="peq" id="nf-num" style="width:160px"></label><label class="campo">Emissão<input class="peq" id="nf-dt" type="date"></label>
       <label class="campo">CNPJ emitente<input class="peq" id="nf-cnpj" value="${esc(fmtCNPJ(cad))}" style="width:190px"></label><label class="campo">Valor (R$)<input class="peq" id="nf-val" style="width:130px"></label></div>
     <span class="nota">Valor que falta emitir: ${BRL2(sugerido)}.</span>
+    <div id="nf-anx"></div>
     <div class="linha"><button class="btn marca" id="nf-env">Enviar NF</button><button class="btn sec" id="nf-canc">Cancelar</button></div><div id="nf-msg"></div></div>`;
   $('#nf-canc').onclick = () => { box.innerHTML = ''; $('#arqnf').value = ''; };
+  const anx = [...anexos]; const tipoAnx = n => /boleto/i.test(n) ? 'Boleto' : /fatura|duplicata/i.test(n) ? 'Fatura' : 'Anexo';
+  const desenhaAnx = () => { $('#nf-anx').innerHTML = `<div style="margin:8px 0"><b style="font-size:14px">Outros arquivos junto com a NF</b> <span class="nota">(fatura, boleto, comprovantes)</span>
+      ${anx.length ? `<ul style="margin:4px 0 6px 18px;font-size:14px">${anx.map((x, i) => `<li>${tipoAnx(x.name)}: ${esc(x.name)} <a href="#" data-rmanx="${i}">tirar</a> · <a href="#" data-usanf="${i}">este é a NF</a></li>`).join('')}</ul>` : '<div class="nota">Nenhum.</div>'}
+      <label class="nota" style="cursor:pointer">+ adicionar arquivo <input type="file" id="nf-anx-in" multiple accept=".pdf,.jpg,.jpeg,.png" style="font:inherit;font-size:13px"></label></div>`;
+    $('#nf-anx').querySelectorAll('[data-rmanx]').forEach(l => l.onclick = ev => { ev.preventDefault(); anx.splice(+l.dataset.rmanx, 1); desenhaAnx(); });
+    $('#nf-anx').querySelectorAll('[data-usanf]').forEach(l => l.onclick = ev => { ev.preventDefault(); const k = +l.dataset.usanf; const novo = anx[k]; formNF(novo, c, sugerido, [file, ...anx.filter((_, j) => j !== k)]); });
+    $('#nf-anx-in').onchange = e => { anx.push(...[...e.target.files].filter(x => /\.(pdf|jpe?g|png)$/i.test(x.name))); desenhaAnx(); }; };
+  desenhaAnx();
   $('#nf-env').onclick = async () => {
     const b = $('#nf-env'); const v = numBR($('#nf-val').value);
     if (v == null || Number.isNaN(v)) { $('#nf-msg').innerHTML = '<div class="msg erro">Valor inválido.</div>'; return; }
@@ -2469,11 +2484,14 @@ async function formNF(file, c, sugerido) {
       const path = `${S.parc.id}/${c.mes.slice(0, 7)}/nf/${Date.now()}_${safeName(file.name)}`;
       const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
       const num = $('#nf-num').value.trim(), dt = $('#nf-dt').value || null, cn = digitos($('#nf-cnpj').value);
-      await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: num, p_cnpj: cn, p_valor: v, p_data: dt,
+      const reg = await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: num, p_cnpj: cn, p_valor: v, p_data: dt,
         p_checagens: { texto: !!lido.texto, ocr, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, tomador_gsm: !!lido.tomador_gsm, chave: lido.chave || null,
           numero_lido: lido.numero || null, data_lida: lido.data || null, valor_lido: lido.valor ?? null,
           valor_confere_pdf: lido.valor != null ? Math.abs(lido.valor - v) < 0.01 : null,
           editado: !!lido.texto && (num !== (lido.numero || '') || (dt || '') !== (lido.data || '') || (lido.valor != null && Math.abs(lido.valor - v) >= 0.01)) } }));
+      if (anx.length) { b.textContent = 'Enviando anexos…'; const lista = [];
+        for (const x of anx) { const p = `${S.parc.id}/${c.mes.slice(0, 7)}/nf/${Date.now()}_${safeName(x.name)}`; const u = await sb.storage.from('envios').upload(p, x); if (u.error) throw new Error(`Falha ao guardar ${x.name}: ${u.error.message}`); lista.push({ path: p, nome: x.name, tipo: tipoAnx(x.name) }); }
+        const nid = reg?.id || (await q(sb.from('notas_fiscais').select('id').eq('arquivo_path', path).limit(1)))[0]?.id; if (nid) await q(sb.rpc('anexar_nf', { p_nf: nid, p_anexos: lista })); }
       secaoNF(c);
     } catch (e) { $('#nf-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF'; }
   };
@@ -2529,7 +2547,7 @@ async function vNotas() {
           ck.tomador_gsm === false && ck.texto ? '<span class="pill alerta">GSM não aparece como tomador</span>' : '',
           ck.editado ? '<span class="pill alerta">Dados digitados diferentes do lido</span>' : ''].filter(Boolean).join(' ');
         return `<div style="font-size:13px;${minhas.length > 1 ? 'padding:4px 0;border-bottom:1px dashed var(--line)' : ''}" title="${esc(ok)}">NF <b>${esc(n.numero || 's/nº')}</b> · <b>${BRL2(n.valor)}</b>${minhas.length > 1 && n.status !== 'conferida' ? ` <span class="pill ${k2}">${r2}</span>` : ''}
-          <br><span class="nota">emissão ${fmtD(n.data_emissao)} · enviada ${String(fmtDH(n.enviado_em)).replace(/\/\d{4},?/, '')}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}</span>
+          <br><span class="nota">emissão ${fmtD(n.data_emissao)} · enviada ${String(fmtDH(n.enviado_em)).replace(/\/\d{4},?/, '')}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}${(n.anexos || []).map(x => ` · <a href="#" data-nfarq="${esc(x.path)}" title="${esc(x.nome || '')}">${esc(x.tipo || 'Anexo')}</a>`).join('')}</span>
           ${alertas ? `<div style="margin-top:3px">${alertas}</div>` : ''}${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</div>`; };
       const acoesNF = n => c.status === 'fechada' ? '' : `<div style="${minhas.length > 1 ? 'padding:4px 0' : ''}">${n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}${minhas.length > 1 ? ` <span class="nota">NF ${esc(n.numero || '')}</span>` : ''}</div>`;
       return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))} · ${esc(grupoPag(r).k)}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' && Number(r.antec_desconto) ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
