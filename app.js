@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1510';
+const VERSAO = '2026.11.03-1530';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2446,17 +2446,31 @@ async function vNotas() {
   m.innerHTML = `<div class="topo"><div><h1>Notas fiscais</h1><p>NFs dos parceiros com valor aprovado. A NF sai pelo valor líquido (aprovado − adiantamento) e pode ser dividida em várias, desde que a soma bata. Confira cada uma; quando a soma conferida bater, o parceiro passa para "NF conferida".</p></div>${seletorComp(false)}</div><div id="nfs" class="carregando">Carregando…</div>`;
   ligarSeletor(vNotas);
   const c = comp();
-  const [res, nfs, parcs] = await Promise.all([
+  const [res0, nfs, parcs, fpag] = await Promise.all([
     todas(() => sb.from('nf_resumo').select('*').eq('competencia_id', c.id)),
     todas(() => sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('tipo', 'fechamento').order('enviado_em')),
-    q(sb.from('parceiros').select('id,codigo,regiao,nome,cnpj')),
+    q(sb.from('parceiros').select('id,codigo,regiao,nome,cnpj,dia_pagamento')),
+    todas(() => sb.from('fechamento_parceiro').select('parceiro_id,antec_status,antec_data').eq('competencia_id', c.id)),
   ]);
   const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
+  const fpm = Object.fromEntries(fpag.map(f => [f.parceiro_id, f]));
+  // Data de pagamento: antecipação liberada paga na data dela; os demais pelo dia de pagamento do cadastro
+  const grupoPag = r => { const f = fpm[r.parceiro_id] || {}; if (f.antec_status === 'liberada') return { k: 'Antecipação' + (f.antec_data ? ' · ' + fmtD(f.antec_data) : ''), dt: f.antec_data || '0000' };
+    const d = pm[r.parceiro_id]?.dia_pagamento; return { k: d || 'Sem dia cadastrado', dt: dataPagamento(d, c.mes) || '9999' }; };
+  const GR = {}; res0.forEach(r => { const g = grupoPag(r); GR[g.k] = GR[g.k] || { dt: g.dt, n: 0, ok: 0, v: 0 }; GR[g.k].n++; GR[g.k].v += Number(r.valor_esperado || 0); if (r.situacao === 'conferida') GR[g.k].ok++; });
+  const DIAS = Object.keys(GR).sort((x, y) => GR[x].dt.localeCompare(GR[y].dt));
+  S.nfDia = S.nfDia || 'todos'; if (S.nfDia !== 'todos' && !GR[S.nfDia]) S.nfDia = 'todos';
+  const res = res0.filter(r => S.nfDia === 'todos' || grupoPag(r).k === S.nfDia);
   S.nfFiltro = S.nfFiltro || 'todos';
   const cont = k => res.filter(r => r.situacao === k).length;
   const vis = res.filter(r => S.nfFiltro === 'todos' || r.situacao === S.nfFiltro).sort((a, b) => (pm[a.parceiro_id]?.regiao || '').localeCompare(pm[b.parceiro_id]?.regiao || ''));
   const soma = (k, f = () => true) => res.filter(f).reduce((a, r) => a + Number(r[k] || 0), 0);
-  $('#nfs').outerHTML = res.length ? `
+  const chipsDia = res0.length ? `<section class="bloco" style="padding:12px 16px"><div class="linha" style="align-items:center;gap:8px"><b style="font-size:14px">Pagamento:</b>
+      <button class="btn ${S.nfDia === 'todos' ? '' : 'sec'} peq" data-nd="todos">Todos (${res0.length})</button>
+      ${DIAS.map(d => { const g = GR[d]; const dt = /^\d{4}-/.test(g.dt) && !d.startsWith('Antecipação') ? ' · ' + fmtD(g.dt) : '';
+        return `<button class="btn ${S.nfDia === d ? '' : 'sec'} peq" data-nd="${esc(d)}" title="${g.ok} de ${g.n} com NF conferida · ${BRL2(g.v)}">${esc(d)}${dt} (${g.ok}/${g.n})</button>`; }).join('')}</div>
+      <p class="nota" style="margin:8px 0 0">${S.nfDia === 'todos' ? 'Escolha a data para ver só quem recebe nela. Entre parênteses: NF conferida / parceiros aprovados.' : `<b>${GR[S.nfDia].ok} de ${GR[S.nfDia].n}</b> com NF conferida · líquido esperado ${BRL2(GR[S.nfDia].v)}.`}</p></section>` : '';
+  $('#nfs').outerHTML = chipsDia + (res.length ? `
     <div class="kpis">
       <div class="kpi"><small>Valor líquido esperado</small><b>${BRL(soma('valor_esperado'))}</b><span>${res.length} parceiros aprovados</span></div>
       <div class="kpi ${cont('a_conferir') ? 'alerta' : 'neutro'}"><small>NFs a conferir</small><b>${cont('a_conferir')}</b><span>parceiros com NF nova</span></div>
@@ -2468,7 +2482,7 @@ async function vNotas() {
     <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th class="n">NFs enviadas</th><th class="n">Diferença</th><th>Situação</th></tr></thead><tbody>
     ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
       const minhas = nfs.filter(n => n.parceiro_id === r.parceiro_id);
-      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
+      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))} · ${esc(grupoPag(r).k)}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
         <td class="n">${r.nfs ? `${BRL2(r.valor_nfs)}<br><span class="nota">${r.nfs} NF(s)</span>` : '—'}</td><td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td></tr>
       ${minhas.map(n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, '']; const sinais = [
           ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '<span class="pill">CNPJ confere</span>',
@@ -2479,8 +2493,9 @@ async function vNotas() {
         return `<tr style="background:var(--field)"><td colspan="3" style="padding-left:24px;font-size:13px">NF <b>${esc(n.numero)}</b> · emissão ${fmtD(n.data_emissao)} · enviada ${fmtDH(n.enviado_em)}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}<div style="margin-top:4px">${sinais}</div>${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</td>
           <td class="n">${BRL2(n.valor)}</td><td colspan="2"><span class="pill ${k2}">${r2}</span></td>
           <td style="white-space:nowrap">${c.status === 'fechada' ? '' : n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}</td></tr>`; }).join('')}`; }).join('')}
-    </tbody></table></div></section>` : '<div class="msg alerta">Nenhum parceiro com valor aprovado neste mês. A NF entra depois da aprovação em "Conferência e aprovação".</div>';
+    </tbody></table></div></section>` : '<div class="msg alerta">Nenhum parceiro com valor aprovado neste mês. A NF entra depois da aprovação em "Conferência e aprovação".</div>');
   m.querySelectorAll('[data-nf]').forEach(b => b.onclick = () => { S.nfFiltro = b.dataset.nf; vNotas(); });
+  m.querySelectorAll('[data-nd]').forEach(b => b.onclick = () => { S.nfDia = b.dataset.nd; vNotas(); });
   m.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const u = await linkArquivo(a.dataset.nfarq); if (u) window.open(u, '_blank'); });
   const run = async (b, args) => { b.disabled = true; try { await q(sb.rpc('conferir_nf', args)); vNotas(); } catch (e) { b.disabled = false; alertaTopo(e.message); } };
   m.querySelectorAll('[data-ok]').forEach(b => b.onclick = () => run(b, { p_nf: b.dataset.ok, p_decisao: 'conferida' }));
