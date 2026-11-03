@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1600';
+const VERSAO = '2026.11.03-1615';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1304,6 +1304,14 @@ async function vParceiroInicio() {
 
 // ---------- Base do mês no portal (substitui o modelo em Excel) ----------
 const SERV_FORA = ['Redespacho', 'Diária', 'Reversa', 'Embarque', 'Outro'];
+// Cabeçalho clicável para ordenar tabelas: estado em S[chave] = { k, d } (d = 1 crescente, -1 decrescente)
+function thOrd(chave, k, rot, cls = '') { const o = S[chave] || {}; const seta = o.k === k ? (o.d > 0 ? ' ▲' : ' ▼') : ' <span style="opacity:.35">↕</span>';
+  return `<th class="${cls}" data-ord="${chave}:${k}" style="cursor:pointer;user-select:none;white-space:nowrap" title="Clique para ordenar">${rot}${seta}</th>`; }
+function ordenar(lista, chave, valores) { const o = S[chave]; if (!o || !valores[o.k]) return lista; const f = valores[o.k];
+  return [...lista].sort((a, b) => { const x = f(a), y = f(b); if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'pt-BR', { numeric: true })) * o.d; }); }
+function ligarOrd(raiz, refazer) { raiz.querySelectorAll('[data-ord]').forEach(th => th.onclick = () => { const [chave, k] = th.dataset.ord.split(':'); const o = S[chave];
+  S[chave] = o && o.k === k ? { k, d: -o.d } : { k, d: ['prev', 'feitos', 'vu', 'valor', 'data'].includes(k) ? -1 : 1 }; refazer(); }); }
 async function baseParceiro(c) {
   const box = $('#basep'); if (!box) return;
   const pid = S.parc.id;
@@ -1370,16 +1378,19 @@ async function baseParceiro(c) {
     S.baseFiltro = S.baseFiltro ?? ''; S.baseSo = S.baseSo || 'todos';
     const vis = linhasM.filter(x => (S.baseSo === 'todos' || (S.baseSo === 'ajustados' ? x.ct : S.baseSo === 'zerados' ? x.feitos === 0 : x.feitos < (x.previsto || 0)))
       && (!S.baseFiltro || norm(`${x.cod_int} ${x.cliente} ${x.loja} ${x.cidade}`).includes(norm(S.baseFiltro))));
-    const pag = vis.slice(0, 200);
+    const visO = ordenar(vis, 'ordM', { cod: x => x.cod_int, cli: x => `${x.cliente || ''} ${x.loja || ''}`, cid: x => `${x.cidade || ''} ${x.uf || ''}`, freq: x => x.frequencia || null,
+      prev: x => Number(x.previsto) || 0, feitos: x => x.ct ? x.ct.realizado : x.feitos, vu: x => x.vu, valor: x => x.valor });
+    const pag = visO.slice(0, 200);
     alvo.innerHTML = `<div class="linha" style="justify-content:space-between"><div class="linha">${[['todos', 'Todos'], ['abaixo', 'Abaixo do previsto'], ['zerados', 'Sem atendimento no Umov'], ['ajustados', 'Ajustados por você']].map(([k, n]) => `<button class="btn ${S.baseSo === k ? '' : 'sec'} peq" data-so="${k}">${n}</button>`).join('')}</div>
       <input class="peq" id="bfil" placeholder="Buscar código, cliente, cidade" value="${esc(S.baseFiltro)}" style="min-width:240px"></div>
-      <div class="tabela"><table id="btm"><thead><tr><th>Código</th><th>Cliente / loja</th><th>Cidade</th><th>Frequência</th><th class="n">Previsto</th><th class="n">Feitos (Umov)</th><th class="n">V. unit</th><th class="n">Valor</th><th></th></tr></thead><tbody>
+      <div class="tabela"><table id="btm"><thead><tr>${thOrd('ordM', 'cod', 'Código')}${thOrd('ordM', 'cli', 'Cliente / loja')}${thOrd('ordM', 'cid', 'Cidade')}${thOrd('ordM', 'freq', 'Frequência')}${thOrd('ordM', 'prev', 'Previsto', 'n')}${thOrd('ordM', 'feitos', 'Feitos (Umov)', 'n')}${thOrd('ordM', 'vu', 'V. unit', 'n')}${thOrd('ordM', 'valor', 'Valor', 'n')}<th></th></tr></thead><tbody>
       ${pag.map(x => `<tr data-cod="${esc(x.cod_int)}"${x.ct ? ' style="background:var(--wash)"' : ''}><td class="num">${esc(x.cod_int)}</td><td style="font-size:13px"><b>${esc(x.cliente || '')}</b><br>${esc(x.loja || '')}</td><td style="font-size:13px">${esc(x.cidade || '')}${x.uf ? ' - ' + esc(x.uf) : ''}</td><td style="font-size:13px">${esc(x.frequencia || '')}</td>
         <td class="n">${fmtN(x.previsto || 0)}</td><td class="n">${x.ct ? `<s style="color:var(--muted)">${fmtN(x.feitos)}</s> <b>${fmtN(x.ct.realizado)}</b>` : fmtN(x.feitos)}</td><td class="n">${BRL2(x.vu)}</td><td class="n">${BRL2(x.valor)}</td>
         <td style="white-space:nowrap">${trava ? '' : x.ct ? `<span class="nota" title="${esc(x.ct.justificativa)}">ajustado</span> <button class="btn sec peq" data-rm="${x.ct.id}">Desfazer</button>` : `<button class="btn sec peq" data-aj="${esc(x.cod_int)}">Ajustar</button>`}</td></tr>`).join('')}
       </tbody></table></div>${vis.length > pag.length ? `<p class="nota">Mostrando ${pag.length} de ${fmtN(vis.length)}. Use a busca para achar um ponto.</p>` : ''}
       <p class="nota">Feitos = atendimentos retornados de campo no Umov. Se você atendeu e o Umov não registrou (ou o contrário), clique em Ajustar, informe o número certo e explique.${fixo ? ` O valor fixo do contrato (${BRL2(fixo)}) entra no total.` : ''}</p>`;
     alvo.querySelectorAll('[data-so]').forEach(b => b.onclick = () => { S.baseSo = b.dataset.so; baseParceiro(c); });
+    ligarOrd(alvo, () => baseParceiro(c));
     $('#bfil').oninput = e => { S.baseFiltro = e.target.value; clearTimeout(S.bT); S.bT = setTimeout(() => { baseParceiro(c).then(() => { const i = $('#bfil'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 350); };
     alvo.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => retirar(b.dataset.rm));
     alvo.querySelectorAll('[data-aj]').forEach(b => b.onclick = () => { const x = linhasM.find(k => k.cod_int === b.dataset.aj); const tr = b.closest('tr');
@@ -1389,8 +1400,9 @@ async function baseParceiro(c) {
         await salvar({ tipo: 'malote', ref: x.cod_int, realizado: n, justificativa: v(l2, 'just').value }, v(l2, 'arq').files[0], 'mal', v(l2, 'msg')); });
       tr.after(l); });
   } else if (S.baseAba === 'kits') {
-    alvo.innerHTML = `<div class="tabela"><table><thead><tr><th>Ref. Umov</th><th>Data</th><th>Kit / cliente</th><th>Cidade</th><th>Situação no Umov</th><th class="n">Valor</th><th></th></tr></thead><tbody>
-      ${linhasK.map(k => `<tr${k.ct ? ' style="background:var(--wash)"' : ''}><td class="num">${esc(k.id_umov)}</td><td>${fmtD(k.data_final || k.data_prevista)}</td><td style="font-size:13px"><b>${esc(k.grupo_cliente || '')}</b><br>${esc(k.cliente || '')}</td><td style="font-size:13px">${esc(k.cidade || '')}</td>
+    const kOrd = ordenar(linhasK, 'ordK', { ref: k => k.id_umov, data: k => (k.data_final || k.data_prevista || '').slice(0, 16), kit: k => `${k.grupo_cliente || ''} ${k.cliente || ''}`, cid: k => k.cidade || null, sit: k => k.situacao || null, valor: k => k.valor });
+    alvo.innerHTML = `<div class="tabela"><table><thead><tr>${thOrd('ordK', 'ref', 'Ref. Umov')}${thOrd('ordK', 'data', 'Data')}${thOrd('ordK', 'kit', 'Kit / cliente')}${thOrd('ordK', 'cid', 'Cidade')}${thOrd('ordK', 'sit', 'Situação no Umov')}${thOrd('ordK', 'valor', 'Valor', 'n')}<th></th></tr></thead><tbody>
+      ${kOrd.map(k => `<tr${k.ct ? ' style="background:var(--wash)"' : ''}><td class="num">${esc(k.id_umov)}</td><td>${fmtD(k.data_final || k.data_prevista)}</td><td style="font-size:13px"><b>${esc(k.grupo_cliente || '')}</b><br>${esc(k.cliente || '')}</td><td style="font-size:13px">${esc(k.cidade || '')}</td>
         <td><span class="pill ${k.situacao === 'Retornada de Campo' ? '' : 'alerta'}">${esc(k.situacao || '—')}</span></td><td class="n">${k.ct ? `<s style="color:var(--muted)">${BRL2(k.valorGSM)}</s> <b>${BRL2(k.valor)}</b>` : BRL2(k.valor)}</td>
         <td style="white-space:nowrap">${trava ? '' : k.ct ? `<span class="nota" title="${esc(k.ct.justificativa)}">ajustado</span> <button class="btn sec peq" data-rm="${k.ct.id}">Desfazer</button>` : `<button class="btn sec peq" data-ak="${esc(k.id_umov)}">Ajustar</button>`}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nenhum kit do Umov para você neste mês.</td></tr>'}
       </tbody></table></div>
@@ -1399,6 +1411,7 @@ async function baseParceiro(c) {
       ${trava ? '' : `<div class="linha" style="align-items:flex-end"><label class="campo">Data<input type="date" class="peq" id="ke-d"></label><label class="campo" style="flex:1 1 200px">Kit / cliente<input class="peq" id="ke-ds"></label><label class="campo">Cidade<input class="peq" id="ke-c" style="width:150px"></label><label class="campo">Valor (R$)<input class="peq" id="ke-v" style="width:110px"></label>
         <label class="campo" style="flex:1 1 220px">Explicação<input class="peq" id="ke-j" placeholder="por que não está no Umov"></label><label class="campo">Comprovante<input type="file" id="ke-a" accept=".pdf,.jpg,.jpeg,.png" style="font:inherit;font-size:13px"></label><button class="btn peq" id="ke-ok">Adicionar kit</button></div><div id="ke-m"></div>`}`;
     alvo.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => retirar(b.dataset.rm));
+    ligarOrd(alvo, () => baseParceiro(c));
     alvo.querySelectorAll('[data-ak]').forEach(b => b.onclick = () => { const k = linhasK.find(x => x.id_umov === b.dataset.ak); const tr = b.closest('tr');
       alvo.querySelectorAll('tr.extra').forEach(e => e.remove());
       const l = formLinha(7, `<label class="campo">Valor do kit (R$)<input class="peq" data-x="val" value="${String(k.valorGSM || '').replace('.', ',')}" style="width:120px"></label>`, 'kit', async l2 => {
