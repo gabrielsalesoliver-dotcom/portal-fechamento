@@ -2392,7 +2392,7 @@ async function secaoNF(c) {
   box.querySelectorAll('[data-nfarq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const { data } = await sb.storage.from('envios').createSignedUrl(a.dataset.nfarq, 600); if (data?.signedUrl) window.open(data.signedUrl, '_blank'); });
   if ($('#arqnf')) ligarZona('arqnf', (f, fs) => { const v = (fs || [f]).filter(x => /\.(pdf|jpe?g|png)$/i.test(x.name));
     // A NF é o arquivo com "nf"/"nota" no nome; se nenhum tiver, o primeiro que não pareça boleto ou fatura
-    const nf = v.find(x => /\b(nf|nfs-?e|nota)/i.test(x.name)) || v.find(x => !/boleto|fatura|duplicata|recibo/i.test(x.name)) || v[0] || f;
+    const nf = v.find(x => /\b(nf|nfs-?e|nota)/i.test(x.name)) || v.find(x => !/boleto|fatura|duplicata|recibo/i.test(x.name)) || v.find(x => /fatura|duplicata/i.test(x.name)) || v[0] || f;
     formNF(nf, c, falta > 0.009 ? falta : esp, v.filter(x => x !== nf)); });
 }
 
