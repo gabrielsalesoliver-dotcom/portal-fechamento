@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1530';
+const VERSAO = '2026.11.03-1600';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2479,20 +2479,25 @@ async function vNotas() {
     </div>
     <section class="bloco"><div class="linha">${[['todos', 'Todos', res.length], ['a_conferir', 'A conferir', cont('a_conferir')], ['aguardando', 'Aguardando NF', cont('aguardando')], ['faltando', 'Soma diferente', cont('faltando')], ['conferida', 'Conferidas', cont('conferida')]]
       .map(([k, n, qq]) => `<button class="btn ${S.nfFiltro === k ? '' : 'sec'} peq" data-nf="${k}">${n} (${qq})</button>`).join('')}</div>
-    <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th class="n">NFs enviadas</th><th class="n">Diferença</th><th>Situação</th></tr></thead><tbody>
+    <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th>Nota fiscal</th><th class="n">Diferença</th><th>Situação</th><th></th></tr></thead><tbody>
     ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
       const minhas = nfs.filter(n => n.parceiro_id === r.parceiro_id);
-      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))} · ${esc(grupoPag(r).k)}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
-        <td class="n">${r.nfs ? `${BRL2(r.valor_nfs)}<br><span class="nota">${r.nfs} NF(s)</span>` : '—'}</td><td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td></tr>
-      ${minhas.map(n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, '']; const sinais = [
-          ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '<span class="pill">CNPJ confere</span>',
-          ck.texto ? (ck.cnpj_no_pdf ? '<span class="pill">CNPJ no PDF</span>' : '<span class="pill alerta">CNPJ não achado no PDF</span>') : '<span class="pill alerta">PDF sem texto: conferir visualmente</span>',
+      // Cada NF em bloco compacto dentro da célula; só os sinais de atenção ficam visíveis (os "ok" vão no título)
+      const blocoNF = n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, ''];
+        const ok = [ck.cnpj_confere !== false ? 'CNPJ confere' : '', ck.texto && ck.cnpj_no_pdf ? 'CNPJ no PDF' : '', ck.ocr ? 'lida pela imagem' : ''].filter(Boolean).join(' · ');
+        const alertas = [ck.cnpj_confere === false ? '<span class="pill marca">CNPJ diferente do cadastro</span>' : '',
+          ck.texto ? (ck.cnpj_no_pdf ? '' : '<span class="pill alerta">CNPJ não achado no PDF</span>') : '<span class="pill alerta">PDF sem texto: conferir visualmente</span>',
           ck.valor_confere_pdf === false ? `<span class="pill alerta">PDF mostra ${BRL2(ck.valor_lido)}</span>` : '',
           ck.tomador_gsm === false && ck.texto ? '<span class="pill alerta">GSM não aparece como tomador</span>' : '',
-          ck.editado ? '<span class="pill alerta">Dados digitados diferentes do lido</span>' : '', ck.ocr ? '<span class="pill">lida pela imagem</span>' : ''].join(' ');
-        return `<tr style="background:var(--field)"><td colspan="3" style="padding-left:24px;font-size:13px">NF <b>${esc(n.numero)}</b> · emissão ${fmtD(n.data_emissao)} · enviada ${fmtDH(n.enviado_em)}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}<div style="margin-top:4px">${sinais}</div>${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</td>
-          <td class="n">${BRL2(n.valor)}</td><td colspan="2"><span class="pill ${k2}">${r2}</span></td>
-          <td style="white-space:nowrap">${c.status === 'fechada' ? '' : n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}</td></tr>`; }).join('')}`; }).join('')}
+          ck.editado ? '<span class="pill alerta">Dados digitados diferentes do lido</span>' : ''].filter(Boolean).join(' ');
+        return `<div style="font-size:13px;${minhas.length > 1 ? 'padding:4px 0;border-bottom:1px dashed var(--line)' : ''}" title="${esc(ok)}">NF <b>${esc(n.numero || 's/nº')}</b> · <b>${BRL2(n.valor)}</b>${minhas.length > 1 && n.status !== 'conferida' ? ` <span class="pill ${k2}">${r2}</span>` : ''}
+          <br><span class="nota">emissão ${fmtD(n.data_emissao)} · enviada ${String(fmtDH(n.enviado_em)).replace(/\/\d{4},?/, '')}${n.arquivo_path ? ` · <a href="#" data-nfarq="${esc(n.arquivo_path)}">abrir PDF</a>` : ''}</span>
+          ${alertas ? `<div style="margin-top:3px">${alertas}</div>` : ''}${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</div>`; };
+      const acoesNF = n => c.status === 'fechada' ? '' : `<div style="${minhas.length > 1 ? 'padding:4px 0' : ''}">${n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}${minhas.length > 1 ? ` <span class="nota">NF ${esc(n.numero || '')}</span>` : ''}</div>`;
+      return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))} · ${esc(grupoPag(r).k)}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' && Number(r.antec_desconto) ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
+        <td>${minhas.length ? minhas.map(blocoNF).join('') + (minhas.length > 1 ? `<span class="nota">${minhas.length} NFs · soma ${BRL2(r.valor_nfs)}</span>` : '') : '<span class="nota">—</span>'}</td>
+        <td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td>
+        <td style="white-space:nowrap">${minhas.map(acoesNF).join('')}</td></tr>`; }).join('')}
     </tbody></table></div></section>` : '<div class="msg alerta">Nenhum parceiro com valor aprovado neste mês. A NF entra depois da aprovação em "Conferência e aprovação".</div>');
   m.querySelectorAll('[data-nf]').forEach(b => b.onclick = () => { S.nfFiltro = b.dataset.nf; vNotas(); });
   m.querySelectorAll('[data-nd]').forEach(b => b.onclick = () => { S.nfDia = b.dataset.nd; vNotas(); });
@@ -2503,7 +2508,7 @@ async function vNotas() {
   m.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
     const tr = b.closest('tr'); if (tr.nextElementSibling?.classList.contains('extra')) { tr.nextElementSibling.remove(); return; }
     const l = document.createElement('tr'); l.className = 'extra';
-    l.innerHTML = `<td colspan="7" style="background:var(--field)"><div class="linha"><input class="peq" id="rec-m" placeholder="Motivo da recusa (o parceiro vê)" style="flex:1;min-width:280px"><button class="btn peq" id="rec-ok">Recusar NF</button></div></td>`;
+    l.innerHTML = `<td colspan="8" style="background:var(--field)"><div class="linha"><input class="peq" id="rec-m" placeholder="Motivo da recusa (o parceiro vê)" style="flex:1;min-width:280px"><button class="btn peq" id="rec-ok">Recusar NF</button></div></td>`;
     tr.after(l); l.querySelector('#rec-ok').onclick = ev => run(ev.currentTarget, { p_nf: b.dataset.rec, p_decisao: 'recusada', p_motivo: l.querySelector('#rec-m').value });
   });
 }
