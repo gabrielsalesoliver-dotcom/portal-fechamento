@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1440';
+const VERSAO = '2026.11.03-1450';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -873,6 +873,7 @@ async function vPontos() {
     <div id="cart-corpo" class="carregando">Carregando…</div>`;
   ligarSeletor(vPontos);
   let res = await q(sb.from('cadastro_resumo').select('*'));
+  try { S.freqs = (await q(sb.from('frequencias_cadastradas').select('frequencia,pontos').order('pontos', { ascending: false }))).map(r => r.frequencia); } catch (e) { S.freqs = S.freqs || []; }
   const tot = res.reduce((a, r) => a + r.pontos, 0);
   if (!tot) return cargaInicial();
   // a carteira acompanha sempre a última planilha de inclusão e cancelamento (a rotina não duplica nada)
@@ -932,6 +933,18 @@ async function vPontos() {
 }
 
 const optsParc = (sel, bp) => `<option value="">Sem parceiro</option><option value="__bp" ${bp ? 'selected' : ''}>Base própria GSM (rota própria)</option>` + S.parceiros.filter(p => p.ativo || p.id === sel).map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('');
+// Frequência: lista suspensa com as frequências já usadas na carteira (mais usadas primeiro) + "Outra…" para digitar
+function selFreq(atual) {
+  const lista = [...(S.freqs || [])]; if (atual && !lista.includes(atual)) lista.unshift(atual);
+  return `<select class="peq" data-f="frequencia" data-freq style="width:150px"><option value="">— escolher —</option>${lista.map(f => `<option ${f === atual ? 'selected' : ''}>${esc(f)}</option>`).join('')}<option value="__outra">Outra… (digitar)</option></select>`;
+}
+function ligarFreq() {
+  document.querySelectorAll('#main [data-freq]').forEach(sel => sel.onchange = () => {
+    if (sel.value !== '__outra') return;
+    const i = document.createElement('input'); i.className = 'peq'; i.dataset.f = 'frequencia'; i.placeholder = 'SEG, QUA'; i.style.width = '150px';
+    i.onblur = () => { i.value = i.value.toUpperCase().replace(/\s*[,;\/]\s*|\s+E\s+/g, ', ').trim(); };
+    sel.replaceWith(i); i.focus(); });
+}
 function linhaPonto(p, novo = false) {
   const k = novo ? 'novo' : p.cod_int;
   return `<tr data-cod="${esc(k)}">
@@ -940,7 +953,7 @@ function linhaPonto(p, novo = false) {
       <div><input class="peq" data-f="loja" value="${esc(p.loja || '')}" placeholder="Loja" style="width:200px;margin-top:4px"></div></td>
     <td><input class="peq" data-f="cidade" value="${esc(p.cidade || '')}" placeholder="Cidade" style="width:130px"> <input class="peq" data-f="uf" value="${esc(p.uf || '')}" placeholder="UF" style="width:46px"></td>
     <td><select class="peq" data-f="parceiro_id" style="max-width:210px">${optsParc(p.parceiro_id, p.base_propria)}</select></td>
-    <td><input class="peq" data-f="frequencia" value="${esc(p.frequencia || '')}" placeholder="SEG, QUA" style="width:120px"></td>
+    <td>${selFreq(p.frequencia)}</td>
     <td><input class="peq num" data-f="v_unit" value="${p.v_unit == null ? '' : p.v_unit}" placeholder="R$" style="width:80px"></td>
     <td><select class="peq" data-f="situacao">${['Ativo', 'Cancelado', 'Suspenso'].map(s => `<option ${s === p.situacao ? 'selected' : ''}>${s}</option>`).join('')}</select>
       ${p.pendencia ? `<div><span class="pill alerta" style="margin-top:4px;white-space:normal;max-width:180px">${esc(p.pendencia)}</span></div>` : ''}</td>
@@ -948,6 +961,7 @@ function linhaPonto(p, novo = false) {
 }
 const CAB_PONTOS = '<thead><tr><th>Ponto</th><th>Cidade</th><th>Parceiro</th><th>Frequência</th><th>V. Unit</th><th>Situação</th><th></th></tr></thead>';
 function ligarLinhas() {
+  ligarFreq();
   document.querySelectorAll('#main [data-salvar]').forEach(b => b.onclick = async () => {
     const tr = b.closest('tr'); const p = {};
     tr.querySelectorAll('[data-f]').forEach(i => { const v = i.value.trim(); p[i.dataset.f] = i.dataset.f === 'v_unit' ? v.replace(',', '.') : v; });
