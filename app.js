@@ -1,15 +1,15 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1140';
-import BR from './brasil.js?v=2026.11.03-1140';
-import { gerarModelo } from './modelo.js?v=2026.11.03-1140';
-import { lerLinhas, casar } from './importa.js?v=2026.11.03-1140';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1350';
+import BR from './brasil.js?v=2026.11.03-1350';
+import { gerarModelo } from './modelo.js?v=2026.11.03-1350';
+import { lerLinhas, casar } from './importa.js?v=2026.11.03-1350';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1140';
+const VERSAO = '2026.11.03-1350';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -511,10 +511,25 @@ async function previaUmov(file) {
     for (const rows of Object.values(abas)) { r = parseUmov(rows); if (!r.erro) break; }
     if (r.erro) { $('#prev').innerHTML = `<div class="msg erro">${esc(r.erro)}</div>`; return; }
     S.umovPrev = { file, ...r, resumo: resumoUmov(r.registros, S.rotas) };
+    S.umovPrev.per = periodoUmov(r.registros); S.umovPrev.modo = S.umovPrev.per && S.umovPrev.per.dias < 20 ? 'comp' : 'subst';
+    if (S.umovPrev.per) { try { S.umovPrev.mant = await contarMantidas(comp(), S.umovPrev.per); } catch (e) {} }
     desenharPreviaUmov();
   } catch (e) { $('#prev').innerHTML = `<div class="msg erro">Não consegui ler o arquivo: ${esc(e.message)}</div>`; }
 }
 
+function periodoUmov(regs) {
+  const ds = regs.map(r => r.data_prevista && r.data_prevista.slice(0, 10)).filter(Boolean).sort();
+  if (!ds.length) return null;
+  const ini = ds[0], fim = ds[ds.length - 1]; const dias = Math.round((new Date(fim) - new Date(ini)) / 864e5) + 1;
+  const prox = new Date(fim + 'T12:00:00Z'); prox.setUTCDate(prox.getUTCDate() + 1);
+  return { ini, fim, dias, iniTs: `${ini}T00:00:00-03:00`, fimTs: `${prox.toISOString().slice(0, 10)}T00:00:00-03:00` };
+}
+async function contarMantidas(c, per) {
+  const at = (await q(sb.from('umov_importacoes').select('id,linhas').eq('competencia_id', c.id).eq('status', 'ativa').limit(1)))[0];
+  if (!at) return null;
+  const { count: dentro } = await sb.from('umov_atendimentos').select('id', { count: 'exact', head: true }).eq('importacao_id', at.id).gte('data_prevista', per.iniTs).lt('data_prevista', per.fimTs);
+  return { total: at.linhas, dentro: dentro || 0, fora: (at.linhas || 0) - (dentro || 0) };
+}
 function desenharPreviaUmov() {
   const p = S.umovPrev, s = p.resumo, c = comp();
   const mesComp = c.mes.slice(0, 7);
@@ -536,12 +551,16 @@ function desenharPreviaUmov() {
     <div class="tabela"><table><thead><tr><th>Rota (Motorista)</th><th>Parceiro pelo de-para</th><th class="n">Atendimentos</th><th class="n">Kits</th></tr></thead>
       <tbody>${s.rotas.slice(0, 12).map(r => `<tr><td>${esc(r.rota || '(vazio)')}</td><td>${r.parceiro ? (r.parceiro.parceiro_id ? esc(parcNome(r.parceiro.parceiro_id)) : '<span class="pill">Base própria</span>') : '<span class="pill alerta">Sem de-para</span>'}</td><td class="n">${fmtN(r.n)}</td><td class="n">${fmtN(r.kits)}</td></tr>`).join('')}</tbody></table>
       ${s.rotas.length > 12 ? `<p class="nota">Mostrando 12 de ${s.rotas.length} rotas. Ao gravar, o portal vincula pela cidade o que a rota não resolver.</p>` : ''}</div>
-    ${ativaTxt ? `<div class="confirma"><b>Já existe uma base ativa para ${nomeMes(c.mes)}.</b> Ao gravar, a nova passa a valer e a anterior fica guardada como “substituída” (nada é apagado).
-      <label class="linha"><input type="checkbox" id="ciente"> Entendi, quero substituir a base ativa.</label></div>` : ''}
+    ${ativaTxt ? `<div class="confirma"><b>Já existe uma base ativa para ${nomeMes(c.mes)}.</b> Este arquivo vai de <b>${p.per ? `${fmtD(p.per.ini)} a ${fmtD(p.per.fim)}` : '—'}</b>${p.per ? ` (${p.per.dias} dias)` : ''}. Como gravar?
+      <label class="linha" style="margin-top:6px"><input type="radio" name="modo" value="comp" ${p.modo === 'comp' ? 'checked' : ''}> <span><b>Complementar</b>: trocar só os atendimentos de ${p.per ? `${fmtD(p.per.ini)} a ${fmtD(p.per.fim)}` : 'deste período'} e manter o resto da base ativa${p.mant ? ` (${fmtN(p.mant.fora)} linhas mantidas; ${fmtN(p.mant.dentro)} linhas do período saem e entram as ${fmtN(s.total)} deste arquivo)` : ''}. Use para extrações de uma semana ou de alguns dias.</span></label>
+      <label class="linha"><input type="radio" name="modo" value="subst" ${p.modo === 'subst' ? 'checked' : ''}> <span><b>Substituir a base inteira</b> por este arquivo. Use só quando o arquivo tiver o mês completo.</span></label>
+      ${p.modo === 'subst' && p.per && p.per.dias < 20 ? '<div class="msg alerta" style="margin:6px 0 0">Atenção: este arquivo tem só ' + p.per.dias + ' dias. Substituindo a base, os atendimentos dos outros dias do mês somem da base ativa.</div>' : ''}
+      <label class="linha" style="margin-top:6px"><input type="checkbox" id="ciente"> Entendi, quero gravar assim.</label></div>` : ''}
     <div class="linha"><button class="btn marca" id="gravar" ${ativaTxt ? 'disabled' : ''}>Gravar no portal</button><button class="btn sec" id="cancelar">Descartar prévia</button></div>
     <div id="prog"></div>
   </section>`;
-  if (ativaTxt) $('#ciente').onchange = e => $('#gravar').disabled = !e.target.checked;
+  if (ativaTxt) { $('#ciente').onchange = e => $('#gravar').disabled = !e.target.checked;
+    $('#prev').querySelectorAll('input[name="modo"]').forEach(r => r.onchange = () => { p.modo = r.value; desenharPreviaUmov(); }); }
   $('#cancelar').onclick = () => { S.umovPrev = null; vUmov(); };
   $('#gravar').onclick = gravarUmov;
 }
@@ -567,11 +586,13 @@ async function gravarUmov() {
       passo(`Gravando linhas ${fmtN(i + 1)} a ${fmtN(Math.min(i + LOTE, regs.length))} de ${fmtN(regs.length)}…`, 5 + 90 * i / regs.length);
       await q(sb.from('umov_atendimentos').insert(regs.slice(i, i + LOTE)));
     }
+    let mantidas = 0;
+    if (p.modo === 'comp' && p.per) { passo('Juntando com o resto da base ativa…', 95); mantidas = await q(sb.rpc('complementar_umov', { p_nova: impId, p_ini: p.per.iniTs, p_fim: p.per.fimTs })) || 0; }
     passo('Ativando a base…', 97);
     await q(sb.rpc('ativar_importacao_umov', { p_id: impId }));
     S.umovPrev = null;
     progEl().innerHTML = `<div class="msg ok">Base gravada: ${fmtN(regs.length)} linhas de ${nomeMes(c.mes)}.</div>`;
-    window.onbeforeunload = null; alertaOk(`Base do Umov de ${nomeMes(c.mes)} gravada e ativada: ${fmtN(regs.length)} linhas.`); if ($('#prev')) await umovAtivaEHist();
+    window.onbeforeunload = null; alertaOk(mantidas ? `Base do Umov de ${nomeMes(c.mes)} complementada: ${fmtN(regs.length)} linhas novas de ${fmtD(p.per.ini)} a ${fmtD(p.per.fim)} + ${fmtN(mantidas)} linhas mantidas da base anterior.` : `Base do Umov de ${nomeMes(c.mes)} gravada e ativada: ${fmtN(regs.length)} linhas.`); if ($('#prev')) await umovAtivaEHist();
     if ($('#prev')) $('#prev').innerHTML = `<div class="msg ok">Base do Umov de ${nomeMes(c.mes)} gravada com ${fmtN(regs.length)} linhas.</div>`;
   } catch (e) {
     if (impId) await sb.from('umov_importacoes').update({ status: 'falhou', observacao: e.message.slice(0, 200) }).eq('id', impId);
