@@ -1,14 +1,15 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-0830';
-import BR from './brasil.js?v=2026.11.03-0830';
-import { gerarModelo } from './modelo.js?v=2026.11.03-0830';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1140';
+import BR from './brasil.js?v=2026.11.03-1140';
+import { gerarModelo } from './modelo.js?v=2026.11.03-1140';
+import { lerLinhas, casar } from './importa.js?v=2026.11.03-1140';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-0830';
+const VERSAO = '2026.11.03-1140';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1256,13 +1257,16 @@ async function baseParceiro(c) {
       <div class="kpi"><small>Valor que você vai enviar</small><b>${BRL2(totalParc)}</b><span>${ult ? `último envio: ${fmtDH(ult.enviado_em)}` : 'ainda não enviado'}</span></div>
       ${adiMes ? `<div class="kpi neutro"><small>A receber no fechamento</small><b>${BRL2(totalParc - adiMes)}</b><span>valor do mês − ${BRL2(adiMes)} já adiantado</span></div>` : ''}
     </div>
-    <div class="linha" style="justify-content:flex-end;margin:-6px 0 0"><button class="btn sec peq" id="bx-base">Baixar base em Excel</button></div>
+    <div class="linha" style="justify-content:flex-end;margin:-6px 0 0">${S.previa && !trava ? '<button class="btn peq" id="imp-rel">Importar relatório do parceiro</button>' : ''}<button class="btn sec peq" id="bx-base">Baixar base em Excel</button></div>
+    <div id="impbox"></div>
     <p class="nota" style="margin:0">Umov ${imp[0] ? `atualizado em ${fmtDH(imp[0].importado_em)}` : 'ainda não importado neste mês'}. ${ticket != null ? `Kits retornados valem o ticket médio de ${BRL2(ticket)} cada; se um kit foi maior, ajuste o valor e explique.` : '<b>Ticket médio de kits ainda não cadastrado pela GSM.</b>'}</p>
     ${trava ? `<div class="msg ok">${aprovado ? 'Mês aprovado pela GSM: a base não pode mais ser alterada.' : 'Mês fechado.'}</div>` : ''}
     <nav class="abas">${abas.map(([k, n]) => `<button type="button" data-ba="${k}" class="${S.baseAba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
     <div id="baseaba"></div>`;
   box.querySelectorAll('[data-ba]').forEach(b => b.onclick = () => { S.baseAba = b.dataset.ba; baseParceiro(c); });
   $('#bx-base').onclick = e => baixarBaseParceiro(c, S.parc, e.currentTarget);
+  const ib = $('#imp-rel'); if (ib) ib.onclick = () => importadorRelatorio(c, { pontos: pts.map(p => ({ ...p, feitos: um[p.cod_int] ? Number(um[p.cod_int].retornadas) || 0 : 0 })), kits, ticket: ticket ?? 0, conts, fixo, pid, recarregar: () => baseParceiro(c) });
+  if (S.imp && S.imp.pid === pid && S.imp.comp === c.id && $('#impbox')) desenharImport(c);
   const alvo = $('#baseaba'); const P = S.previa ? pid : null;
   const recarregar = () => baseParceiro(c);
   const anexar = async (file, tag) => { if (!file) return null; const path = `${pid}/${c.mes.slice(0, 7)}/base/${tag}_${Date.now()}_${safeName(file.name)}`; const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Anexo: ' + up.error.message); return path; };
@@ -1345,6 +1349,112 @@ async function baseParceiro(c) {
         situacaoParceiro(c); }
       catch (e) { eb.disabled = false; eb.textContent = 'Enviar para validação'; $('#envm').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; } };
   }
+}
+
+// ---------- Importar o relatório do parceiro (qualquer planilha) ----------
+async function lerPlanilhaLimitada(file, max = 4000) {
+  const buf = await file.arrayBuffer();
+  if (/\.csv$|\.txt$/i.test(file.name)) return { 'CSV': parseCSV(decodeText(buf)) };
+  const wb = XLSX.read(buf, { type: 'array' }); const out = {};
+  for (const n of wb.SheetNames) { const ws = wb.Sheets[n]; if (!ws['!ref']) continue; const r = XLSX.utils.decode_range(ws['!ref']); r.e.r = Math.min(r.e.r, r.s.r + max);
+    out[n] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, range: r }); }
+  return out;
+}
+function importadorRelatorio(c, ctx, manter = false) {
+  const box = $('#impbox'); if (!box) return;
+  if (!manter) S.imp = null;
+  box.innerHTML = `<section class="bloco" style="background:var(--field);margin:4px 0"><h2 style="margin-top:0">Importar relatório do parceiro</h2>
+    <p class="sub">Suba a planilha que o parceiro mandou, no formato dele. O portal acha as colunas sozinho e casa cada linha com a base do mês: malote pelo código de integração ou, se não tiver, pelas palavras do nome da loja; kits e spots pelo número (NF, pedido, kit) ou pelo nome. Nada é gravado antes de você conferir.</p>
+    <div class="linha"><input type="file" id="imp-arq" accept=".xlsx,.xls,.xlsm,.csv" style="font:inherit"><button class="btn sec peq" id="imp-x">Fechar</button></div><div id="imp-res"></div></section>`;
+  $('#imp-x').onclick = () => { S.imp = null; box.innerHTML = ''; };
+  $('#imp-arq').onchange = async e => { const f = e.target.files[0]; if (!f) return; const res = $('#imp-res'); res.innerHTML = '<div class="carregando">Lendo e casando com a base…</div>';
+    try { const sheets = await lerPlanilhaLimitada(f); const mesRef = `${+c.mes.slice(5, 7)}/${c.mes.slice(0, 4)}`;
+      const { abas, linhas } = lerLinhas(sheets, mesRef);
+      if (!linhas.length) return (res.innerHTML = '<div class="msg erro">Não encontrei linhas com nome e valor nesta planilha. Confira se ela tem uma linha de cabeçalho (ex.: Loja / Unidade, Quantidade / Atendimentos, Valor).</div>');
+      S.imp = { pid: ctx.pid, comp: c.id, arquivo: f.name, abas, linhas, ctx, usar: Object.fromEntries(abas.filter(a => a.reconhecida).map(a => [a.nome, !a.outroMes])), zerar: true, filtro: 'atencao', fora: new Set() };
+      recasar(); desenharImport(c);
+    } catch (er) { res.innerHTML = `<div class="msg erro">Não foi possível ler o arquivo: ${esc(er.message)}</div>`; } };
+  if (manter && S.imp) desenharImport(c);
+}
+function recasar() {
+  const I = S.imp; const { itens, naoCobrados } = casar(I.linhas.filter(l => I.usar[l.aba]), I.ctx);
+  itens.forEach((it, i) => { it.i = i;
+    if (it.tipo === 'malote') { const d = Math.round(((it.qtd ?? 0) - it.alvo.feitos) * 100) / 100; it.dif = d;
+      it.sit = d === 0 ? ['Bate com o Umov', 'escuro'] : d > 0 ? [`Acima do Umov (+${fmtN(d)})`, 'marca'] : [`Abaixo do Umov (${fmtN(d)})`, ''];
+      const vc = Number(it.alvo.v_unit) || 0; if (it.vu && vc && Math.abs(it.vu - vc) > 0.05) it.aviso.push(`valor unitário ${BRL2(it.vu)} no relatório e ${BRL2(vc)} no cadastro`);
+      if (it.qtd != null && !Number.isInteger(it.qtd)) it.aviso.push('quantidade não inteira: será arredondada');
+      it.valorPortal = Math.round(it.qtd ?? 0) * vc; it.valorUmov = it.alvo.feitos * vc; }
+    else if (it.tipo === 'kit') it.sit = [`Kit no Umov${it.kitsExtra.length ? ` (+${it.kitsExtra.length} kit${it.kitsExtra.length > 1 ? 's' : ''} na mesma linha)` : ''}`, 'escuro'];
+    else if (it.tipo === 'extra') it.sit = ['Não está no Umov', 'alerta'];
+    else if (it.tipo === 'fora') it.sit = ['Ponto fora da carteira', 'alerta'];
+    else if (it.tipo === 'duplicado') it.sit = ['Cobrado em dobro', 'marca'];
+    it.atencao = it.tipo !== 'malote' && it.tipo !== 'kit' || (it.tipo === 'malote' && it.dif > 0) || it.aviso.length > 0 || /conferir/.test(it.conf || '');
+  });
+  I.itens = itens; I.naoCobrados = naoCobrados.filter(k => k.situacao === 'Retornada de Campo');
+  I.fora = new Set(itens.filter(i => i.tipo === 'duplicado').map(i => i.i));
+}
+function desenharImport(c) {
+  const I = S.imp; const res = $('#imp-res'); if (!res) { if ($('#impbox')) importadorRelatorio(c, I.ctx, true); return; }
+  const inc = I.itens.filter(i => !I.fora.has(i.i)); const soma = (l, f) => l.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const mal = inc.filter(i => i.tipo === 'malote'), kit = inc.filter(i => i.tipo === 'kit'), ext = inc.filter(i => i.tipo === 'extra'), fora = inc.filter(i => i.tipo === 'fora');
+  const dup = I.itens.filter(i => i.tipo === 'duplicado');
+  const acima = soma(mal.filter(i => i.dif > 0), i => i.dif * (Number(i.alvo.v_unit) || 0)), abaixo = soma(mal.filter(i => i.dif < 0), i => -i.dif * (Number(i.alvo.v_unit) || 0));
+  const codsRel = new Set(mal.map(i => i.alvo.cod_int));
+  const malPortal = soma(I.ctx.pontos, p => (codsRel.has(p.cod_int) ? Math.round(mal.find(i => i.alvo.cod_int === p.cod_int).qtd ?? 0) : p.feitos) * (Number(p.v_unit) || 0));
+  const totRel = soma(inc, i => i.total);
+  const totPortal = I.ctx.fixo + malPortal + soma(kit, i => i.total) + soma(ext, i => i.total) + soma(fora, i => i.total) + (I.zerar ? 0 : I.naoCobrados.length * I.ctx.ticket);
+  const vis = I.itens.filter(i => I.filtro === 'todos' || (I.filtro === 'atencao' ? i.atencao : I.filtro === 'malote' ? (i.tipo === 'malote' || i.tipo === 'fora') : (i.tipo === 'kit' || i.tipo === 'extra' || (i.tipo === 'duplicado' && !i.alvo?.cod_int))));
+  res.innerHTML = `
+    <p class="nota" style="margin:8px 0 4px"><b>${esc(I.arquivo)}</b> · abas: ${I.abas.map(a => a.reconhecida ? `<label style="margin-right:10px"><input type="checkbox" data-aba="${esc(a.nome)}" ${I.usar[a.nome] ? 'checked' : ''}> ${esc(a.nome)} (${a.linhas} linhas)${a.outroMes ? ' <b style="color:var(--brand-deep)">parece ser de outro mês</b>' : ''}</label>` : `<span style="color:var(--muted);margin-right:10px">${esc(a.nome)} (não reconhecida)</span>`).join('')}</p>
+    <div class="kpis">
+      <div class="kpi neutro"><small>Total do relatório</small><b>${BRL2(totRel)}</b><span>${fmtN(inc.length)} linhas incluídas</span></div>
+      <div class="kpi ${acima > 0.5 ? 'alerta' : 'neutro'}"><small>Malote acima do Umov</small><b>${BRL2(acima)}</b><span>${fmtN(mal.filter(i => i.dif > 0).length)} pontos · ${BRL2(abaixo)} abaixo</span></div>
+      <div class="kpi ${ext.length + fora.length ? 'alerta' : 'neutro'}"><small>Sem par na base</small><b>${BRL2(soma(ext, i => i.total) + soma(fora, i => i.total))}</b><span>${ext.length} spots fora do Umov · ${fora.length} pontos fora da carteira</span></div>
+      <div class="kpi ${dup.length ? 'alerta' : 'neutro'}"><small>Cobrado em dobro</small><b>${BRL2(soma(dup, i => i.total))}</b><span>${dup.length} linha(s), fora da importação</span></div>
+      <div class="kpi"><small>Total no portal após importar</small><b>${BRL2(totPortal)}</b><span>${I.ctx.fixo ? `fixo ${BRL2(I.ctx.fixo)} + ` : ''}malote ${BRL2(malPortal)} + kits e extras</span></div>
+    </div>
+    ${I.naoCobrados.length ? `<label class="nota" style="display:block;margin:6px 0"><input type="checkbox" id="imp-z" ${I.zerar ? 'checked' : ''}> Zerar os ${I.naoCobrados.length} kits retornados no Umov que o parceiro não cobrou (sem isso eles entram pelo ticket médio de ${BRL2(I.ctx.ticket)}).</label>` : ''}
+    <div class="linha" style="justify-content:space-between;margin-top:6px"><div class="linha">${[['atencao', 'Precisa atenção', I.itens.filter(i => i.atencao).length], ['malote', 'Malote', I.itens.filter(i => i.tipo === 'malote' || i.tipo === 'fora').length], ['kits', 'Kits e spots', I.itens.filter(i => ['kit', 'extra'].includes(i.tipo)).length], ['todos', 'Todas', I.itens.length]].map(([k, t, n]) => `<button class="btn ${I.filtro === k ? '' : 'sec'} peq" data-if="${k}">${t} (${n})</button>`).join('')}</div>
+      <button class="btn marca" id="imp-ok">Gravar ${fmtN(inc.length)} linhas na base do parceiro</button></div>
+    <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th></th><th>Linha</th><th>No relatório</th><th class="n">Qtd</th><th class="n">Valor</th><th>Na base do portal</th><th>Situação</th></tr></thead><tbody>
+    ${vis.slice(0, 500).map(i => `<tr${I.fora.has(i.i) ? ' style="opacity:.5"' : ''}><td><input type="checkbox" data-ii="${i.i}" ${I.fora.has(i.i) ? '' : 'checked'}></td><td style="font-size:12px;white-space:nowrap">${esc(i.aba)}<br>linha ${i.linha}</td>
+      <td style="font-size:13px"><b>${esc(i.loja)}</b>${i.nf ? `<br><span class="nota">NF/ref ${esc(i.nf)}</span>` : ''}${i.cidade ? `<br><span class="nota">${esc(i.cidade)}</span>` : ''}</td>
+      <td class="n">${i.qtd != null ? fmtN(i.qtd) : '—'}</td><td class="n">${BRL2(i.total)}</td>
+      <td style="font-size:13px">${i.alvo ? `${esc(i.alvo.loja || i.alvo.cliente || '')}<br><span class="nota">${i.tipo === 'malote' ? `cód ${esc(i.alvo.cod_int)} · Umov ${fmtN(i.alvo.feitos)} de ${fmtN(i.alvo.previsto || 0)} previstos` : `Umov ${esc(i.alvo.id_umov || '')} · ${esc(i.alvo.situacao || '')}`} · por ${esc(i.conf || '')}</span>` : '<span class="nota">—</span>'}</td>
+      <td><span class="pill ${i.sit[1]}">${esc(i.sit[0])}</span>${i.aviso.length ? `<br><span class="nota">${esc(i.aviso.join('; '))}</span>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nada neste filtro.</td></tr>'}
+    </tbody></table></div>
+    <p class="nota">Ao gravar: malote vira ajuste só onde a quantidade do parceiro difere do Umov; kits do Umov recebem o valor cobrado; spots sem kit no Umov e pontos fora da carteira entram como extras. Tudo fica marcado como vindo deste relatório e aparece na conferência para você aprovar ou glosar. Importar de novo substitui a importação anterior.</p>
+    <div id="imp-m"></div>`;
+  res.querySelectorAll('[data-aba]').forEach(b => b.onchange = () => { I.usar[b.dataset.aba] = b.checked; recasar(); desenharImport(c); });
+  res.querySelectorAll('[data-if]').forEach(b => b.onclick = () => { I.filtro = b.dataset.if; desenharImport(c); });
+  res.querySelectorAll('[data-ii]').forEach(b => b.onchange = () => { const k = +b.dataset.ii; b.checked ? I.fora.delete(k) : I.fora.add(k); desenharImport(c); });
+  const z = $('#imp-z'); if (z) z.onchange = () => { I.zerar = z.checked; desenharImport(c); };
+  $('#imp-ok').onclick = () => gravarImport(c);
+}
+async function gravarImport(c) {
+  const I = S.imp; const btn = $('#imp-ok'); const msg = $('#imp-m'); btn.disabled = true;
+  const tag = `[Relatório ${I.arquivo.slice(0, 60)}]`; const P = I.pid;
+  const tarefas = [];
+  I.ctx.conts.filter(x => /^\[Relatório /.test(x.justificativa || '')).forEach(x => tarefas.push(['retirar', { p_id: x.id, p_parceiro: P }]));
+  const base = { competencia_id: c.id };
+  const sv = p => tarefas.push(['salvar', { p: { ...base, ...p }, p_parceiro: P }]);
+  I.itens.filter(i => !I.fora.has(i.i)).forEach(i => {
+    const onde = `${tag} ${i.aba}, linha ${i.linha}: ${i.loja}${i.nf ? ` (NF/ref ${i.nf})` : ''}${i.obs ? ` · ${i.obs}` : ''}`;
+    if (i.tipo === 'malote') { const q = Math.max(0, Math.round(i.qtd ?? 0)); if (q !== i.alvo.feitos) sv({ tipo: 'malote', ref: i.alvo.cod_int, realizado: q, justificativa: onde }); }
+    else if (i.tipo === 'kit') { sv({ tipo: 'kit', ref: i.alvo.id_umov, valor: Math.round(i.total * 100) / 100, descricao: i.loja, cidade: i.cidade, justificativa: onde });
+      i.kitsExtra.forEach(k => sv({ tipo: 'kit', ref: k.id_umov, valor: 0, descricao: i.loja, cidade: i.cidade, justificativa: `${tag} incluído na linha ${i.linha} (${i.loja})` })); }
+    else if (i.tipo === 'extra') sv({ tipo: 'kit_extra', valor: Math.round(i.total * 100) / 100, descricao: [i.loja, i.nf].filter(Boolean).join(' · '), cidade: i.cidade, justificativa: onde });
+    else if (i.tipo === 'fora') { const q = i.qtd && i.qtd > 0 ? i.qtd : 1; sv({ tipo: 'servico', servico: 'Outro', quantidade: q, valor: Math.round((i.vu ?? i.total / q) * 10000) / 10000, descricao: `${i.loja} (ponto fora da carteira)`, cidade: i.cidade, justificativa: onde }); }
+  });
+  if (I.zerar) I.naoCobrados.forEach(k => sv({ tipo: 'kit', ref: k.id_umov, valor: 0, descricao: k.cliente, cidade: k.cidade, justificativa: `${tag} kit do Umov não cobrado no relatório` }));
+  let feitas = 0, erros = [];
+  const rodar = async ([tipo, args]) => { try { await q(sb.rpc(tipo === 'retirar' ? 'retirar_contestacao' : 'salvar_contestacao', args)); } catch (e) { erros.push(e.message); } feitas++; btn.textContent = `Gravando ${feitas} de ${tarefas.length}…`; };
+  const ret = tarefas.filter(t => t[0] === 'retirar'), novas = tarefas.filter(t => t[0] !== 'retirar');
+  for (let k = 0; k < ret.length; k += 8) await Promise.all(ret.slice(k, k + 8).map(rodar));
+  for (let k = 0; k < novas.length; k += 8) await Promise.all(novas.slice(k, k + 8).map(rodar));
+  S.imp = null;
+  await I.ctx.recarregar();
+  const box = $('#impbox'); if (box) box.innerHTML = `<div class="msg ${erros.length ? 'alerta' : 'ok'}">Relatório importado: ${fmtN(novas.length)} ajustes gravados${ret.length ? ` (a importação anterior foi substituída)` : ''}.${erros.length ? ` ${erros.length} não gravaram: ${esc([...new Set(erros)].slice(0, 3).join(' · '))}` : ''} Confira as abas Malote, Kits/Spot e Serviços e envie em "Resumo e envio".</div>`;
 }
 
 // ---------- Envio do relatório e conferência ----------
