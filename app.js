@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1450';
+const VERSAO = '2026.11.03-1510';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -200,6 +200,17 @@ const ETAPAS_PEND = {
   lote: ['NF conferida: montar lote', 'financeiro', 'marca'], pagar: ['Em lote: aguardando pagamento', 'financeiro', 'marca'], pago: ['Pago', 'ok', 'escuro'],
 };
 const GRUPO_PEND = [['parceiro', 'Cobrar do parceiro'], ['gsm', 'Com a GSM'], ['financeiro', 'Com o financeiro'], ['ok', 'Concluídos'], ['todos', 'Todos']];
+// Data de pagamento do mês seguinte à competência, a partir do "dia de pagamento" do cadastro
+const FERIADOS_FIXOS = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'];
+function dataPagamento(dia, mesComp) {
+  if (!dia || !mesComp) return null;
+  const [y, mo] = mesComp.slice(0, 7).split('-').map(Number); const ano = mo === 12 ? y + 1 : y, mes = mo === 12 ? 1 : mo + 1;
+  const iso = d => `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const m = String(dia).match(/(\d+)\s*º?\s*dia\s*[uú]til/i);
+  if (m) { let n = 0; for (let d = 1; d <= 31; d++) { const dt = new Date(ano, mes - 1, d); if (dt.getMonth() !== mes - 1) break; const w = dt.getDay();
+    if (w === 0 || w === 6 || FERIADOS_FIXOS.includes(iso(d).slice(5))) continue; if (++n === +m[1]) return iso(d); } return null; }
+  const d = String(dia).match(/dia\s*(\d+)/i); return d ? iso(+d[1]) : null;
+}
 async function vPendencias() {
   const m = $('#main');
   m.innerHTML = `<div class="topo"><div><h1>Pendências e cobrança</h1><p>Em que etapa está cada parceiro no mês e de quem depende o próximo passo. Use "Cobrar do parceiro" para saber quem precisa mandar a base, responder itens ou mandar a NF.</p></div>${seletorComp(false)}</div><div id="pend" class="carregando">Carregando…</div>`;
@@ -232,14 +243,24 @@ async function vPendencias() {
     else if (divs.some(d => d.envio_id === e.id)) { k = 'responder'; desde = e.enviado_em; }
     else { k = 'analise'; desde = e.enviado_em; }
     return { p, k, desde, d: dias(desde), valor: f ? (f.a_pagar ?? f.valor_aprovado) : null, atr: atrasado(k) }; });
-  S.pendGrupo = S.pendGrupo || 'parceiro';
-  const vis = L.filter(x => S.pendGrupo === 'todos' || ETAPAS_PEND[x.k][1] === S.pendGrupo).sort((a, b) => (b.atr - a.atr) || (b.d ?? -1) - (a.d ?? -1) || (a.p.regiao || '').localeCompare(b.p.regiao || ''));
-  const cont = g => L.filter(x => g === 'todos' || ETAPAS_PEND[x.k][1] === g).length;
-  const porEtapa = Object.keys(ETAPAS_PEND).map(k => [k, L.filter(x => x.k === k).length]).filter(([, n]) => n);
+  S.pendGrupo = S.pendGrupo || 'parceiro'; S.pendDia = S.pendDia || 'todos';
+  const diaDe = p => p.dia_pagamento || 'Sem dia cadastrado';
+  const ordemDia = d => { const dt = dataPagamento(d, c.mes); return dt || '9999'; };
+  const DIAS = [...new Set(L.map(x => diaDe(x.p)))].sort((a, b) => ordemDia(a).localeCompare(ordemDia(b)));
+  if (S.pendDia !== 'todos' && !DIAS.includes(S.pendDia)) S.pendDia = 'todos';
+  const LD = L.filter(x => S.pendDia === 'todos' || diaDe(x.p) === S.pendDia);
+  const vis = LD.filter(x => S.pendGrupo === 'todos' || ETAPAS_PEND[x.k][1] === S.pendGrupo).sort((a, b) => (b.atr - a.atr) || (b.d ?? -1) - (a.d ?? -1) || (a.p.regiao || '').localeCompare(b.p.regiao || ''));
+  const cont = g => LD.filter(x => g === 'todos' || ETAPAS_PEND[x.k][1] === g).length;
+  const porEtapa = Object.keys(ETAPAS_PEND).map(k => [k, LD.filter(x => x.k === k).length]).filter(([, n]) => n);
   const msg = x => { const nomeM = nomeMes(c.mes); const t = { sem_envio: `conferir e enviar a base de ${nomeM} no portal`, responder: `responder os itens da validação de ${nomeM} no portal`, devolvido: `corrigir e reenviar a base de ${nomeM} (a GSM devolveu com um comentário)`, sem_nf: `enviar a NF de ${nomeM} pelo portal${x.valor ? `, no valor de ${BRL2(x.valor)}` : ''}`, nf_recusada: `enviar uma nova NF de ${nomeM} (a anterior foi recusada ou a soma não bate)` }[x.k];
     const pz = prazoDe(x.k); const tp = pz ? (x.atr ? ` O prazo era ${fmtD(pz)}.` : ` O prazo é ${fmtD(pz)}.`) : '';
     return t ? `Olá, ${x.p.nome}! Tudo bem? Para fecharmos ${nomeM}, falta ${t}: ${location.origin + location.pathname}.${tp} Qualquer dúvida, estou à disposição. Obrigado!` : ''; };
+  const resumoDia = d => { const xs = L.filter(x => diaDe(x.p) === d); const prontos = xs.filter(x => ['lote', 'pagar', 'pago'].includes(x.k)).length; return { n: xs.length, prontos, dt: dataPagamento(d, c.mes) }; };
   $('#pend').outerHTML = `
+    <section class="bloco" style="padding:12px 16px"><div class="linha" style="align-items:center;gap:8px"><b style="font-size:14px">Pagamento:</b>
+      <button class="btn ${S.pendDia === 'todos' ? '' : 'sec'} peq" data-pd="todos">Todos (${L.length})</button>
+      ${DIAS.map(d => { const r = resumoDia(d); return `<button class="btn ${S.pendDia === d ? '' : 'sec'} peq" data-pd="${esc(d)}" title="${r.prontos} de ${r.n} com NF conferida ou já em lote">${esc(d)}${r.dt ? ` · ${fmtD(r.dt)}` : ''} (${r.prontos}/${r.n})</button>`; }).join('')}</div>
+      ${S.pendDia !== 'todos' ? (() => { const r = resumoDia(S.pendDia); return `<p class="nota" style="margin:8px 0 0">${r.dt ? `Pagamento em <b>${fmtD(r.dt)}</b> · ` : ''}<b>${r.prontos} de ${r.n}</b> parceiros prontos para pagar (NF conferida, em lote ou pago). Os números entre parênteses nos botões mostram prontos / total.</p>`; })() : '<p class="nota" style="margin:8px 0 0">Escolha um dia para ver só os parceiros que recebem nessa data. Entre parênteses: prontos para pagar / total.</p>'}</section>
     <div class="kpis">${GRUPO_PEND.slice(0, 4).map(([g, t]) => `<div class="kpi ${g === 'parceiro' && cont(g) ? 'alerta' : 'neutro'}"><small>${t}</small><b>${cont(g)}</b><span>${g === 'ok' ? 'parceiros pagos' : 'parceiros'}</span></div>`).join('')}</div>
     <p class="nota" style="margin:0"><b>Prazos do mês:</b> base até ${c.prazo_envio ? fmtD(c.prazo_envio) : '(não definido)'} · NF até ${c.prazo_nf ? fmtD(c.prazo_nf) : '(não definido)'}${L.some(x => x.atr) ? ` · <b style="color:var(--brand-deep)">${L.filter(x => x.atr).length} parceiro(s) com prazo vencido</b>` : ''}. Defina em Liberar competência.</p>
     <p class="nota" style="margin:0">${porEtapa.map(([k, n]) => `${esc(ETAPAS_PEND[k][0])}: <b>${n}</b>`).join(' · ')}${!c.liberada_parceiros ? ' · <b>Atenção: o mês ainda não foi liberado para os parceiros.</b>' : ''}</p>
@@ -247,19 +268,20 @@ async function vPendencias() {
       <div class="linha"><button class="btn sec peq" id="pd-mail">Copiar e-mails da lista</button><button class="btn sec peq" id="pd-xls">Baixar Excel</button></div></div>
       <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Etapa</th><th class="n">Há quantos dias</th><th class="n">Valor</th><th>Contato</th><th></th></tr></thead><tbody>
       ${vis.map((x, i) => { const [t, , cls] = ETAPAS_PEND[x.k]; const mm = msg(x);
-        return `<tr><td><b>${esc(x.p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}</span></td><td><span class="pill ${cls}">${esc(t)}</span>${x.atr ? ' <span class="pill marca">Prazo vencido</span>' : ''}</td>
+        return `<tr><td><b>${esc(x.p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')} · ${esc(diaDe(x.p))}</span></td><td><span class="pill ${cls}">${esc(t)}</span>${x.atr ? ' <span class="pill marca">Prazo vencido</span>' : ''}</td>
         <td class="n" style="color:${(x.d ?? 0) > 5 && ETAPAS_PEND[x.k][1] === 'parceiro' ? 'var(--brand-deep)' : 'inherit'}">${x.d == null ? '—' : x.d}</td><td class="n">${x.valor != null ? BRL2(x.valor) : '—'}</td>
         <td style="font-size:13px">${x.p.email_contato ? `<a href="mailto:${esc(x.p.email_contato)}?subject=${encodeURIComponent('Fechamento ' + nomeMes(c.mes) + ' · GSM')}&body=${encodeURIComponent(mm)}">${esc(x.p.email_contato)}</a>` : '<span class="nota">sem e-mail no cadastro</span>'}</td>
         <td style="white-space:nowrap">${mm ? `<button class="btn sec peq" data-cp="${i}">Copiar mensagem</button> ` : ''}<button class="btn sec peq" data-ab="${i}">Abrir</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="nota">Ninguém nesta situação.</td></tr>'}
       </tbody></table></div>
       <p class="nota">"Há quantos dias": desde a liberação do mês (sem envio), desde o envio (itens e análise), desde a aprovação (falta a NF) ou desde a NF enviada. Em vermelho, cobranças com mais de 5 dias. "Copiar mensagem" copia um texto pronto para WhatsApp ou e-mail; o e-mail abre já preenchido.</p></section>`;
   m.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => { S.pendGrupo = b.dataset.pg; vPendencias(); });
+  m.querySelectorAll('[data-pd]').forEach(b => b.onclick = () => { S.pendDia = b.dataset.pd; vPendencias(); });
   m.querySelectorAll('[data-cp]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(msg(vis[+b.dataset.cp])); b.textContent = 'Copiado'; setTimeout(() => b.textContent = 'Copiar mensagem', 1500); } catch (e) { alertaTopo('Não foi possível copiar: ' + e.message); } });
   m.querySelectorAll('[data-ab]').forEach(b => b.onclick = () => { const x = vis[+b.dataset.ab]; const g = ETAPAS_PEND[x.k][1];
     if (['analise'].includes(x.k)) { S.confParc = x.p.id; location.hash = '#conferencia'; } else if (x.k === 'nf_conferir') location.hash = '#notas'; else if (g === 'financeiro' || x.k === 'pago') location.hash = '#pacote';
     else { S.previaParc = x.p.id; S.compPId = c.id; location.hash = '#verparceiro'; } });
   $('#pd-mail').onclick = async () => { const em = [...new Set(vis.map(x => x.p.email_contato).filter(Boolean))].join('; '); if (!em) return alertaTopo('Nenhum e-mail cadastrado nesta lista.'); try { await navigator.clipboard.writeText(em); $('#pd-mail').textContent = `${em.split(';').length} e-mails copiados`; } catch (e) { alertaTopo(e.message); } };
-  $('#pd-xls').onclick = () => baixarXlsx(`Pendencias_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Pendências e cobrança', sub: `Competência ${nomeMes(c.mes)}`, abas: [{ nome: 'Pendências', linhas: vis.map(x => ({ 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })) }] });
+  $('#pd-xls').onclick = () => baixarXlsx(`Pendencias_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Pendências e cobrança', sub: `Competência ${nomeMes(c.mes)}`, abas: [{ nome: 'Pendências', linhas: vis.map(x => ({ 'Data de pagamento': dataPagamento(x.p.dia_pagamento, c.mes) ? fmtD(dataPagamento(x.p.dia_pagamento, c.mes)) : '', 'Região': x.p.regiao, 'Parceiro': x.p.nome, 'Etapa': ETAPAS_PEND[x.k][0], 'Com quem': GRUPO_PEND.find(g => g[0] === ETAPAS_PEND[x.k][1])?.[1] || '', 'Dias': x.d, 'Prazo vencido': x.atr ? 'Sim' : '', 'Valor': x.valor != null ? Number(x.valor) : null, 'E-mail': x.p.email_contato || '', 'Dia de pagamento': x.p.dia_pagamento || '' })) }] });
 }
 
 // ---------- Base do mês do parceiro em Excel (para mandar enquanto nem todos usam o portal) ----------
