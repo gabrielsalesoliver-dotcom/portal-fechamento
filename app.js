@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1700';
+const VERSAO = '2026.11.03-1720';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -290,7 +290,7 @@ async function exportarBaseParceiro(c, parc) {
   const [pts, upp, kits, contr] = await Promise.all([
     todas(() => sb.from('pontos_vigentes').select('cod_int,cliente,loja,cidade,uf,frequencia,previsto,v_unit').eq('competencia_id', c.id).eq('parceiro_id', pid).order('cliente')),
     todas(() => sb.from('umov_por_ponto').select('cod_int,retornadas,atendimentos').eq('competencia_id', c.id).eq('parceiro_id', pid)),
-    todas(() => sb.from('umov_vigente').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
+    todas(() => sb.from('umov_fechamento').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
     q(sb.from('contratos').select('valor_fixo,inicio,fim').eq('parceiro_id', pid).order('inicio', { ascending: false })),
   ]);
   if (!pts.length && !kits.length) return null;
@@ -1318,12 +1318,13 @@ async function baseParceiro(c) {
   const [pts, upp, kits, contr, conts, envs, imp] = await Promise.all([
     todas(() => sb.from('pontos_vigentes').select('cod_int,cliente,loja,cidade,uf,frequencia,previsto,v_unit').eq('competencia_id', c.id).eq('parceiro_id', pid).order('cliente')),
     todas(() => sb.from('umov_por_ponto').select('cod_int,retornadas,atendimentos').eq('competencia_id', c.id).eq('parceiro_id', pid)),
-    todas(() => sb.from('umov_vigente').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
+    todas(() => sb.from('umov_fechamento').select('id_umov,grupo_cliente,cliente,cidade,situacao,data_prevista,data_final').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('tipo', 'kit').order('data_prevista')),
     q(sb.from('contratos').select('valor_fixo,inicio,fim').eq('parceiro_id', pid).order('inicio', { ascending: false })),
     q(sb.from('base_contestacoes').select('*').eq('competencia_id', c.id).eq('parceiro_id', pid).eq('ativo', true).order('criado_em')),
     q(sb.from('envios').select('id,versao,status,enviado_em,totais').eq('competencia_id', c.id).eq('parceiro_id', pid).order('versao', { ascending: false }).limit(1)),
     q(sb.from('umov_importacoes').select('importado_em,arquivo').eq('competencia_id', c.id).eq('status', 'ativa').limit(1)),
   ]);
+  const per = (await q(sb.from('periodos_parceiro').select('inicio,fim,obs').eq('competencia_id', c.id).eq('parceiro_id', pid)))[0] || null;
   const adiMes = (await q(sb.from('adiantamentos').select('valor,status').eq('competencia_id', c.id).eq('parceiro_id', pid).in('status', ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago']))).reduce((a, x) => a + Number(x.valor || 0), 0);
   box.className = '';
   if (!pts.length && !kits.length) { box.innerHTML = '<div class="msg alerta">A GSM ainda não gerou a sua base deste mês.</div>'; return; }
@@ -1353,14 +1354,23 @@ async function baseParceiro(c) {
     </div>
     <div class="linha" style="justify-content:flex-end;margin:-6px 0 0">${S.previa && !trava ? '<button class="btn peq" id="imp-rel">Importar relatório do parceiro</button>' : ''}<button class="btn sec peq" id="bx-base">Baixar base em Excel</button></div>
     <div id="impbox"></div>
+    ${per || (S.previa && !trava) ? `<div class="msg ${per ? 'alerta' : ''}" style="margin:6px 0;padding:8px 12px" id="per-box">${per ? `<b>Período de apuração: ${fmtD(per.inicio)} a ${fmtD(per.fim)}</b>${per.obs ? ` · ${esc(per.obs)}` : ''}. Só os atendimentos do Umov dentro dessas datas contam neste fechamento, e o previsto é proporcional ao período.` : 'Fechamento do mês inteiro.'}
+      ${S.previa && !trava ? ` <a href="#" id="per-ed">${per ? 'alterar' : 'Definir um período (ex.: quinzena)'}</a>${per ? ' · <a href="#" id="per-rm">voltar para o mês inteiro</a>' : ''}` : ''}</div>` : ''}
     <p class="nota" style="margin:0">Umov ${imp[0] ? `atualizado em ${fmtDH(imp[0].importado_em)}` : 'ainda não importado neste mês'}. ${ticket != null ? `Kits retornados valem o ticket médio de ${BRL2(ticket)} cada; se um kit foi maior, ajuste o valor e explique.` : '<b>Ticket médio de kits ainda não cadastrado pela GSM.</b>'}</p>
     ${trava ? `<div class="msg ok">${aprovado ? 'Mês aprovado pela GSM: a base não pode mais ser alterada.' : 'Mês fechado.'}</div>` : ''}
     <nav class="abas">${abas.map(([k, n]) => `<button type="button" data-ba="${k}" class="${S.baseAba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
     <div id="baseaba"></div>`;
   box.querySelectorAll('[data-ba]').forEach(b => b.onclick = () => { S.baseAba = b.dataset.ba; baseParceiro(c); });
   $('#bx-base').onclick = e => baixarBaseParceiro(c, S.parc, e.currentTarget);
-  const ib = $('#imp-rel'); if (ib) ib.onclick = () => importadorRelatorio(c, { pontos: pts.map(p => ({ ...p, feitos: um[p.cod_int] ? Number(um[p.cod_int].retornadas) || 0 : 0 })), kits, ticket: ticket ?? 0, conts, fixo, pid, recarregar: () => baseParceiro(c) });
-  if (S.imp && S.imp.pid === pid && S.imp.comp === c.id && $('#impbox')) desenharImport(c);
+  const salvaPer = async (ini, fim, obs) => { try { await q(sb.rpc('definir_periodo_parceiro', { p_comp: c.id, p_parceiro: pid, p_inicio: ini, p_fim: fim, p_obs: obs || null })); baseParceiro(c); } catch (e) { alertaTopo(e.message); } };
+  const pe = $('#per-ed'); if (pe) pe.onclick = ev => { ev.preventDefault(); const b = $('#per-box');
+    b.innerHTML = `<div class="linha" style="align-items:flex-end"><label class="campo">De<input type="date" class="peq" id="per-i" value="${per?.inicio || c.mes}"></label><label class="campo">Até<input type="date" class="peq" id="per-f" value="${per?.fim || ''}"></label>
+      <label class="campo" style="flex:1 1 220px">Observação<input class="peq" id="per-o" value="${esc(per?.obs || '')}" placeholder="ex.: 2ª quinzena"></label><button class="btn peq" id="per-ok">Salvar período</button></div>`;
+    $('#per-ok').onclick = () => salvaPer($('#per-i').value, $('#per-f').value, $('#per-o').value); };
+  const pr = $('#per-rm'); if (pr) pr.onclick = ev => { ev.preventDefault(); salvaPer(null, null, null); };
+  const ctxImp = () => ({ per, pontos: pts.map(p => ({ ...p, feitos: um[p.cod_int] ? Number(um[p.cod_int].retornadas) || 0 : 0 })), kits, ticket: ticket ?? 0, conts, fixo, pid, recarregar: () => baseParceiro(c) });
+  const ib = $('#imp-rel'); if (ib) ib.onclick = () => importadorRelatorio(c, ctxImp());
+  if (S.imp && S.imp.pid === pid && S.imp.comp === c.id && $('#impbox')) { if (S.imp.recarregarPer) { S.imp.recarregarPer = false; S.imp.ctx = ctxImp(); recasar(); } desenharImport(c); }
   const alvo = $('#baseaba'); const P = S.previa ? pid : null;
   const recarregar = () => baseParceiro(c);
   const anexar = async (file, tag) => { if (!file) return null; const path = `${pid}/${c.mes.slice(0, 7)}/base/${tag}_${Date.now()}_${safeName(file.name)}`; const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Anexo: ' + up.error.message); return path; };
@@ -1511,6 +1521,9 @@ function desenharImport(c) {
   const vis = I.itens.filter(i => I.filtro === 'todos' || (I.filtro === 'atencao' ? i.atencao : I.filtro === 'malote' ? (i.tipo === 'malote' || i.tipo === 'fora') : (i.tipo === 'kit' || i.tipo === 'extra' || (i.tipo === 'duplicado' && !i.alvo?.cod_int))));
   res.innerHTML = `
     <p class="nota" style="margin:8px 0 4px"><b>${esc(I.arquivo)}</b> · abas: ${I.abas.map(a => a.reconhecida ? `<label style="margin-right:10px"><input type="checkbox" data-aba="${esc(a.nome)}" ${I.usar[a.nome] ? 'checked' : ''}> ${esc(a.nome)} (${a.linhas} linhas${a.formato ? ` · relatório de ${a.formato}` : ''}${a.periodo ? ` · ${fmtD(a.periodo[0])} a ${fmtD(a.periodo[1])}` : ''})${a.outroMes ? ' <b style="color:var(--brand-deep)">parece ser de outro mês</b>' : ''}</label>` : `<span style="color:var(--muted);margin-right:10px">${esc(a.nome)} (não reconhecida)</span>`).join('')}</p>
+    ${(() => { const pa = I.abas.find(x => x.periodo && I.usar[x.nome]); const p0 = I.ctx.per; if (!pa) return '';
+      const igual = p0 && p0.inicio === pa.periodo[0] && p0.fim === pa.periodo[1];
+      return `<div class="msg ${igual ? 'ok' : 'alerta'}" style="margin:6px 0;padding:8px 12px">O relatório vai de <b>${fmtD(pa.periodo[0])} a ${fmtD(pa.periodo[1])}</b>. ${igual ? 'É o mesmo período de apuração deste fechamento: a comparação com o Umov já considera só essas datas.' : `${p0 ? `O período de apuração deste fechamento está como ${fmtD(p0.inicio)} a ${fmtD(p0.fim)}.` : 'Este fechamento está considerando o mês inteiro no Umov.'} Se o parceiro fecha por quinzena, use o período do relatório. <button class="btn peq" id="imp-per" data-i="${pa.periodo[0]}" data-f="${pa.periodo[1]}">Usar ${fmtD(pa.periodo[0])} a ${fmtD(pa.periodo[1])} como período deste fechamento</button>`}</div>`; })()}
     <div class="kpis">
       <div class="kpi neutro"><small>Total do relatório</small><b>${BRL2(totRel)}</b><span>${fmtN(inc.length)} linhas incluídas</span></div>
       <div class="kpi ${acima > 0.5 ? 'alerta' : 'neutro'}"><small>Malote acima do Umov</small><b>${BRL2(acima)}</b><span>${fmtN(mal.filter(i => i.dif > 0).length)} pontos · ${BRL2(abaixo)} abaixo</span></div>
@@ -1533,6 +1546,8 @@ function desenharImport(c) {
     <div id="imp-m"></div>`;
   res.querySelectorAll('[data-aba]').forEach(b => b.onchange = () => { I.usar[b.dataset.aba] = b.checked; recasar(); desenharImport(c); });
   res.querySelectorAll('[data-if]').forEach(b => b.onclick = () => { I.filtro = b.dataset.if; desenharImport(c); });
+  const bp = $('#imp-per'); if (bp) bp.onclick = async () => { bp.disabled = true; try { await q(sb.rpc('definir_periodo_parceiro', { p_comp: c.id, p_parceiro: I.ctx.pid, p_inicio: bp.dataset.i, p_fim: bp.dataset.f, p_obs: `Período do relatório ${I.arquivo}` }));
+    S.imp.recarregarPer = true; I.ctx.recarregar(); } catch (e) { bp.disabled = false; alertaTopo(e.message); } };
   res.querySelectorAll('[data-pp]').forEach(sel => sel.onchange = () => { if (!sel.value) return; I.manual[sel.dataset.pp] = sel.value; recasar(); desenharImport(c); });
   res.querySelectorAll('[data-trocar]').forEach(l => l.onclick = ev => { ev.preventDefault(); const it = I.itens.find(x => x.i === +l.dataset.trocar); const d = document.createElement('div'); d.innerHTML = selPontoImp(it); l.replaceWith(d);
     d.querySelector('select').onchange = e => { if (!e.target.value) return; I.manual[`${it.aba}:${it.linha}`] = e.target.value; recasar(); desenharImport(c); }; });
