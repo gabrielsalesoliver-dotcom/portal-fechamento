@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1420';
+const VERSAO = '2026.11.03-1440';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -683,12 +683,13 @@ async function rotasSemParceiro(ativa) {
       b.disabled = true; let ok = 0; const erros = [];
       for (let k = 0; k < itens.length; k += 6) { await Promise.all(itens.slice(k, k + 6).map(async x => { try { await executar(x.i, x.v); ok++; } catch (e) { erros.push(e.message); } }));
         $(`#${pre}-st`).textContent = `${ok + erros.length} de ${itens.length}…`; }
+      if (pre === 'm' && ok) { try { await q(sb.rpc('completar_pontos_umov', { p_cods: itens.map(x => String(pendM[x.i].cod_int)) })); } catch (e) { erros.push('Complemento de loja/valor/frequência: ' + e.message); } }
       if (pre === 'c' || itens.some(x => x.v === '__bp')) { try { await q(sb.rpc('vincular_por_cidade', { p_importacao: ativa.id })); } catch (e) {} }
       await umovAtivaEHist(); alertaOk(`${ok} ${pre === 'm' ? 'pontos cadastrados' : 'cidades vinculadas'}${erros.length ? ` · ${erros.length} com erro: ${[...new Set(erros)].slice(0, 2).join(' · ')}` : ''}.`); };
   };
   lote('m', 'mck', 'data-mrow', async (i, v) => { const r = pendM[i];
     const x = (r.cidade || '').match(/^(.*?)[\s\-]+([A-Za-z]{2})\s*$/);
-    const dados = { cod_int: r.cod_int, cliente: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null) };
+    const dados = { cod_int: r.cod_int, cliente: r.grupo_cliente || r.cliente, loja: r.cliente, cidade: x ? x[1] : r.cidade, uf: r.uf || (x ? x[2].toUpperCase() : null) };
     if (v === '__bp') await q(sb.rpc('marcar_ponto_base_propria', { p: dados, p_motivo: 'Cadastrado a partir do Umov como base própria' }));
     else await q(sb.rpc('salvar_ponto', { p: { ...dados, parceiro_id: v }, p_motivo: 'Cadastrado a partir do Umov' })); });
   lote('c', 'cck', 'data-crow', async (i, v) => { const r = pend[i];
