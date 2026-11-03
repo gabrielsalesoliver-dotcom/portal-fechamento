@@ -1,14 +1,14 @@
 // Portal de Fechamento GSM — telas do administrador (passos 1, 2 e 4 do ciclo)
-import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.10.30-1900';
-import BR from './brasil.js?v=2026.10.30-1900';
-import { gerarModelo } from './modelo.js?v=2026.10.30-1900';
+import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-0830';
+import BR from './brasil.js?v=2026.11.03-0830';
+import { gerarModelo } from './modelo.js?v=2026.11.03-0830';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.10.30-1900';
+const VERSAO = '2026.11.03-0830';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2477,7 +2477,7 @@ async function vDiretoria(el) {
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
-    todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor')).catch(() => []),
+    todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor,origem')).catch(() => []),
   ]);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
   const hojeMes = new Date().toISOString().slice(0, 7) + '-01';
@@ -2850,10 +2850,13 @@ function visaoGeral(box, D, c, ant) {
   const aPagar = Math.max(0, custo - adiantado - pago - antecTot);
   const save = (D.adis || []).filter(a => a.competencia_id === c.id).reduce((a, x) => a + n(x.valor_desconto), 0) + antecTot;
   // Resultado da gestão: o que a GSM deixou de pagar
+  // Desconto bruto do parceiro no mês: o líquido do fechamento ou, quando o portal registrou o detalhe, a soma dos descontos detalhados
+  // (um acréscimo lançado como ajuste não pode esconder o save da antecipação nem os repasses)
+  const descBruto = (r, det) => Math.max(0, -n(r.descontos), det.filter(x => x.origem === 'portal').reduce((a, x) => a + n(x.valor), 0));
   const ganhos = id => { const f = doMes(id); const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
     const comP = f.filter(r => pp[r.parceiro_id] != null && fechado(r)); const abaixo = comP.reduce((a, r) => a + Math.max(0, pp[r.parceiro_id] - n(r.malote)), 0), acimaV = comP.reduce((a, r) => a + Math.max(0, n(r.malote) - pp[r.parceiro_id]), 0);
     const val = Math.max(0, abaixo - acimaV);
-    const cat = {}; f.forEach(r => { const dt = -n(r.descontos); if (dt <= 0) return; const det = (D.ddet || []).filter(x => x.competencia_id === id && x.parceiro_id === r.parceiro_id);
+    const cat = {}; f.forEach(r => { const det = (D.ddet || []).filter(x => x.competencia_id === id && x.parceiro_id === r.parceiro_id); const dt = descBruto(r, det); if (dt <= 0) return;
       const ant = Math.min(dt, det.filter(x => x.categoria === 'antecipacao').reduce((a, x) => a + n(x.valor), 0)); cat.antecipacao = (cat.antecipacao || 0) + ant;
       let resto = dt - ant; ['repasse', 'penalidade', 'ajuste'].forEach(k => { const v = Math.min(resto, det.filter(x => x.categoria === k).reduce((a, x) => a + n(x.valor), 0)); cat[k] = (cat[k] || 0) + v; resto -= v; }); cat.ajuste = (cat.ajuste || 0) + resto; });
     const antPl = cat.antecipacao || 0; const d = (cat.repasse || 0) + (cat.penalidade || 0) + (cat.ajuste || 0);
@@ -2866,8 +2869,8 @@ function visaoGeral(box, D, c, ant) {
   const ganhosParc = ids => { const L = {}; ids.forEach(id => { const pp = Object.fromEntries(prevDe(id).map(p => [p.parceiro_id, n(p.previsto)]));
       doMes(id).forEach(r => { const x = L[r.parceiro_id] || (L[r.parceiro_id] = { id: r.parceiro_id, p: pm[r.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 });
         if (pp[r.parceiro_id] != null && fechado(r)) { x.prev += pp[r.parceiro_id]; x.mal += n(r.malote); x.abaixo += Math.max(0, pp[r.parceiro_id] - n(r.malote)); x.acima += Math.max(0, n(r.malote) - pp[r.parceiro_id]); }
-        const dt = Math.max(0, -n(r.descontos)); const ant = Math.min(dt, (D.ddet || []).filter(d => d.competencia_id === id && d.parceiro_id === r.parceiro_id && d.categoria === 'antecipacao').reduce((a, d) => a + n(d.valor), 0));
-        x.desc += dt - ant + Math.min(0, -n(r.descontos)); x.save += n(r.antec_desconto) + ant; });
+        const detP = (D.ddet || []).filter(d => d.competencia_id === id && d.parceiro_id === r.parceiro_id); const dt = descBruto(r, detP); const ant = Math.min(dt, detP.filter(d => d.categoria === 'antecipacao').reduce((a, d) => a + n(d.valor), 0));
+        x.desc += dt - ant + (dt > 0 ? 0 : Math.min(0, -n(r.descontos))); x.save += n(r.antec_desconto) + ant; });
       (D.adis || []).filter(a => a.competencia_id === id).forEach(a => { const x = L[a.parceiro_id] || (L[a.parceiro_id] = { id: a.parceiro_id, p: pm[a.parceiro_id] || {}, prev: 0, mal: 0, abaixo: 0, acima: 0, desc: 0, save: 0 }); x.save += n(a.valor_desconto); }); });
     return Object.values(L).map(x => ({ ...x, val: x.abaixo - x.acima, total: x.abaixo - x.acima + x.desc + x.save })); };
   const projMes = Array.isArray(D.proj) ? D.proj.filter(r => r.mes === c.mes).reduce((a, r) => a + n(r.calendarizado), 0) : null;
