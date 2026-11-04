@@ -9,7 +9,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.04-0845';
+const VERSAO = '2026.11.04-1700';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1754,7 +1754,7 @@ function formParceiro(p = {}, fixo) {
       <label class="campo">Tipo de pagamento<input class="peq" id="f-forma" list="l-forma" value="${esc(p.forma_pagamento || '')}" style="width:130px"></label>
       <label class="campo" style="flex:1 1 220px">Dados p/ pagamento (chave PIX, "Boleto"…)<input class="peq" id="f-dados" value="${esc(p.dados_pagamento || '')}"></label>
       <label class="campo">Modelo (capa)<input class="peq" id="f-mod" list="l-mod" value="${esc(p.modelo_capa || '')}" style="width:130px"></label>
-      <datalist id="l-doc"><option>NF</option><option>NF/FATURA</option><option>NF/BOLETO</option><option>FATURA/BOLETO</option><option>CT-e</option><option>BOLETO</option></datalist>
+      <datalist id="l-doc"><option>NF</option><option>NF/FATURA</option><option>NF/BOLETO</option><option>FATURA/BOLETO</option><option>CT-e</option><option>BOLETO</option><option>SEM NF</option></datalist>
       <datalist id="l-emp"><option>GROUP</option><option>LOG</option></datalist><datalist id="l-forma"><option>PIX</option><option>BOLETO</option><option>TED</option></datalist><datalist id="l-mod"><option>Parceiro</option><option>Adiantamento</option></datalist>
     </div>
     <div class="linha" style="align-items:flex-end">
@@ -2048,7 +2048,7 @@ async function dadosLote(lote) {
     const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[f.parceiro_id] ?? 0); const final = n(f.valor_aprovado ?? f.valor_final);
     return { id: f.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(f.parceiro_id), calend, malote: n(f.malote), caixas: n(f.kits), extrasMal: n(f.fora_umov), desc: n(f.descontos),
       final, dif: final - calend, pagar: f.a_pagar != null ? n(f.a_pagar) : final - n(f.adiantado), adiantado: n(f.adiantado), data: lote.data_pagamento, status: f.pago_em ? 'Pago' : sit[f.parceiro_id] === 'conferida' ? 'Ok' : 'Aguardando NF',
-      doc: p.tipo_documento, nf: minhas.map(x => x.numero).join(' / ') || '-', emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: p.modelo_capa, nfs: minhas, pago: f.pago_em }; })
+      doc: p.tipo_documento, nf: minhas.map(x => x.numero).join(' / ') || (/^sem nf/i.test(p.tipo_documento || '') ? 'Sem NF' : '-'), emp: p.empresa_gsm, forma: p.forma_pagamento, dados: p.dados_pagamento, tipo: p.tipo, modelo: p.modelo_capa, nfs: minhas, pago: f.pago_em }; })
     .concat(adis.map(a => { const p = pm[a.parceiro_id] || {}; const f = fechMes.find(x => x.parceiro_id === a.parceiro_id) || {}; const calend = f.calendarizado != null ? n(f.calendarizado) : (pv[a.parceiro_id] ?? 0); const final = f.valor_aprovado != null ? n(f.valor_aprovado) : null;
       return { id: a.parceiro_id, regiao: p.regiao, nome: p.nome, razao: p.razao_social, cnpj: fmtCNPJ(p.cnpj), contrato: fixo(a.parceiro_id), calend, malote: f.malote != null ? n(f.malote) : null, caixas: f.kits != null ? n(f.kits) : null, extrasMal: f.fora_umov != null ? n(f.fora_umov) : null, desc: f.descontos != null ? n(f.descontos) : null,
         final, dif: final != null ? final - calend : null, pagar: n(a.valor_liquido), adiantado: 0, data: lote.data_pagamento, status: a.status === 'pago' ? 'Pago' : 'Ok',
@@ -2403,6 +2403,7 @@ async function secaoNF(c) {
   ]);
   box.className = '';
   if (!res) { box.innerHTML = '<p class="nota">A NF é enviada aqui depois que a GSM aprovar o valor do mês.</p>'; return; }
+  if (res.sem_nf) { box.innerHTML = `<div class="msg ok"><b>Sem NF:</b> o seu fechamento é pago pela confirmação do valor aprovado (${BRL2(res.valor_esperado)}). Não é preciso enviar nota fiscal; a GSM encaminha ao financeiro.</div>`; return; }
   const esp = Number(res.valor_esperado), env = Number(res.valor_nfs), falta = esp - env;
   const [rot, cls] = SIT_NF[res.situacao] || [res.situacao, ''];
   box.innerHTML = `<div class="linha" style="justify-content:space-between"><span>Emita a NF pelo valor líquido. Pode dividir em mais de uma NF, desde que a soma bata.</span><span class="pill ${cls}">${rot}</span></div>
@@ -2564,7 +2565,7 @@ async function vNotas() {
     <section class="bloco"><div class="linha">${[['todos', 'Todos', res.length], ['a_conferir', 'A conferir', cont('a_conferir')], ['aguardando', 'Aguardando NF', cont('aguardando')], ['faltando', 'Soma diferente', cont('faltando')], ['conferida', 'Conferidas', cont('conferida')]]
       .map(([k, n, qq]) => `<button class="btn ${S.nfFiltro === k ? '' : 'sec'} peq" data-nf="${k}">${n} (${qq})</button>`).join('')}</div>
     <div class="tabela"><table id="nftab"><thead><tr><th>Parceiro</th><th class="n">Aprovado</th><th class="n">Adiantado</th><th class="n">Líquido esperado</th><th>Nota fiscal</th><th class="n">Diferença</th><th>Situação</th><th></th></tr></thead><tbody>
-    ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
+    ${vis.map(r => { const p = pm[r.parceiro_id] || {}; const [rot, cls] = r.sem_nf ? ['Sem NF (valor confirmado)', 'escuro'] : SIT_NF[r.situacao] || [r.situacao, '']; const dif = Number(r.valor_nfs) - Number(r.valor_esperado);
       const minhas = nfs.filter(n => n.parceiro_id === r.parceiro_id);
       // Cada NF em bloco compacto dentro da célula; só os sinais de atenção ficam visíveis (os "ok" vão no título)
       const blocoNF = n => { const ck = n.checagens || {}; const [r2, k2] = ST_NF[n.status] || [n.status, ''];
@@ -2579,7 +2580,7 @@ async function vNotas() {
           ${alertas ? `<div style="margin-top:3px">${alertas}</div>` : ''}${n.motivo_recusa ? `<div class="nota">Recusa: ${esc(n.motivo_recusa)}</div>` : ''}</div>`; };
       const acoesNF = n => c.status === 'fechada' ? '' : `<div style="${minhas.length > 1 ? 'padding:4px 0' : ''}">${n.status === 'recebida' ? `<button class="btn peq" data-ok="${n.id}">Conferir</button> <button class="btn sec peq" data-rec="${n.id}">Recusar</button>` : `<button class="btn sec peq" data-reab="${n.id}">Desfazer</button>`}${minhas.length > 1 ? ` <span class="nota">NF ${esc(n.numero || '')}</span>` : ''}</div>`;
       return `<tr><td><b>${esc(p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome || '')} · ${esc(fmtCNPJ(p.cnpj))} · ${esc(grupoPag(r).k)}</span></td><td class="n">${BRL2(r.valor_aprovado)}</td><td class="n">${Number(r.adiantado) ? BRL2(r.adiantado) : '—'}</td><td class="n"><b>${BRL2(r.valor_esperado)}</b>${r.antec_status === 'liberada' && Number(r.antec_desconto) ? `<br><span class="nota">antecipação −${BRL2(r.antec_desconto)}</span>` : r.antec_status === 'solicitada' ? '<br><span class="nota">antecipação pedida</span>' : ''}</td>
-        <td>${minhas.length ? minhas.map(blocoNF).join('') + (minhas.length > 1 ? `<span class="nota">${minhas.length} NFs · soma ${BRL2(r.valor_nfs)}</span>` : '') : '<span class="nota">—</span>'}</td>
+        <td>${r.sem_nf ? '<span class="nota">Parceiro não emite NF: pagamento pela confirmação do valor</span>' : minhas.length ? minhas.map(blocoNF).join('') + (minhas.length > 1 ? `<span class="nota">${minhas.length} NFs · soma ${BRL2(r.valor_nfs)}</span>` : '') : '<span class="nota">—</span>'}</td>
         <td class="n" style="color:${Math.abs(dif) > 0.009 && r.nfs ? 'var(--brand-deep)' : 'var(--ink)'}">${r.nfs ? (dif > 0 ? '+' : '') + BRL2(dif) : '—'}</td><td><span class="pill ${cls}">${rot}</span></td>
         <td style="white-space:nowrap">${minhas.map(acoesNF).join('')}</td></tr>`; }).join('')}
     </tbody></table></div></section>` : '<div class="msg alerta">Nenhum parceiro com valor aprovado neste mês. A NF entra depois da aprovação em "Conferência e aprovação".</div>');
