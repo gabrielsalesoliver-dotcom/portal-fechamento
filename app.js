@@ -2,14 +2,14 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.03-1700';
+import { lerLinhas, casar } from './importa.js?v=2026.11.04-0750';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.03-1740';
+const VERSAO = '2026.11.04-0750';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1496,8 +1496,9 @@ function recasar() {
     else if (it.tipo === 'kit') it.sit = [`Kit no Umov${it.kitsExtra.length ? ` (+${it.kitsExtra.length} kit${it.kitsExtra.length > 1 ? 's' : ''} na mesma linha)` : ''}`, 'escuro'];
     else if (it.tipo === 'extra') it.sit = ['Não está no Umov', 'alerta'];
     else if (it.tipo === 'fora') it.sit = ['Ponto fora da carteira', 'alerta'];
+    else if (it.tipo === 'adicional') it.sit = [`Atendimento extra (${fmtN(it.adicional)} × ${BRL2(it.vu)})`, 'escuro'];
     else if (it.tipo === 'duplicado') it.sit = ['Cobrado em dobro', 'marca'];
-    it.atencao = it.tipo !== 'malote' && it.tipo !== 'kit' || (it.tipo === 'malote' && it.dif > 0) || it.aviso.length > 0 || /conferir/.test(it.conf || '');
+    it.atencao = it.tipo !== 'malote' && it.tipo !== 'kit' && it.tipo !== 'adicional' || (it.tipo === 'malote' && it.dif > 0) || it.aviso.length > 0 || /conferir/.test(it.conf || '');
   });
   I.itens = itens; I.naoCobrados = naoCobrados.filter(k => k.situacao === 'Retornada de Campo');
   I.fora = new Set(itens.filter(i => i.tipo === 'duplicado').map(i => i.i));
@@ -1511,14 +1512,14 @@ function selPontoImp(i) { const I = S.imp; const pts = I.ctx.pontos; const sug =
 function desenharImport(c) {
   const I = S.imp; const res = $('#imp-res'); if (!res) { if ($('#impbox')) importadorRelatorio(c, I.ctx, true); return; }
   const inc = I.itens.filter(i => !I.fora.has(i.i)); const soma = (l, f) => l.reduce((a, x) => a + (Number(f(x)) || 0), 0);
-  const mal = inc.filter(i => i.tipo === 'malote'), kit = inc.filter(i => i.tipo === 'kit'), ext = inc.filter(i => i.tipo === 'extra'), fora = inc.filter(i => i.tipo === 'fora');
+  const mal = inc.filter(i => i.tipo === 'malote'), kit = inc.filter(i => i.tipo === 'kit'), ext = inc.filter(i => i.tipo === 'extra'), fora = inc.filter(i => i.tipo === 'fora'), adic = inc.filter(i => i.tipo === 'adicional');
   const dup = I.itens.filter(i => i.tipo === 'duplicado');
   const acima = soma(mal.filter(i => i.dif > 0), i => i.dif * (Number(i.alvo.v_unit) || 0)), abaixo = soma(mal.filter(i => i.dif < 0), i => -i.dif * (Number(i.alvo.v_unit) || 0));
   const codsRel = new Set(mal.map(i => i.alvo.cod_int));
   const malPortal = soma(I.ctx.pontos, p => (codsRel.has(p.cod_int) ? Math.round(mal.find(i => i.alvo.cod_int === p.cod_int).qtd ?? 0) : p.feitos) * (Number(p.v_unit) || 0));
   const totRel = soma(inc, i => i.total);
-  const totPortal = I.ctx.fixo + malPortal + soma(kit, i => i.total) + soma(ext, i => i.total) + soma(fora, i => i.total) + (I.zerar ? 0 : I.naoCobrados.length * I.ctx.ticket);
-  const vis = I.itens.filter(i => I.filtro === 'todos' || (I.filtro === 'atencao' ? i.atencao : I.filtro === 'malote' ? (i.tipo === 'malote' || i.tipo === 'fora') : (i.tipo === 'kit' || i.tipo === 'extra' || (i.tipo === 'duplicado' && !i.alvo?.cod_int))));
+  const totPortal = I.ctx.fixo + malPortal + soma(kit, i => i.total) + soma(ext, i => i.total) + soma(fora, i => i.total) + soma(adic, i => i.total) + (I.zerar ? 0 : I.naoCobrados.length * I.ctx.ticket);
+  const vis = I.itens.filter(i => I.filtro === 'todos' || (I.filtro === 'atencao' ? i.atencao : I.filtro === 'malote' ? (i.tipo === 'malote' || i.tipo === 'fora' || i.tipo === 'adicional') : (i.tipo === 'kit' || i.tipo === 'extra' || (i.tipo === 'duplicado' && !i.alvo?.cod_int))));
   res.innerHTML = `
     <p class="nota" style="margin:8px 0 4px"><b>${esc(I.arquivo)}</b> · abas: ${I.abas.map(a => a.reconhecida ? `<label style="margin-right:10px"><input type="checkbox" data-aba="${esc(a.nome)}" ${I.usar[a.nome] ? 'checked' : ''}> ${esc(a.nome)} (${a.linhas} linhas${a.formato ? ` · relatório de ${a.formato}` : ''}${a.periodo ? ` · ${fmtD(a.periodo[0])} a ${fmtD(a.periodo[1])}` : ''})${a.outroMes ? ' <b style="color:var(--brand-deep)">parece ser de outro mês</b>' : ''}</label>` : `<span style="color:var(--muted);margin-right:10px">${esc(a.nome)} (não reconhecida)</span>`).join('')}</p>
     ${(() => { const pa = I.abas.find(x => x.periodo && I.usar[x.nome]); const p0 = I.ctx.per; if (!pa) return '';
@@ -1532,14 +1533,14 @@ function desenharImport(c) {
       <div class="kpi"><small>Total no portal após importar</small><b>${BRL2(totPortal)}</b><span>${I.ctx.fixo ? `fixo ${BRL2(I.ctx.fixo)} + ` : ''}malote ${BRL2(malPortal)} + kits e extras</span></div>
     </div>
     ${I.naoCobrados.length ? `<label class="nota" style="display:block;margin:6px 0"><input type="checkbox" id="imp-z" ${I.zerar ? 'checked' : ''}> Zerar os ${I.naoCobrados.length} kits retornados no Umov que o parceiro não cobrou (sem isso eles entram pelo ticket médio de ${BRL2(I.ctx.ticket)}).</label>` : ''}
-    <div class="linha" style="justify-content:space-between;margin-top:6px"><div class="linha">${[['atencao', 'Precisa atenção', I.itens.filter(i => i.atencao).length], ['malote', 'Malote', I.itens.filter(i => i.tipo === 'malote' || i.tipo === 'fora').length], ['kits', 'Kits e spots', I.itens.filter(i => ['kit', 'extra'].includes(i.tipo)).length], ['todos', 'Todas', I.itens.length]].map(([k, t, n]) => `<button class="btn ${I.filtro === k ? '' : 'sec'} peq" data-if="${k}">${t} (${n})</button>`).join('')}</div>
+    <div class="linha" style="justify-content:space-between;margin-top:6px"><div class="linha">${[['atencao', 'Precisa atenção', I.itens.filter(i => i.atencao).length], ['malote', 'Malote', I.itens.filter(i => i.tipo === 'malote' || i.tipo === 'fora' || i.tipo === 'adicional').length], ['kits', 'Kits e spots', I.itens.filter(i => ['kit', 'extra'].includes(i.tipo)).length], ['todos', 'Todas', I.itens.length]].map(([k, t, n]) => `<button class="btn ${I.filtro === k ? '' : 'sec'} peq" data-if="${k}">${t} (${n})</button>`).join('')}</div>
       <button class="btn marca" id="imp-ok">Gravar ${fmtN(inc.length)} linhas na base do parceiro</button></div>
     <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th></th><th>Linha</th><th>No relatório</th><th class="n">Qtd</th><th class="n">Valor</th><th>Na base do portal</th><th>Situação</th></tr></thead><tbody>
     ${vis.slice(0, 500).map(i => `<tr${I.fora.has(i.i) ? ' style="opacity:.5"' : ''}><td><input type="checkbox" data-ii="${i.i}" ${I.fora.has(i.i) ? '' : 'checked'}></td><td style="font-size:12px;white-space:nowrap">${esc(i.aba)}<br>linha ${i.linha}</td>
       <td style="font-size:13px"><b>${esc(i.loja)}</b>${i.nf ? `<br><span class="nota">NF/ref ${esc(i.nf)}</span>` : ''}${i.cidade ? `<br><span class="nota">${esc(i.cidade)}</span>` : ''}</td>
       <td class="n">${i.qtd != null ? fmtN(i.qtd) : '—'}</td><td class="n">${BRL2(i.total)}</td>
-      <td style="font-size:13px">${i.alvo ? `${esc(i.alvo.loja || i.alvo.cliente || '')}<br><span class="nota">${i.tipo === 'malote' ? `cód ${esc(i.alvo.cod_int)} · Umov ${fmtN(i.alvo.feitos)} de ${fmtN(i.alvo.previsto || 0)} previstos` : `Umov ${esc(i.alvo.id_umov || '')} · ${esc(i.alvo.situacao || '')}`} · por ${esc(i.conf || '')}</span>` : '<span class="nota">—</span>'}
-        ${['malote', 'fora', 'duplicado'].includes(i.tipo) && !(i.alvo && i.alvo.id_umov) ? (i.tipo !== 'malote' || /conferir|escolhido/.test(i.conf || '') ? selPontoImp(i) : `<br><a href="#" data-trocar="${i.i}" class="nota">trocar ponto</a>`) : ''}</td>
+      <td style="font-size:13px">${i.alvo ? `${esc(i.alvo.loja || i.alvo.cliente || '')}<br><span class="nota">${i.alvo.cod_int ? `cód ${esc(i.alvo.cod_int)} · Umov ${fmtN(i.alvo.feitos)} de ${fmtN(i.alvo.previsto || 0)} previstos` : `Umov ${esc(i.alvo.id_umov || '')} · ${esc(i.alvo.situacao || '')}`} · por ${esc(i.conf || '')}</span>` : '<span class="nota">—</span>'}
+        ${['malote', 'fora', 'duplicado', 'adicional'].includes(i.tipo) && !(i.alvo && i.alvo.id_umov) ? (!['malote', 'adicional'].includes(i.tipo) || /conferir|escolhido/.test(i.conf || '') || (i.tipo === 'adicional' && !i.alvo) ? selPontoImp(i) : `<br><a href="#" data-trocar="${i.i}" class="nota">trocar ponto</a>`) : ''}</td>
       <td><span class="pill ${i.sit[1]}">${esc(i.sit[0])}</span>${i.aviso.length ? `<br><span class="nota">${esc(i.aviso.join('; '))}</span>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nada neste filtro.</td></tr>'}
     </tbody></table></div>
     <p class="nota">Ao gravar: malote vira ajuste só onde a quantidade do parceiro difere do Umov; kits do Umov recebem o valor cobrado; spots sem kit no Umov e pontos fora da carteira entram como extras. Tudo fica marcado como vindo deste relatório e aparece na conferência para você aprovar ou glosar. Importar de novo substitui a importação anterior.</p>
@@ -1568,6 +1569,7 @@ async function gravarImport(c) {
     else if (i.tipo === 'kit') { sv({ tipo: 'kit', ref: i.alvo.id_umov, valor: Math.round(i.total * 100) / 100, descricao: i.loja, cidade: i.cidade, justificativa: onde });
       i.kitsExtra.forEach(k => sv({ tipo: 'kit', ref: k.id_umov, valor: 0, descricao: i.loja, cidade: i.cidade, justificativa: `${tag} incluído na linha ${i.linha} (${i.loja})` })); }
     else if (i.tipo === 'extra') sv({ tipo: 'kit_extra', valor: Math.round(i.total * 100) / 100, descricao: [i.loja, i.nf].filter(Boolean).join(' · '), cidade: i.cidade, justificativa: onde });
+    else if (i.tipo === 'adicional') sv({ tipo: 'servico', servico: 'Atendimento extra', quantidade: i.adicional, valor: Math.round(i.vu * 10000) / 10000, descricao: `${i.alvo ? (i.alvo.loja || i.loja) + ` (cód ${i.alvo.cod_int})` : i.loja} · atendimento extra`, cidade: i.cidade, justificativa: onde });
     else if (i.tipo === 'fora') { const q = i.qtd && i.qtd > 0 ? i.qtd : 1; sv({ tipo: 'servico', servico: 'Outro', quantidade: q, valor: Math.round((i.vu ?? i.total / q) * 10000) / 10000, descricao: `${i.loja} (ponto fora da carteira)`, cidade: i.cidade, justificativa: onde }); }
   });
   if (I.zerar) I.naoCobrados.forEach(k => sv({ tipo: 'kit', ref: k.id_umov, valor: 0, descricao: k.cliente, cidade: k.cidade, justificativa: `${tag} kit do Umov não cobrado no relatório` }));

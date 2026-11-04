@@ -21,8 +21,9 @@ export function numBR(v) {
 // Cabeçalhos reconhecidos (comparados sem acento, em minúsculas)
 const COLS = [
   ['cod', h => /^c[o]?d(igo)?\.?\s*(de\s*)?int/.test(h) || /^cod(igo)?\.?$/.test(h) || h === 'cod int' || /integra/.test(h)],
-  ['vu', h => /(valor|v\.?)\s*unit/.test(h) || h === 'unitario'],
-  ['qtd', h => /atend/.test(h) || /^qtd|^qtde|^quantidade|^realizado|^extra$|^volumes?$/.test(h)],
+  ['vu', h => /(valor|v\.?)\s*unit/.test(h) || h === 'unitario' || /^(valor|vlr\.?|preco) (por|p\/|do|de|da) ?(atend|ponto|visita|coleta|entrega|servico)/.test(h)],
+  ['extra', h => /^(atend\.?|atendimentos?|qtd\.?|quant\.?) ?extras?\b|^extras?$/.test(h)],
+  ['qtd', h => /atend/.test(h) || /^qtd|^qtde|^quant|^realizado|^volumes?$/.test(h)],
   ['total', h => /valor\s*(periodo|total|final|mensal)|^mensal$|^total( geral)?$|^valor a pagar/.test(h)],
   ['valor', h => /^valor$|^r\$$|^preco/.test(h)],
   ['nf', h => /^(nf|n\.?f\.?|nota|minutas?|pedido|ref|referencia|id umov)\b/.test(h)],
@@ -41,7 +42,7 @@ function acharCabecalho(rows) {
   }
   return null;
 }
-const IGNORAR = /^(total|subtotal|contrato|operacao extra|valor total|soma)/;
+const IGNORAR = /^(total|subtotal|contrato|operacao extra|valor total|soma)|^ate aqui|valor fechado|valor fixo/;
 
 // Relatório de CT-e (sistema de frete do parceiro): uma linha por CT-e, com remetente e destinatário.
 // O ponto é quem não é a GSM; "material de expediente" (kits) vira linha própria com a NF da observação; documentos são somados por ponto.
@@ -94,16 +95,23 @@ export function lerLinhas(sheets, mesRef) {
       if (!nomeL && !cod) continue;
       if (IGNORAR.test(N(nomeL))) continue;
       let qtd = numBR(g('qtd')), vu = numBR(g('vu')), total = numBR(g('total')); const valor = numBR(g('valor'));
+      // Atendimento extra cobrado à parte num ponto (coluna "Atend. extras"): não mexe na contagem do malote
+      const ext = numBR(g('extra')); const adicional = ext > 0 && qtd == null && total != null ? ext : null;
+      if (adicional) { vu = Math.round(total / adicional * 100) / 100; }
       if (vu == null && valor != null && (total != null || qtd != null)) vu = total != null && qtd == null ? null : valor;
       if (total == null && valor != null && vu == null) total = valor;
       if (qtd == null && vu && total != null) qtd = Math.round(total / vu * 100) / 100;
       if (total == null && qtd != null && vu != null) total = qtd * vu;
       if (vu == null && qtd && total != null) vu = total / qtd;
       if (total == null && qtd == null) continue;
-      const nf = g('nf') == null ? '' : String(g('nf')).trim();
+      // NF escrita em qualquer coluna de texto ("NF: 207718, 207779")
+      let nf = g('nf') == null ? '' : String(g('nf')).trim();
+      if (!nf) { const cel = r.find(v => typeof v === 'string' && /^\s*nfs?\s*[:º°.-]/i.test(v)); if (cel) nf = cel.replace(/^\s*nfs?\s*[:º°.-]\s*/i, '').trim(); }
       const texto = [nomeL, loja && cliente && N(cliente) !== N(loja) ? cliente : '', nf].filter(Boolean).join(' · ');
       (N(texto).match(/\b(0?[1-9]|1[0-2])\/20\d\d\b/g) || []).forEach(x => { const k = x.replace(/^0/, ''); meses[k] = (meses[k] || 0) + 1; });
-      linhas.push({ aba: nome, linha: i + 1, cod, loja: nomeL, cliente, nf, cidade: String(g('cidade') ?? '').trim(), qtd, vu, total: total ?? 0, obs: String(g('obs') ?? '').trim(), texto });
+      const dt = g('data'); const dtTxt = dt instanceof Date ? dt.toISOString().slice(0, 10).split('-').reverse().join('/') : typeof dt === 'number' ? new Date(Math.round((dt - 25569) * 864e5)).toISOString().slice(0, 10).split('-').reverse().join('/') : String(dt ?? '').trim();
+      linhas.push({ aba: nome, linha: i + 1, cod, loja: nomeL, cliente, nf, cidade: String(g('cidade') ?? '').trim(), qtd: adicional ? adicional : qtd, vu, total: total ?? 0, adicional,
+        obs: [String(g('obs') ?? '').trim(), adicional && dtTxt ? `atendimento extra em ${dtTxt}` : ''].filter(Boolean).join(' · '), texto });
       n++;
     }
     const outro = mesRef ? Object.entries(meses).filter(([k]) => k !== mesRef).reduce((a, [, v]) => a + v, 0) : 0;
@@ -143,6 +151,7 @@ export function casar(linhas, ctx) {
     // 0) vínculo escolhido à mão na tela de importação
     const mk = manual[`${l.aba}:${l.linha}`];
     if (mk === '__fora') { r.tipo = 'fora'; r.conf = 'manual'; return r; }
+    if (mk && porCod[mk] && l.adicional) { r.tipo = 'adicional'; r.alvo = porCod[mk]; r.conf = 'escolhido por você'; return r; }
     if (mk && porCod[mk]) { r.tipo = 'malote'; r.alvo = porCod[mk]; r.conf = 'escolhido por você';
       const ant = usoItem[mk];
       if (ant && ant.somar && l.somar) { ant.qtd += l.qtd || 0; ant.total = Math.round((ant.total + (l.total || 0)) * 100) / 100; ant.aviso.push(`somado com "${l.loja}" (${l.qtd} CT-e)`); r.tipo = 'junto'; return r; }
@@ -158,6 +167,7 @@ export function casar(linhas, ctx) {
         if (sc[0] && sc[0].s >= 0.7 && (!sc[1] || sc[1].s <= sc[0].s - 0.1)) { r.tipo = 'malote'; r.alvo = sc[0].p; r.conf = sc[0].s >= 0.9 ? 'nome' : 'nome (conferir)'; }
         else if (sc[0] && sc[0].s >= 0.7) { r.aviso.push(`parecido com mais de um ponto (ex.: ${sc[0].p.loja} / ${sc[1].p.loja})`); }
       }
+      if (r.tipo === 'malote' && l.adicional) { r.tipo = 'adicional'; return r; }
       if (r.tipo === 'malote') {
         const cod = r.alvo.cod_int; const ant = usoItem[cod];
         if (ant && ant.somar && l.somar) { ant.qtd += l.qtd || 0; ant.total = Math.round((ant.total + (l.total || 0)) * 100) / 100; ant.vu = ant.qtd ? Math.round(ant.total / ant.qtd * 100) / 100 : ant.vu;
@@ -165,7 +175,7 @@ export function casar(linhas, ctx) {
         if (usoPonto[cod]) { r.tipo = 'duplicado'; r.aviso.push(`ponto já cobrado na linha ${usoPonto[cod]}`); } else { usoPonto[cod] = `${l.aba}:${l.linha}`; usoItem[cod] = r; }
         return r;
       }
-      r.tipo = 'fora'; return r; // linha de malote sem ponto na carteira: nunca vira kit
+      r.tipo = l.adicional ? 'adicional' : 'fora'; return r; // linha de malote sem ponto na carteira: nunca vira kit
     }
     // 2) kit do Umov pelo número (NF, pedido, kit) ou pelo nome
     const nums = numeros(`${l.loja} ${l.cliente} ${l.nf}`);
