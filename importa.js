@@ -4,8 +4,10 @@
 const SEM_ACENTO = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 const N = s => SEM_ACENTO(s).toLowerCase().replace(/\s+/g, ' ').trim();
 const PARADAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'sp', 'mg', 'pe', 'rj', 'ba', 'pr', 'sc', 'rs', 'go', 'df', 'es', 'ce', 'al', 'pb', 'rn', 'pi', 'ma', 'pa', 'am', 'mt', 'ms', 'se', 'to', 'ro',
-  'ltda', 'sa', 'me', 'epp', 'eireli', 'lj', 'loja', 'filial', 'kit', 'kits', 'spot', 'malote', 'sn', 'cia', 'comercial', 'comercio', 'brasil', 'do brasil', 'servicos', 'shop', 'shopping']);
-const tokens = s => N(s).replace(/[^a-z0-9]+/g, ' ').replace(/([a-z])(\d)/g, '$1 $2').replace(/(\d)([a-z])/g, '$1 $2').split(' ').filter(t => t.length >= 2 && !PARADAS.has(t)).map(t => /^\d+$/.test(t) ? String(+t) : t.replace(/([a-z])0+(\d)/g, '$1$2'));
+  'ltda', 'sa', 'me', 'epp', 'eireli', 'lj', 'loja', 'filial', 'kit', 'kits', 'spot', 'malote', 'sn', 'cia', 'comercial', 'comercio', 'brasil', 'do brasil', 'servicos', 'shop', 'shopp', 'shopping', 'sh']);
+// Abreviações comuns nos relatórios
+const SIN = { jd: 'jardim', jdm: 'jardim', av: 'avenida', pq: 'parque', cd: 'cd', ind: 'independencia', indep: 'independencia' };
+const tokens = s => N(s).replace(/[^a-z0-9]+/g, ' ').replace(/([a-z])(\d)/g, '$1 $2').replace(/(\d)([a-z])/g, '$1 $2').split(' ').map(t => SIN[t] || t).filter(t => t.length >= 2 && !PARADAS.has(t)).map(t => /^\d+$/.test(t) ? String(+t) : t.replace(/([a-z])0+(\d)/g, '$1$2'));
 // "11 660" e "11.660" (milhar separado) viram 11660
 const numeros = s => [...new Set((N(s).replace(/\b(\d{1,3})[ .](\d{3})(?!\d)/g, '$1$2').match(/\d{3,}/g) || []).map(x => String(+x)))];
 
@@ -27,7 +29,7 @@ const COLS = [
   ['total', h => /valor\s*(periodo|total|final|mensal)|^mensal$|^total( geral)?$|^valor a pagar/.test(h)],
   ['valor', h => /^valor$|^r\$$|^preco/.test(h)],
   ['nf', h => /^(nf|n\.?f\.?|nota|minutas?|pedido|ref|referencia|id umov)\b/.test(h)],
-  ['loja', h => /^(loja|unidade|ponto|local|nome|descri|destinatario|estabelecimento)/.test(h)],
+  ['loja', h => /^(loja|unidade|ponto|local|nome|descri|destinatario|estabelecimento|retirada|coleta|origem)/.test(h)],
   ['cliente', h => /^cliente/.test(h)],
   ['cidade', h => /^(cidade|destino|municipio)/.test(h)],
   ['obs', h => /^obs/.test(h)],
@@ -90,7 +92,7 @@ export function lerLinhas(sheets, mesRef) {
     const m = cab.map; let n = 0; const meses = {};
     for (let i = cab.linha + 1; i < rows.length; i++) {
       const r = rows[i] || []; const g = k => m[k] == null ? null : r[m[k]];
-      const loja = String(g('loja') ?? '').trim(), cliente = String(g('cliente') ?? '').trim();
+      const loja = String(g('loja') ?? '').trim(); let cliente = String(g('cliente') ?? '').trim(); if (loja && /\bgsm\b/.test(N(cliente))) cliente = '';
       const nomeL = loja || cliente; const cod = g('cod') == null ? '' : String(g('cod')).trim().replace(/\.0$/, '');
       if (!nomeL && !cod) continue;
       if (IGNORAR.test(N(nomeL))) continue;
@@ -114,6 +116,13 @@ export function lerLinhas(sheets, mesRef) {
         obs: [String(g('obs') ?? '').trim(), adicional && dtTxt ? `atendimento extra em ${dtTxt}` : ''].filter(Boolean).join(' · '), texto });
       n++;
     }
+    // Relatório "uma linha por atendimento" (tem data, não tem quantidade): soma as visitas de cada ponto; kits e spots ficam linha a linha
+    if (m.qtd == null && m.data != null) { const ini = linhas.length - n; const grupo = new Map(); const fica = [];
+      for (const l of linhas.splice(ini)) { if (/\b(kit|kits|spot|minuta|ecobag|brinde)\b/i.test(l.texto) || numeros(l.nf).length) { fica.push(l); continue; }
+        const k = N(l.loja); const x = grupo.get(k); if (!x) { grupo.set(k, { ...l, qtd: 1, somar: true, n: 1 }); continue; }
+        x.qtd++; x.total = Math.round((x.total + l.total) * 100) / 100; }
+      grupo.forEach(x => { x.vu = Math.round(x.total / x.qtd * 100) / 100; x.obs = [x.obs, `${x.qtd} atendimento(s) no relatório`].filter(Boolean).join(' · '); });
+      linhas.push(...[...grupo.values(), ...fica].sort((a, b) => a.linha - b.linha)); n = linhas.length - ini; }
     const outro = mesRef ? Object.entries(meses).filter(([k]) => k !== mesRef).reduce((a, [, v]) => a + v, 0) : 0;
     abas.push({ nome, reconhecida: true, linhas: n, outroMes: outro >= Math.max(3, n * 0.3), colunas: Object.keys(m) });
   }
@@ -161,6 +170,12 @@ export function casar(linhas, ctx) {
       const p = l.cod ? (porCod[l.cod] || porCod[String(+l.cod)]) : null;
       if (p) { r.tipo = 'malote'; r.alvo = p; r.conf = 'código'; }
       else {
+        // Nome igual ao cadastro (sem pontuação) vale direto
+        const chave = x => N(x).replace(/[^a-z0-9]+/g, '');
+        const igual = pontos.filter(pp => chave(pp.loja) === chave(l.loja));
+        if (igual.length === 1) { r.tipo = 'malote'; r.alvo = igual[0]; r.conf = 'nome'; }
+      }
+      if (!r.tipo) {
         const rt = tokens(`${l.loja} ${l.cliente} ${l.cidade}`);
         const sc = ptsTok.map(x => ({ p: x.p, s: nota2(rt, x) })).sort((a, b) => b.s - a.s);
         r.sugestoes = sc.slice(0, 3).filter(x => x.s >= 0.4).map(x => x.p.cod_int);
@@ -171,7 +186,7 @@ export function casar(linhas, ctx) {
       if (r.tipo === 'malote') {
         const cod = r.alvo.cod_int; const ant = usoItem[cod];
         if (ant && ant.somar && l.somar) { ant.qtd += l.qtd || 0; ant.total = Math.round((ant.total + (l.total || 0)) * 100) / 100; ant.vu = ant.qtd ? Math.round(ant.total / ant.qtd * 100) / 100 : ant.vu;
-          ant.aviso.push(`somado com "${l.loja}" (${l.qtd} CT-e)`); r.tipo = 'junto'; return r; }
+          ant.aviso.push(`somado com "${l.loja}" (${l.qtd})`); r.tipo = 'junto'; return r; }
         if (usoPonto[cod]) { r.tipo = 'duplicado'; r.aviso.push(`ponto já cobrado na linha ${usoPonto[cod]}`); } else { usoPonto[cod] = `${l.aba}:${l.linha}`; usoItem[cod] = r; }
         return r;
       }

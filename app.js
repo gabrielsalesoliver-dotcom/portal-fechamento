@@ -2,14 +2,14 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.04-0750';
+import { lerLinhas, casar } from './importa.js?v=2026.11.04-0830';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.04-0750';
+const VERSAO = '2026.11.04-0830';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1461,7 +1461,27 @@ async function baseParceiro(c) {
 }
 
 // ---------- Importar o relatório do parceiro (qualquer planilha) ----------
+// Relatório em PDF (tabela): monta linhas pela posição do texto na página; as colunas vêm do cabeçalho
+async function tabelaPDF(file) {
+  if (!window.pdfjsLib) throw new Error('Leitor de PDF não carregou. Recarregue a página.');
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; const linhas = [];
+  for (let p = 1; p <= Math.min(pdf.numPages, 40); p++) { const pg = await pdf.getPage(p); const tc = await pg.getTextContent(); const ls = [];
+    tc.items.filter(it => it.str && it.str.trim()).forEach(it => { const y = it.transform[5], x = it.transform[4], w = it.width || 0;
+      let l = ls.find(k => Math.abs(k.y - y) < 3); if (!l) ls.push(l = { y, its: [] }); l.its.push({ x, c: x + w / 2, s: it.str.trim() }); });
+    ls.sort((a, b) => b.y - a.y).forEach(l => linhas.push(l.its.sort((a, b) => a.x - b.x))); }
+  if (!linhas.length) throw new Error('O PDF não tem texto (parece ser imagem). Peça o relatório em Excel ou PDF gerado pelo sistema.');
+  // Cabeçalho: primeira linha com 3+ palavras de cabeçalho conhecidas
+  const ehCab = l => l.filter(i => /^(data|hora|loja|cliente|retirada|coleta|entrega|destino|valor|qtd|quantidade|cidade|nf|nota|ponto|unidade|total|atendimentos?|frequ)/i.test(i.s)).length >= 3;
+  const ih = linhas.findIndex(ehCab); if (ih < 0) return { PDF: linhas.map(l => l.map(i => i.s)) };
+  const cols = linhas[ih].map(i => ({ c: i.c, s: i.s }));
+  const rows = [cols.map(x => x.s)];
+  for (const l of linhas.slice(ih + 1)) { if (ehCab(l)) continue; const r = cols.map(() => null);
+    l.forEach(i => { let k = 0, d = Infinity; cols.forEach((col, j) => { const dd = Math.abs(col.c - i.c); if (dd < d) { d = dd; k = j; } }); r[k] = r[k] ? `${r[k]} ${i.s}` : i.s; });
+    rows.push(r); }
+  return { PDF: rows };
+}
 async function lerPlanilhaLimitada(file, max = 4000) {
+  if (/\.pdf$/i.test(file.name)) return tabelaPDF(file);
   const buf = await file.arrayBuffer();
   if (/\.csv$|\.txt$/i.test(file.name)) return { 'CSV': parseCSV(decodeText(buf)) };
   const wb = XLSX.read(buf, { type: 'array' }); const out = {};
@@ -1473,8 +1493,8 @@ function importadorRelatorio(c, ctx, manter = false) {
   const box = $('#impbox'); if (!box) return;
   if (!manter) S.imp = null;
   box.innerHTML = `<section class="bloco" style="background:var(--field);margin:4px 0"><h2 style="margin-top:0">Importar relatório do parceiro</h2>
-    <p class="sub">Suba a planilha que o parceiro mandou, no formato dele. O portal acha as colunas sozinho e casa cada linha com a base do mês: malote pelo código de integração ou, se não tiver, pelas palavras do nome da loja; kits e spots pelo número (NF, pedido, kit) ou pelo nome. Nada é gravado antes de você conferir.</p>
-    <div class="linha"><input type="file" id="imp-arq" accept=".xlsx,.xls,.xlsm,.csv" style="font:inherit"><button class="btn sec peq" id="imp-x">Fechar</button></div><div id="imp-res"></div></section>`;
+    <p class="sub">Suba a planilha (Excel/CSV) ou o PDF que o parceiro mandou, no formato dele. O portal acha as colunas sozinho e casa cada linha com a base do mês: malote pelo código de integração ou, se não tiver, pelas palavras do nome da loja; kits e spots pelo número (NF, pedido, kit) ou pelo nome. Nada é gravado antes de você conferir.</p>
+    <div class="linha"><input type="file" id="imp-arq" accept=".xlsx,.xls,.xlsm,.csv,.pdf" style="font:inherit"><button class="btn sec peq" id="imp-x">Fechar</button></div><div id="imp-res"></div></section>`;
   $('#imp-x').onclick = () => { S.imp = null; box.innerHTML = ''; };
   $('#imp-arq').onchange = async e => { const f = e.target.files[0]; if (!f) return; const res = $('#imp-res'); res.innerHTML = '<div class="carregando">Lendo e casando com a base…</div>';
     try { const sheets = await lerPlanilhaLimitada(f); const mesRef = `${+c.mes.slice(5, 7)}/${c.mes.slice(0, 4)}`;
