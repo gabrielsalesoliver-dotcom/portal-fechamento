@@ -2,14 +2,15 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.04-0830';
+import { lerLinhas, casar } from './importa.js?v=2026.11.06-1130';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
+if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.04-1700';
+const VERSAO = '2026.11.06-1130';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1464,7 +1465,7 @@ async function baseParceiro(c) {
 // Relatório em PDF (tabela): monta linhas pela posição do texto na página; as colunas vêm do cabeçalho
 async function tabelaPDF(file) {
   if (!window.pdfjsLib) throw new Error('Leitor de PDF não carregou. Recarregue a página.');
-  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; const linhas = [];
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise; const linhas = [];
   for (let p = 1; p <= Math.min(pdf.numPages, 40); p++) { const pg = await pdf.getPage(p); const tc = await pg.getTextContent(); const ls = [];
     tc.items.filter(it => it.str && it.str.trim()).forEach(it => { const y = it.transform[5], x = it.transform[4], w = it.width || 0;
       let l = ls.find(k => Math.abs(k.y - y) < 3); if (!l) ls.push(l = { y, its: [] }); l.its.push({ x, c: x + w / 2, s: it.str.trim() }); });
@@ -2321,7 +2322,7 @@ const digitos = t => String(t || '').replace(/\D/g, '');
 const fmtCNPJ = t => { const d = digitos(t); return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : d.length === 11 ? d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4') : (t || ''); };
 async function textoPDF(file) {
   if (!window.pdfjsLib) return '';
-  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise;
   let t = '';
   for (let i = 1; i <= Math.min(pdf.numPages, 4); i++) { const pg = await pdf.getPage(i); const c = await pg.getTextContent(); t += c.items.map(x => x.str).join(' ') + '\n'; }
   return t;
@@ -2337,7 +2338,7 @@ async function textoOCR(file, aviso) {
   const T = await carregarTesseract();
   const imgs = [];
   if (/\.pdf$/i.test(file.name)) {
-    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise;
     for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) { const pg = await pdf.getPage(i); const vp = pg.getViewport({ scale: 2.5 }); const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height; await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; imgs.push(cv); }
   } else imgs.push(file);
   const w = await T.createWorker('por', 1, { logger: m => { if (m.status === 'recognizing text' && aviso) aviso(Math.round(m.progress * 100)); } });
