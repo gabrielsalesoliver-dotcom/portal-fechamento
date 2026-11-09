@@ -6,9 +6,12 @@ const N = s => SEM_ACENTO(s).toLowerCase().replace(/\s+/g, ' ').trim();
 const PARADAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'sp', 'mg', 'pe', 'rj', 'ba', 'pr', 'sc', 'rs', 'go', 'df', 'es', 'ce', 'al', 'pb', 'rn', 'pi', 'ma', 'pa', 'am', 'mt', 'ms', 'se', 'to', 'ro',
   'ltda', 'sa', 'me', 'epp', 'eireli', 'lj', 'loja', 'filial', 'kit', 'kits', 'spot', 'malote', 'sn', 'cia', 'comercial', 'comercio', 'brasil', 'do brasil', 'servicos', 'shop', 'shopp', 'shopping', 'sh']);
 // Abreviações comuns nos relatórios
-const SIN = { jd: 'jardim', jdm: 'jardim', av: 'avenida', pq: 'parque', cd: 'cd', ind: 'independencia', indep: 'independencia' };
+const SIN = { cx: 'caixa', cxs: 'caixa', ki: 'kit', jd: 'jardim', jdm: 'jardim', av: 'avenida', pq: 'parque', cd: 'cd', ind: 'independencia', indep: 'independencia' };
 const tokens = s => N(s).replace(/[^a-z0-9]+/g, ' ').replace(/([a-z])(\d)/g, '$1 $2').replace(/(\d)([a-z])/g, '$1 $2').split(' ').map(t => SIN[t] || t).filter(t => t.length >= 2 && !PARADAS.has(t)).map(t => /^\d+$/.test(t) ? String(+t) : t.replace(/([a-z])0+(\d)/g, '$1$2'));
 // "11 660" e "11.660" (milhar separado) viram 11660
+// Tokens de kit: mantém códigos curtos como BSB7, APS 3, VVBR (o dígito solto não pode sumir)
+const tokensKit = s => { const base = tokens(s); const cods = (N(s).replace(/\b([a-z]{2,5}) (\d{1,2})\b/g, '$1$2').match(/\b[a-z]{2,6}\d{1,3}\b/g) || []).map(c => c.replace(/([a-z])0+(\d)/g, '$1$2'));
+  return [...new Set([...base, ...cods])]; };
 const numeros = s => [...new Set((N(s).replace(/\b(\d{1,3})[ .](\d{3})(?!\d)/g, '$1$2').match(/\d{3,}/g) || []).map(x => String(+x)))];
 
 export function numBR(v) {
@@ -151,12 +154,16 @@ export function casar(linhas, ctx) {
   const manual = ctx.manual || {};
   const porCod = Object.fromEntries(pontos.map(p => [String(p.cod_int), p]));
   const kitsU = []; const visto = new Set(); kits.forEach(k => { if (!visto.has(k.id_umov)) { visto.add(k.id_umov); kitsU.push(k); } });
-  const kitNum = kitsU.map(k => ({ k, nums: new Set([...numeros(k.cliente), String(+k.id_umov)]), set: new Set(tokens(`${k.cliente} ${k.cidade}`)) }));
+  const kitNum = kitsU.map(k => { const arr = tokensKit(`${k.cliente}`); return { k, nums: new Set([...numeros(k.cliente), String(+k.id_umov)]), arr, set: new Set(arr) }; });
   const usoPonto = {}, usoKit = {}, usoItem = {};
   const res = linhas.map(l => {
     const r = { ...l, tipo: null, alvo: null, conf: null, kitsExtra: [], aviso: [] };
     const t = N(`${l.loja} ${l.cliente} ${l.nf} ${l.aba}`);
-    const pareceSpot = /\b(kit|kits|spot|minuta|ecobag|brinde)\b/.test(t) || /spot|kit|extra/i.test(l.aba) || (numeros(l.nf).length > 0 && !/malote/.test(N(l.nf)));
+    // coluna de tipo/observação do parceiro (ex.: SPOT, KIT, PONTO NOVO, EXTRA) manda na classificação
+    const tipoCol = N(l.obs || '');
+    const obsSpot = /^(spot|kit|kits|spots)\b/.test(tipoCol);
+    const obsMalote = /^(ponto novo|malote|ponto|extra)\b/.test(tipoCol);
+    const pareceSpot = obsSpot || (!obsMalote && (/\b(kit|kits|ki|spot|minuta|ecobag|brinde|uniformes?)\b/.test(t) || /spot|kit|extra/i.test(l.aba) || (numeros(l.nf).length > 0 && !/malote/.test(N(l.nf))) || /\bnf\s*:?\s*\d{4,}/.test(t)));
     // 0) vínculo escolhido à mão na tela de importação
     const mk = manual[`${l.aba}:${l.linha}`];
     if (mk === '__fora') { r.tipo = 'fora'; r.conf = 'manual'; return r; }
@@ -195,11 +202,19 @@ export function casar(linhas, ctx) {
     // 2) kit do Umov pelo número (NF, pedido, kit) ou pelo nome
     const nums = numeros(`${l.loja} ${l.cliente} ${l.nf}`);
     let achados = nums.length ? kitNum.filter(x => [...x.nums].some(n => nums.includes(n))).map(x => x.k) : [];
+    const rtK = tokensKit(`${l.loja} ${l.cliente}`);
+    if (!achados.length && nums.some(n => n.length >= 5)) {
+      // número com um dígito trocado/sobrando (45656 x 45676, 2209198 x 209198) e nome batendo
+      const rtSet = new Set(rtK);
+      const perto = kitNum.filter(x => !usoKit[x.k.id_umov] && [...x.nums].some(kn => kn.length >= 5 && nums.some(n => n.length >= 5 && quase(kn, n))) && nota(x.arr.filter(t => !/^\d+$/.test(t)), rtSet) >= 0.3);
+      if (perto.length === 1) { achados = [perto[0].k]; r.conf = 'número parecido (conferir)'; r.aviso.push(`número do relatório diferente do Umov (${perto[0].k.cliente})`); }
+    }
     if (!achados.length) {
-      const rt = tokens(`${l.loja} ${l.cliente} ${l.cidade}`);
-      const sc = kitNum.filter(x => !usoKit[x.k.id_umov]).map(x => ({ k: x.k, s: nota(rt, x.set) })).sort((a, b) => b.s - a.s);
-      if (sc[0] && sc[0].s >= 0.8 && (!sc[1] || sc[1].s <= sc[0].s - 0.1)) { achados = [sc[0].k]; r.conf = 'nome (conferir)'; }
-    } else r.conf = 'número';
+      const rtSet = new Set(rtK);
+      const sc = kitNum.filter(x => !usoKit[x.k.id_umov]).map(x => ({ k: x.k, s: (a => Math.max(a, (a + nota(x.arr, rtSet)) / 2))(nota(rtK, x.set)) })).sort((a, b) => b.s - a.s);
+      if (sc[0] && sc[0].s >= 0.65 && (!sc[1] || sc[1].s <= sc[0].s - 0.1)) { achados = [sc[0].k]; r.conf = 'nome (conferir)'; }
+      else if (sc[0] && sc[0].s >= 0.5) r.sugestoesKit = sc.slice(0, 3).filter(x => x.s >= 0.5).map(x => x.k.id_umov);
+    } else if (!r.conf) r.conf = 'número';
     if (achados.length) {
       const livres = achados.filter(k => !usoKit[k.id_umov]);
       if (!livres.length) { r.tipo = 'duplicado'; r.alvo = achados[0]; r.aviso.push(`kit já cobrado na linha ${usoKit[achados[0].id_umov]}`); return r; }
