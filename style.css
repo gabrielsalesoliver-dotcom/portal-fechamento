@@ -174,3 +174,10 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 @media (max-width:860px){.gres{grid-template-columns:1fr}}
 
 #secbase.fechada nav.abas,#secbase.fechada #baseaba{display:none}
+
+/* Finalização do fechamento (Pendências) */
+.fin-box{display:flex;flex-wrap:wrap;gap:20px;align-items:center;background:var(--panel);color:var(--on-panel);border-left:6px solid var(--brand);border-radius:10px;padding:16px 20px}
+.fin-box small{display:block;font-size:11px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--on-dark)}
+.fin-box>div>b{font-size:34px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.fin-box span{font-size:13px;color:var(--on-dark)}.fin-box span b{color:var(--on-panel)}
+.fin-bar{height:10px;background:#3A3639;border-radius:999px;overflow:hidden}.fin-bar i{display:block;height:100%;background:var(--brand);border-radius:999px}

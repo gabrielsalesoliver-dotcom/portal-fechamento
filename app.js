@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.09-1230';
+import { lerLinhas, casar } from './importa.js?v=2026.11.09-1520';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.09-1230';
+const VERSAO = '2026.11.09-1520';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -275,6 +275,10 @@ async function vPendencias() {
       <button class="btn ${S.pendDia === 'todos' ? '' : 'sec'} peq" data-pd="todos">Todos (${L.length})</button>
       ${DIAS.map(d => { const r = resumoDia(d); return `<button class="btn ${S.pendDia === d ? '' : 'sec'} peq" data-pd="${esc(d)}" title="${r.prontos} de ${r.n} com NF conferida ou já em lote">${esc(d)}${r.dt ? ` · ${fmtD(r.dt)}` : ''} (${r.prontos}/${r.n})</button>`; }).join('')}</div>
       ${S.pendDia !== 'todos' ? (() => { const r = resumoDia(S.pendDia); return `<p class="nota" style="margin:8px 0 0">${r.dt ? `Pagamento em <b>${fmtD(r.dt)}</b> · ` : ''}<b>${r.prontos} de ${r.n}</b> parceiros prontos para pagar (NF conferida, em lote ou pago). Os números entre parênteses nos botões mostram prontos / total.</p>`; })() : '<p class="nota" style="margin:8px 0 0">Escolha um dia para ver só os parceiros que recebem nessa data. Entre parênteses: prontos para pagar / total.</p>'}</section>
+    ${(() => { const fin = cont('financeiro') + cont('ok'), tot = LD.length, pc = tot ? Math.round(100 * fin / tot) : 0;
+      return `<div class="fin-box"><div><small>Finalização do fechamento${S.pendDia !== 'todos' ? ` · ${esc(S.pendDia)}` : ''}</small><b>${pc}%</b></div>
+        <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:6px"><div class="fin-bar"><i style="width:${pc}%"></i></div>
+        <span><b>${fin} de ${tot}</b> parceiros com NF conferida, no financeiro ou pagos · faltam ${tot - fin}</span></div></div>`; })()}
     <div class="kpis">${GRUPO_PEND.slice(0, 4).map(([g, t]) => `<div class="kpi ${g === 'parceiro' && cont(g) ? 'alerta' : 'neutro'}"><small>${t}</small><b>${cont(g)}</b><span>${g === 'ok' ? 'parceiros pagos' : 'parceiros'}</span></div>`).join('')}</div>
     <p class="nota" style="margin:0"><b>Prazos do mês:</b> base até ${c.prazo_envio ? fmtD(c.prazo_envio) : '(não definido)'} · NF até ${c.prazo_nf ? fmtD(c.prazo_nf) : '(não definido)'}${L.some(x => x.atr) ? ` · <b style="color:var(--brand-deep)">${L.filter(x => x.atr).length} parceiro(s) com prazo vencido</b>` : ''}. Defina em Liberar competência.</p>
     <p class="nota" style="margin:0">${porEtapa.map(([k, n]) => `${esc(ETAPAS_PEND[k][0])}: <b>${n}</b>`).join(' · ')}${!c.liberada_parceiros ? ' · <b>Atenção: o mês ainda não foi liberado para os parceiros.</b>' : ''}</p>
@@ -2788,7 +2792,7 @@ async function vDiretoria(el) {
   const [comps, parcs, fech, prev, efic, adis, ddet] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.rpc('parceiros_resumo')),
-    todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento')),
+    todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento,lote_id')),
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
@@ -3159,6 +3163,9 @@ function visaoGeral(box, D, c, ant) {
   const difPrev = malComPrev - prevComReal;
   const parceirosMes = new Set([...fe.map(r => r.parceiro_id), ...Object.keys(prevPor)]).size;
   const nFech = fe.filter(fechado).length;
+  // Finalizado: NF conferida, já com o financeiro (em lote) ou pago
+  const finalizado = r => (S.compsFechadas && S.compsFechadas.has(r.competencia_id)) || !!r.pago_em || !!r.lote_id || /^(nf conferida|pago)/i.test(r.status || '');
+  const nFin = fe.filter(finalizado).length, pcFin = parceirosMes ? Math.round(100 * nFin / parceirosMes) : 0;
   const pago = fe.filter(r => r.pago_em).reduce((a, r) => a + total(r) - n(r.adiantado) - n(r.antec_desconto), 0);
   const adiantado = fe.reduce((a, r) => a + n(r.adiantado), 0);
   const antecTot = fe.reduce((a, r) => a + n(r.antec_desconto), 0);
@@ -3226,7 +3233,9 @@ function visaoGeral(box, D, c, ant) {
       <span>${semReal ? (previsto ? 'Previsto (calendarizado) · mês em andamento, ainda sem fechamento' : projMes != null ? 'Previsto pela carteira atual · mês em andamento, base ainda não gerada' : 'calculando o previsto…') : `${ant && custoAnt ? `${pct(custo / custoAnt - 1)} sobre ${nomeMes(ant.mes)} (${BRL(custoAnt)})` : ''}`}</span>
     </div>
     <div class="ghero-side">
-      <div><small>Fechamento</small><b>${nFech} de ${parceirosMes} parceiros</b>
+      <div><small>Finalização do fechamento</small><b>${pcFin}% · ${nFin} de ${parceirosMes} parceiros</b>
+        <div class="gbar"><i style="width:${pcFin}%"></i></div><span style="font-size:12px;color:var(--on-dark)">NF conferida, no financeiro ou pagos</span></div>
+      <div><small>Aprovados</small><b>${nFech} de ${parceirosMes} parceiros</b>
         <div class="gbar"><i style="width:${parceirosMes ? Math.round(100 * nFech / parceirosMes) : 0}%"></i></div></div>
       ${semRegistroPag ? `<div><small>Pagamento</small><b>Mês fechado</b><span style="font-size:13px;color:var(--on-dark)">pagamentos feitos antes do portal${adiantado ? ` · ${BRL(adiantado)} em adiantamentos` : ''}</span></div>`
       : `<div><small>Pagamento</small><b>${BRL(pago + adiantado)} pago · ${BRL(aPagar)} a pagar</b>
