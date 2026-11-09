@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.09-1000';
+import { lerLinhas, casar } from './importa.js?v=2026.11.09-1230';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.09-1000';
+const VERSAO = '2026.11.09-1230';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -155,11 +155,24 @@ function telaLogin(aba = 'entrar', msg = '') {
   };
 }
 
+// Tema claro/escuro (o tema inicial é aplicado por tema.js)
+const temaAtual = () => document.documentElement.getAttribute('data-theme') === 'dark' ? 'escuro' : 'claro';
+const temaRot = () => temaAtual() === 'escuro' ? '☀ Tema claro' : '☾ Tema escuro';
+function temaBtn() { return `<button type="button" class="btn-tema" data-tema title="Alternar entre tema claro e escuro">${temaRot()}</button>`; }
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-tema]'); if (!b) return;
+  const novo = temaAtual() === 'escuro' ? 'claro' : 'escuro';
+  if (novo === 'escuro') document.documentElement.setAttribute('data-theme', 'dark'); else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('gsm-tema', novo); } catch (_) {}
+  document.querySelectorAll('[data-tema]').forEach(x => { x.textContent = temaRot(); });
+  document.querySelectorAll('img[data-logo]').forEach(x => { x.src = novo === 'escuro' ? 'logo_escuro.png' : 'logo_claro.png'; });
+});
+
 function telaSimples(titulo, texto) {
   app.innerHTML = `<div class="login"><section class="login-form" style="flex-basis:100%"><div style="max-width:520px;display:flex;flex-direction:column;gap:16px">
-    <img src="logo_claro.png" alt="GSM Log" style="height:40px;width:120px;object-fit:contain">
+    <img data-logo src="${temaAtual() === 'escuro' ? 'logo_escuro.png' : 'logo_claro.png'}" alt="GSM Log" style="height:40px;width:120px;object-fit:contain">
     <div class="bloco"><h2 style="font-size:24px">${titulo}</h2><p style="margin:0;color:var(--muted)">${texto}</p></div>
-    <div><button class="btn sec" id="sair">Sair</button></div></div></section></div>`;
+    <div class="linha" style="gap:8px"><button class="btn sec" id="sair">Sair</button><button type="button" class="btn sec" data-tema>${temaRot()}</button></div></div></section></div>`;
   $('#sair').onclick = sair;
 }
 const telaSemPerfil = () => telaSimples('Acesso sem perfil', 'Seu login existe, mas ainda não tem um perfil no portal. Fale com o Fechamento GSM.');
@@ -342,7 +355,7 @@ async function vVerParceiro() {
   m.innerHTML = `<div class="topo"><div><h1>Portal do parceiro</h1><p>A mesma tela que o parceiro vê, com os dados dele. Como gestor, você pode baixar o modelo, enviar o relatório e responder itens em nome do parceiro. Tudo fica registrado como feito pela GSM.</p></div>
     <label class="campo" style="min-width:300px">Parceiro<select id="pvp">${ativos.map(p => `<option value="${p.id}" ${p.id === S.previaParc ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}</select></label></div>
     <div class="msg alerta" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span>Acesso do gestor: você vê todos os meses, inclusive os ainda não liberados para o parceiro.</span><button class="btn sec peq" id="bx-todos">Baixar bases de todos os parceiros (.zip)</button></div>
-    <div id="pvcorpo" style="display:flex;flex-direction:column;gap:22px;border:1px dashed var(--rule);border-radius:10px;padding:20px;background:#fff"><div class="carregando">Carregando…</div></div>`;
+    <div id="pvcorpo" style="display:flex;flex-direction:column;gap:22px;border:1px dashed var(--rule);border-radius:10px;padding:20px;background:var(--surface)"><div class="carregando">Carregando…</div></div>`;
   $('#pvp').onchange = e => { S.previaParc = e.target.value; S.compPId = null; vVerParceiro(); };
   $('#bx-todos').onclick = e => { const c = S.comps.find(x => x.id === S.compPId) || comp(); if (c) baixarBasesTodos(c, e.currentTarget); };
   S.previa = true;
@@ -370,7 +383,7 @@ function casca() {
         ${MENU.map(([g, itens]) => `<div class="grupo">${g}</div>` + itens.map(([id, nome]) =>
           id ? `<a href="#${id}" class="${S.view === id ? 'on' : ''}">${nome}</a>` : `<a class="off">${nome} <em>em construção</em></a>`).join('')).join('')}
       </nav>
-      <div class="rodape"><span>${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span><button id="sair">Sair</button></div>
+      <div class="rodape"><span>${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span><span style="display:flex;gap:6px;flex-wrap:wrap">${temaBtn()}<button id="sair">Sair</button></span></div>
     </aside>
     <main id="main"></main>
   </div>`;
@@ -1260,14 +1273,14 @@ function telaParceiro() {
   const p = S.parc;
   app.innerHTML = `
   <div style="min-height:100vh;display:flex;flex-direction:column">
-    <header style="background:var(--ink);color:#fff;border-left:8px solid var(--brand)">
+    <header style="background:var(--panel);color:var(--on-panel);border-left:8px solid var(--brand)">
       <div style="max-width:1100px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
         <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Portal do Parceiro</div><div style="font-size:18px;font-weight:600">${esc(p.nome)} · ${esc(p.regiao)}</div></div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO} · <a href="#" id="lnkpriv" style="color:inherit">Privacidade</a></small></span>
-          <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
+          ${temaBtn()}<button id="sair" style="font:inherit;font-size:13px;color:var(--on-panel);background:none;border:1px solid var(--panel-line);border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
     <main id="main" style="max-width:1100px;width:100%;margin:0 auto"></main>
@@ -2228,7 +2241,7 @@ async function agendaPagamentos(box) {
   const hoje = new Date().toISOString().slice(0, 10);
   box.innerHTML = `<div class="tabela"><table><thead><tr><th>Data de pagamento</th><th>Lote</th><th>Competência</th><th>Conteúdo</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
     ${lotes.map(l => { const [r, k] = ST_LOTE[l.status] || [l.status, '']; const na = ad.filter(a => a.lote_id === l.id).length, nf = fe.filter(f => f.lote_id === l.id).length;
-      return `<tr${l.data_pagamento < hoje && !/pago/.test(l.status) ? ' style="background:#FBF3E6"' : ''}><td><b>${fmtD(l.data_pagamento)}</b></td><td>${esc(l.rotulo || '')}</td><td>${cm[l.competencia_id] ? nomeMes(cm[l.competencia_id]) : '—'}</td><td style="font-size:13px">${[nf ? `${nf} fechamento(s)` : '', na ? `${na} adiantamento(s)` : ''].filter(Boolean).join(' · ')}</td><td class="n">${BRL2(l.total)}</td><td><span class="pill ${k}">${r}</span></td></tr>`; }).join('')}
+      return `<tr${l.data_pagamento < hoje && !/pago/.test(l.status) ? ' style="background:var(--hl-row)"' : ''}><td><b>${fmtD(l.data_pagamento)}</b></td><td>${esc(l.rotulo || '')}</td><td>${cm[l.competencia_id] ? nomeMes(cm[l.competencia_id]) : '—'}</td><td style="font-size:13px">${[nf ? `${nf} fechamento(s)` : '', na ? `${na} adiantamento(s)` : ''].filter(Boolean).join(' · ')}</td><td class="n">${BRL2(l.total)}</td><td><span class="pill ${k}">${r}</span></td></tr>`; }).join('')}
     </tbody></table></div><p class="nota">Linhas em destaque: data já passou e o lote ainda não foi registrado como pago.</p>`;
 }
 
@@ -2673,7 +2686,7 @@ async function detalheConferencia() {
   const ativos = divs.filter(d => d.situacao !== 'informativo'); const info = divs.filter(d => d.situacao === 'informativo');
   const linhaDiv = d => { const ac = acPor[d.id] || []; const pend = ['precisa_acao', 'em_analise'].includes(d.situacao);
     return `<tr data-d="${d.id}"><td style="white-space:nowrap">${esc(d.operacao)}</td><td class="num">${esc(d.ref_linha)}</td>
-      <td>${esc(d.descricao)}${ac.map(a => `<div style="margin-top:6px;padding:6px 8px;background:#fff;border-left:3px solid var(--brand);font-size:13px"><b>Parceiro, ${fmtDH(a.criado_em)}:</b> ${esc(a.texto || '')}${a.arquivo_path ? ` <a href="#" data-arq="${esc(a.arquivo_path)}">abrir comprovante</a>` : ''}</div>`).join('')}
+      <td>${esc(d.descricao)}${ac.map(a => `<div style="margin-top:6px;padding:6px 8px;background:var(--surface);border-left:3px solid var(--brand);font-size:13px"><b>Parceiro, ${fmtDH(a.criado_em)}:</b> ${esc(a.texto || '')}${a.arquivo_path ? ` <a href="#" data-arq="${esc(a.arquivo_path)}">abrir comprovante</a>` : ''}</div>`).join('')}
         ${d.decisao ? `<div class="nota" style="margin-top:4px">GSM: <b>${d.decisao === 'aceita' ? 'aceito' : 'glosado ' + BRL2(d.valor_glosa)}</b>${d.comentario_gsm ? ' — ' + esc(d.comentario_gsm) : ''}</div>` : ''}</td>
       <td class="n">${d.valor == null ? '—' : BRL2(d.valor)}</td>
       <td>${pend ? `<span class="pill ${d.situacao === 'precisa_acao' ? 'alerta' : 'marca'}">${d.situacao === 'precisa_acao' ? 'Sem resposta' : 'Respondido'}</span>` : `<span class="pill escuro">Decidido</span>`}</td>
@@ -2754,14 +2767,14 @@ const valorOp = (r, op) => op === 'malote' ? Number(r.malote) || 0 : op === 'kit
 async function iniciarConsulta() {
   app.innerHTML = `
   <div style="min-height:100vh;display:flex;flex-direction:column">
-    <header style="background:var(--ink);color:#fff;border-left:8px solid var(--brand)">
+    <header style="background:var(--panel);color:var(--on-panel);border-left:8px solid var(--brand)">
       <div style="max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
         <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Fechamento de última milha</div><div style="font-size:18px;font-weight:600">${S.perfil.papel === 'financeiro' ? 'Financeiro' : 'Diretoria'}</div></div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
-          <button id="sair" style="font:inherit;font-size:13px;color:#fff;background:none;border:1px solid #3A3639;border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
+          ${temaBtn()}<button id="sair" style="font:inherit;font-size:13px;color:var(--on-panel);background:none;border:1px solid var(--panel-line);border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
     <main id="main" style="max-width:1240px;width:100%;margin:0 auto"></main>
@@ -2824,8 +2837,8 @@ function desenharDiretoria(el) {
   <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} ${D.aba === 'geral' ? 'Valores totais, já com descontos.' : `Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.`}</p></div>
     <div class="linha">
       ${D.aba === 'geral' ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}
-      <div class="alterna" role="group" aria-label="Operação" style="display:${D.aba === 'geral' ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff">
-        ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
+      <div class="alterna" role="group" aria-label="Operação" style="display:${D.aba === 'geral' ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
+        ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
       </div>
       <select id="dcomp" class="peq" style="min-height:44px;font-size:15px">${D.comps.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select>
     </div></div>
@@ -2916,16 +2929,16 @@ function grafico(box, pts) {
   const bw = (W - L - R) / pts.length; const y = v => T + (H - T - B) * (1 - v / top);
   const ticks = [0, top / 2, top];
   box.innerHTML = `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px;height:auto;display:block" role="img" aria-label="Evolução mensal">
-    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3" stroke-width="1"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)" stroke-width="1"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="Poppins">${BRLk(t)}</text>`).join('')}
     ${pts.map((p, i) => { const x = L + i * bw + bw * 0.2, w = bw * 0.6, h = Math.max(0, y(0) - y(p.v));
       return `<g data-i="${i}"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>
-        <path d="M${x},${y(0)} v${-(h - 4)} q0,-4 4,-4 h${w - 8} q4,0 4,4 v${h - 4} z" fill="${p.atual ? '#DB2242' : '#121112'}" opacity="${p.atual ? 1 : 0.82}"/>
-        <text x="${x + w / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.atual ? '#A3182F' : '#6E6E72'}" font-weight="${p.atual ? 600 : 400}" font-family="Poppins">${p.rot}</text></g>`; }).join('')}
-  </svg></div><div id="gtip" hidden style="position:absolute;pointer-events:none;background:#121112;color:#fff;font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
+        <path d="M${x},${y(0)} v${-(h - 4)} q0,-4 4,-4 h${w - 8} q4,0 4,4 v${h - 4} z" fill="${p.atual ? 'var(--brand)' : 'var(--ink)'}" opacity="${p.atual ? 1 : 0.82}"/>
+        <text x="${x + w / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.atual ? 'var(--brand-deep)' : 'var(--muted)'}" font-weight="${p.atual ? 600 : 400}" font-family="Poppins">${p.rot}</text></g>`; }).join('')}
+  </svg></div><div id="gtip" hidden style="position:absolute;pointer-events:none;background:var(--panel);color:var(--on-panel);font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
   const tip = box.querySelector('#gtip'); const svg = box.querySelector('svg');
   svg.querySelectorAll('g[data-i]').forEach(g => {
     g.onmousemove = e => { const p = pts[+g.dataset.i]; const ant = pts[+g.dataset.i - 1]; tip.hidden = false;
-      tip.innerHTML = `<b>${p.rot}</b> · ${BRL(p.v)}${ant && ant.v ? `<br><span style="color:#B8B6B4">${pct(p.v / ant.v - 1)} sobre ${ant.rot}</span>` : ''}`;
+      tip.innerHTML = `<b>${p.rot}</b> · ${BRL(p.v)}${ant && ant.v ? `<br><span style="color:var(--on-dark)">${pct(p.v / ant.v - 1)} sobre ${ant.rot}</span>` : ''}`;
       const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 180) + 'px'; tip.style.top = (e.clientY - r.top - 50) + 'px'; };
     g.onmouseleave = () => tip.hidden = true;
     g.style.cursor = 'pointer';
@@ -3040,7 +3053,7 @@ async function mapaCustos(box, D, c) {
   const lo = Math.min(...vals), hi = Math.max(...vals);
   // escuro = pede mais atenção (na execução, quanto menor, mais escuro)
   const inten = v => v == null || hi === lo ? 0.15 : met === 'exec' ? (hi - v) / (hi - lo) : (v - lo) / (hi - lo);
-  const cor = v => v == null ? '#ECEAE6' : `rgba(219,34,66,${(0.08 + 0.85 * inten(v)).toFixed(3)})`;
+  const cor = v => v == null ? 'var(--ok-bg)' : `rgba(219,34,66,${(0.08 + 0.85 * inten(v)).toFixed(3)})`;
   const fmt = v => v == null ? '—' : met === 'exec' ? pct(v - 1).replace('+', '') + ' do previsto' .replace(' do previsto', '') : met === 'cpa' ? BRL2(v) : BRL(v);
   const fmtExec = v => v == null ? '—' : (100 * v).toFixed(1).replace('.', ',') + '%';
   const fmtV = v => met === 'exec' ? fmtExec(v) : fmt(v);
@@ -3054,7 +3067,7 @@ async function mapaCustos(box, D, c) {
     if (x.custo && x.kits / x.custo > 0.3) t.push(`Kits/Spot são ${Math.round(100 * x.kits / x.custo)}% do custo`);
     return t.join(' · ') || '—'; };
   box.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
-    <div class="alterna" role="group" aria-label="Indicador" style="display:inline-flex;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff;align-self:flex-start">${MAPA_MET.map(([k, t]) => `<button type="button" data-mm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${met === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
+    <div class="alterna" role="group" aria-label="Indicador" style="display:inline-flex;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface);align-self:flex-start">${MAPA_MET.map(([k, t]) => `<button type="button" data-mm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${met === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
     <div class="kpis">
       <div class="kpi"><small>Potencial de redução no mês</small><b>${BRL(totPot)}</b><span>fixo pago sem atendimento + malote acima do previsto</span></div>
       <div class="kpi neutro"><small>Custo por atendimento (Brasil)</small><b>${nac ? BRL2(nac) : '—'}</b><span>malote + kits ÷ atendimentos realizados</span></div>
@@ -3063,7 +3076,7 @@ async function mapaCustos(box, D, c) {
     <div style="display:grid;grid-template-columns:minmax(300px,1.25fr) minmax(260px,1fr);gap:24px;align-items:start" class="mapa-grid">
       <div style="position:relative">
         <svg viewBox="${BR.viewBox}" style="width:100%;height:auto;display:block" role="img" aria-label="Mapa do Brasil por estado: ${esc(MAPA_MET.find(m => m[0] === met)[1])}">
-          ${Object.entries(BR.uf).map(([uf, g]) => { const u = U[uf]; const v = u ? val(u) : null; return `<path d="${g.d}" data-uf="${uf}" fill="${cor(v)}" stroke="${sel === uf ? '#121112' : '#FFFFFF'}" stroke-width="${sel === uf ? 2.2 : 0.8}" style="cursor:${u ? 'pointer' : 'default'}"><title>${esc(g.nome)}: ${u ? fmtV(v) : 'sem parceiro'}</title></path>`; }).join('')}
+          ${Object.entries(BR.uf).map(([uf, g]) => { const u = U[uf]; const v = u ? val(u) : null; return `<path d="${g.d}" data-uf="${uf}" fill="${cor(v)}" stroke="${sel === uf ? 'var(--ink)' : 'var(--surface)'}" stroke-width="${sel === uf ? 2.2 : 0.8}" style="cursor:${u ? 'pointer' : 'default'}"><title>${esc(g.nome)}: ${u ? fmtV(v) : 'sem parceiro'}</title></path>`; }).join('')}
         </svg>
         <div class="linha" style="font-size:12px;color:var(--muted);gap:8px;margin-top:6px"><span>${met === 'exec' ? 'maior execução' : 'menor'}</span><i style="display:inline-block;width:140px;height:10px;border-radius:5px;background:linear-gradient(90deg,rgba(219,34,66,.08),rgba(219,34,66,.93))"></i><span>${met === 'exec' ? 'menor execução' : 'maior'}</span><span style="margin-left:auto">Mapa: svg-maps, CC BY 4.0</span></div>
       </div>
@@ -3096,20 +3109,20 @@ function graficoPrev(box, tbox, pts, atualId) {
   const max = Math.max(...pts.map(p => Math.max(p.p || 0, p.r || 0)), 1); const nice = Math.pow(10, Math.floor(Math.log10(max))); const top = Math.ceil(max / nice) * nice;
   const bw = (W - L - R) / pts.length; const y = v => T + (H - T - B) * (1 - v / top);
   const rot = p => MES3[+p.c.mes.slice(5, 7) - 1];
-  box.innerHTML = `<div class="linha" style="font-size:13px;color:var(--muted);gap:18px"><span><i style="display:inline-block;width:12px;height:12px;border:2px solid #121112;border-radius:2px;vertical-align:-2px"></i> Previsto</span><span><i style="display:inline-block;width:12px;height:12px;background:#DB2242;border-radius:2px;vertical-align:-2px"></i> Realizado</span>${pts.some(p => p.proj) ? '<span><i style="display:inline-block;width:12px;height:12px;border:2px dashed #121112;border-radius:2px;vertical-align:-2px"></i> Projeção pela carteira atual</span>' : ''}</div>
+  box.innerHTML = `<div class="linha" style="font-size:13px;color:var(--muted);gap:18px"><span><i style="display:inline-block;width:12px;height:12px;border:2px solid var(--ink);border-radius:2px;vertical-align:-2px"></i> Previsto</span><span><i style="display:inline-block;width:12px;height:12px;background:var(--brand);border-radius:2px;vertical-align:-2px"></i> Realizado</span>${pts.some(p => p.proj) ? '<span><i style="display:inline-block;width:12px;height:12px;border:2px dashed var(--ink);border-radius:2px;vertical-align:-2px"></i> Projeção pela carteira atual</span>' : ''}</div>
   <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px;height:auto;display:block" role="img" aria-label="Previsto x realizado">
-    ${[0, top / 2, top].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${[0, top / 2, top].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="Poppins">${BRLk(t)}</text>`).join('')}
     ${pts.map((p, i) => { const x0 = L + i * bw, w = bw * 0.3, g = 3;
-      const bar = (v, x, cheia) => v ? `<rect x="${x}" y="${y(v)}" width="${w}" height="${y(0) - y(v)}" rx="2" ${cheia ? 'fill="#DB2242"' : `fill="#FBFAF8" stroke="#121112" stroke-width="1.5"${p.proj ? ' stroke-dasharray="4 3"' : ''}`}/>` : '';
-      return `<g data-i="${i}"><rect x="${x0}" y="${T}" width="${bw}" height="${H - T - B}" fill="${p.c.id === atualId ? '#F6F5F2' : 'transparent'}"/>
+      const bar = (v, x, cheia) => v ? `<rect x="${x}" y="${y(v)}" width="${w}" height="${y(0) - y(v)}" rx="2" ${cheia ? 'fill="var(--brand)"' : `fill="var(--field)" stroke="var(--ink)" stroke-width="1.5"${p.proj ? ' stroke-dasharray="4 3"' : ''}`}/>` : '';
+      return `<g data-i="${i}"><rect x="${x0}" y="${T}" width="${bw}" height="${H - T - B}" fill="${p.c.id === atualId ? 'var(--paper)' : 'transparent'}"/>
         ${bar(p.p, x0 + bw / 2 - w - g / 2, false)}${bar(p.r, x0 + bw / 2 + g / 2, true)}
-        <text x="${x0 + bw / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.c.id === atualId ? '#A3182F' : '#6E6E72'}" font-weight="${p.c.id === atualId ? 600 : 400}" font-family="Poppins">${rot(p)}</text></g>`; }).join('')}
-  </svg></div><div class="gt" hidden style="position:absolute;pointer-events:none;background:#121112;color:#fff;font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
+        <text x="${x0 + bw / 2}" y="${H - 12}" text-anchor="middle" font-size="12" fill="${p.c.id === atualId ? 'var(--brand-deep)' : 'var(--muted)'}" font-weight="${p.c.id === atualId ? 600 : 400}" font-family="Poppins">${rot(p)}</text></g>`; }).join('')}
+  </svg></div><div class="gt" hidden style="position:absolute;pointer-events:none;background:var(--panel);color:var(--on-panel);font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap"></div>`;
   const tip = box.querySelector('.gt');
   box.querySelectorAll('g[data-i]').forEach(g => {
     const p = pts[+g.dataset.i];
     g.onmousemove = e => { tip.hidden = false;
-      tip.innerHTML = `<b>${rot(p)}${p.proj ? ' · projeção' : ''}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:#B8B6B4">${pct(p.r / p.p - 1)}</span>` : ''}`;
+      tip.innerHTML = `<b>${rot(p)}${p.proj ? ' · projeção' : ''}</b><br>Previsto ${p.p ? BRL(p.p) : '—'}<br>Realizado ${p.r != null ? BRL(p.r) : '—'}${p.p && p.r != null ? `<br><span style="color:var(--on-dark)">${pct(p.r / p.p - 1)}</span>` : ''}`;
       const r = box.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top - 70) + 'px'; };
     g.onmouseleave = () => tip.hidden = true; if (p.proj && !p.temReal) return; g.style.cursor = 'pointer';
     g.onclick = () => { S.dir.compId = p.c.id; desenharDiretoria(box.closest('main') || $('#main')); };
@@ -3200,7 +3213,7 @@ function visaoGeral(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const pend = parceirosMes - nFech;
 
-  const comp = [['Malote', mal, '#121112'], ['Kits/Spot', kit, '#DB2242'], ['Fora do Umov', fora, '#A3182F'], ['Outros ajustes', outros, '#B8B6B4']].filter(x => x[1] > 0.5);
+  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', fora, 'var(--brand-deep)'], ['Outros ajustes', outros, 'var(--on-dark)']].filter(x => x[1] > 0.5);
   const base = comp.reduce((a, x) => a + x[1], 0) || 1;
   const maxS = Math.max(...serie.map(s => Math.max(s.v, s.p)), 1);
   const tile = (rot, val, sub, cls = '') => `<div class="gtile ${cls}"><small>${rot}</small><b>${val}</b><span>${sub}</span></div>`;
@@ -3237,7 +3250,7 @@ function visaoGeral(box, D, c, ant) {
     const th = (k, t) => `<th class="n" data-gs="${k}" style="cursor:pointer;white-space:nowrap">${t}${sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`;
     D.gresLista = { L, per };
     return `<section class="gcard" id="gresdet"><div class="linha" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Economia por praça · ${per === 'ano' ? 'acumulado ' + c.mes.slice(0, 4) + ' até ' + MES3[+c.mes.slice(5, 7) - 1] : nomeMes(c.mes)}</h3>
-      <div class="linha"><div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff">${[['mes', 'Mês'], ['ano', 'Acumulado do ano']].map(([k, t]) => `<button type="button" data-gp="${k}" style="font:inherit;font-size:13px;border:0;padding:6px 12px;border-radius:6px;cursor:pointer;${per === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div><button class="btn sec peq" id="gresx">Baixar Excel</button></div></div>
+      <div class="linha"><div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">${[['mes', 'Mês'], ['ano', 'Acumulado do ano']].map(([k, t]) => `<button type="button" data-gp="${k}" style="font:inherit;font-size:13px;border:0;padding:6px 12px;border-radius:6px;cursor:pointer;${per === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div><button class="btn sec peq" id="gresx">Baixar Excel</button></div></div>
       <div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th data-gs="praca" style="cursor:pointer">Praça${sk === 'praca' ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>${th('prev', 'Previsto')}${th('mal', 'Malote pago')}${th('abaixo', 'Abaixo do previsto')}${th('acima', 'Acima do previsto')}${th('desc', 'Descontos')}${th('save', 'Save')}${th('total', 'Economia')}</tr></thead><tbody>
       ${L.map(x => `<tr><td><b>${esc(x.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.prev ? BRL(x.prev) : '—'}</td><td class="n">${x.mal ? BRL(x.mal) : '—'}</td><td class="n">${x.abaixo > 0.5 ? BRL(x.abaixo) : '—'}</td><td class="n" style="color:${x.acima > 0.5 ? 'var(--brand-deep)' : 'inherit'}">${x.acima > 0.5 ? '−' + BRL(x.acima) : '—'}</td><td class="n">${x.desc > 0.5 ? BRL(x.desc) : '—'}</td><td class="n">${x.save > 0.5 ? BRL(x.save) : '—'}</td><td class="n"><b style="color:${x.total < 0 ? 'var(--brand-deep)' : 'inherit'}">${BRL(x.total)}</b></td></tr>`).join('')}
       </tbody><tfoot><tr><td><b>Total (${L.length} praças)</b></td><td class="n"><b>${BRL(T('prev'))}</b></td><td class="n"><b>${BRL(T('mal'))}</b></td><td class="n"><b>${BRL(T('abaixo'))}</b></td><td class="n"><b>−${BRL(T('acima'))}</b></td><td class="n"><b>${BRL(T('desc'))}</b></td><td class="n"><b>${BRL(T('save'))}</b></td><td class="n"><b>${BRL(T('total'))}</b></td></tr></tfoot></table></div>
@@ -3252,13 +3265,13 @@ function visaoGeral(box, D, c, ant) {
     <section class="gcard"><h3>Composição do custo</h3>
       ${semReal ? '<p class="nota">Sem fechamento neste mês.</p>' : `<div class="gstack">${comp.map(x => `<i style="width:${100 * x[1] / base}%;background:${x[2]}" title="${x[0]}: ${BRL(x[1])}"></i>`).join('')}</div>
       <table class="gtab"><tbody>${comp.map(x => `<tr><td><i class="gdot" style="background:${x[2]}"></i>${x[0]}</td><td class="n">${BRL(x[1])}</td><td class="n gmut">${Math.round(100 * x[1] / base)}%</td></tr>`).join('')}
-        ${desc ? `<tr><td><i class="gdot" style="background:#fff;border:1px solid #121112"></i>Descontos</td><td class="n">${BRL(desc)}</td><td></td></tr>` : ''}
+        ${desc ? `<tr><td><i class="gdot" style="background:var(--surface);border:1px solid var(--ink)"></i>Descontos</td><td class="n">${BRL(desc)}</td><td></td></tr>` : ''}
         <tr class="gtot"><td>Total</td><td class="n">${BRL(custo)}</td><td></td></tr></tbody></table>`}
     </section>
     <section class="gcard"><h3>Mês a mês · ${ano}</h3>
       <div class="gmeses">${serie.map(s => `<div class="gmes${s.c.id === c.id ? ' on' : ''}" data-comp="${s.c.id}" title="${nomeMes(s.c.mes)}: ${s.v ? BRL(s.v) + ' (malote ' + BRL(s.v - s.k) + ' + Kits/Spot ' + BRL(s.k) + ')' : 'sem fechamento'}${s.p ? ' · previsto ' + BRL(s.p) : ''}">
         <div class="gcol"><i class="gp" style="height:${100 * s.p / maxS}%"></i><i class="gv" style="height:${100 * s.v / maxS}%"></i><i class="gk" style="height:${100 * s.k / maxS}%"></i></div><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></div>`).join('')}</div>
-      <p class="nota" style="margin:6px 0 0"><i class="gdot" style="background:#121112;opacity:.8"></i>custo total <i class="gdot" style="background:#DB2242;margin-left:10px"></i>parte de Kits/Spot (na base da coluna) <i class="gdot" style="background:#fff;border:1px solid #121112;margin-left:10px"></i>previsto (malote) · clique no mês para trocar</p>
+      <p class="nota" style="margin:6px 0 0"><i class="gdot" style="background:var(--ink);opacity:.8"></i>custo total <i class="gdot" style="background:var(--brand);margin-left:10px"></i>parte de Kits/Spot (na base da coluna) <i class="gdot" style="background:var(--surface);border:1px solid var(--ink);margin-left:10px"></i>previsto (malote) · clique no mês para trocar</p>
     </section>
     <section class="gcard"><h3>Maiores custos do mês</h3>
       <table class="gtab"><tbody>${top.map(x => `<tr><td>${esc(x.p.regiao || '—')}</td><td class="gbarc"><div class="gbar fina"><i style="width:${top[0] ? 100 * x.v / top[0].v : 0}%"></i></div></td><td class="n">${BRL(x.v)}</td><td class="n gmut">${custo ? Math.round(100 * x.v / custo) : 0}%</td></tr>`).join('') || '<tr><td class="nota">Sem fechamento.</td></tr>'}</tbody></table>
@@ -3328,16 +3341,16 @@ function ponte(box, D, c, ant) {
   const lo = Math.min(...barras.filter(b => b.tipo !== 'total').map(b => Math.min(b.ini, b.fim)), vA, vC) * 0.97;
   const hi = Math.max(...barras.map(b => Math.max(b.ini, b.fim))) * 1.01;
   const W = 900, H = 280, L = 70, R = 12, T = 24, B = 54; const bw = (W - L - R) / barras.length; const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  const cor = { total: '#121112', sobe: '#DB2242', desce: '#6E6E72' };
+  const cor = { total: 'var(--ink)', sobe: 'var(--brand)', desce: 'var(--muted)' };
   box.innerHTML = `<p class="sub" style="margin:0">Variação total: <b>${(vC - vA > 0 ? '+' : '') + BRL(vC - vA)}</b> (${pct(vC / vA - 1)}). Vermelho aumenta o custo; cinza reduz. O eixo começa em ${BRLk(lo)} para mostrar as diferenças.</p>
   <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:620px;height:auto;display:block" role="img" aria-label="Ponte de variação">
-    ${[lo, (lo + hi) / 2, hi].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="#E9E7E3"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="#6E6E72" font-family="Poppins">${BRLk(t)}</text>`).join('')}
+    ${[lo, (lo + hi) / 2, hi].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="Poppins">${BRLk(t)}</text>`).join('')}
     ${barras.map((b, i) => { const x = L + i * bw + bw * 0.18, w = bw * 0.64; const top = y(Math.max(b.ini, b.fim)), bot = b.tipo === 'total' ? y(lo) : y(Math.min(b.ini, b.fim));
       const lbl = b.tipo === 'total' ? BRLk(b.fim) : (b.v > 0 ? '+' : '') + BRLk(b.v);
       return `<rect x="${x}" y="${top}" width="${w}" height="${Math.max(2, bot - top)}" rx="3" fill="${cor[b.tipo]}"><title>${esc(b.rot)}: ${b.tipo === 'total' ? BRL(b.fim) : BRL(b.v)}</title></rect>
-        ${i < barras.length - 1 ? `<line x1="${x + w}" x2="${x + bw}" y1="${y(b.fim)}" y2="${y(b.fim)}" stroke="#B8B6B4" stroke-dasharray="3 3"/>` : ''}
-        <text x="${x + w / 2}" y="${top - 6}" text-anchor="middle" font-size="12" font-weight="600" fill="#121112" font-family="Poppins">${lbl}</text>
-        <foreignObject x="${L + i * bw}" y="${H - B + 6}" width="${bw}" height="${B - 6}"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12px Poppins,sans-serif;color:#6E6E72;text-align:center;line-height:1.2">${esc(b.rot)}</div></foreignObject>`; }).join('')}
+        ${i < barras.length - 1 ? `<line x1="${x + w}" x2="${x + bw}" y1="${y(b.fim)}" y2="${y(b.fim)}" stroke="var(--on-dark)" stroke-dasharray="3 3"/>` : ''}
+        <text x="${x + w / 2}" y="${top - 6}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)" font-family="Poppins">${lbl}</text>
+        <foreignObject x="${L + i * bw}" y="${H - B + 6}" width="${bw}" height="${B - 6}"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12px Poppins,sans-serif;color:var(--muted);text-align:center;line-height:1.2">${esc(b.rot)}</div></foreignObject>`; }).join('')}
   </svg></div>
   ${(() => { const dif = cont.map(r => ({ p: pm[r.parceiro_id] || {}, d: tot(r) - tot(pA[r.parceiro_id]) })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 8);
     return `<div class="tabela"><table><thead><tr><th>Maiores variações por parceiro</th><th class="n">${MES3[+ant.mes.slice(5, 7) - 1]}</th><th class="n">${MES3[+c.mes.slice(5, 7) - 1]}</th><th class="n">Diferença</th></tr></thead><tbody>
@@ -3397,7 +3410,7 @@ async function listaKits(box, D, c) {
 }
 
 // Lista de atendimentos por ponto (igual à aba Atendimentos da base de fechamento)
-const togAtd = D => `<div class="alterna" role="group" aria-label="Lista" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:#fff;align-self:flex-start">${[['malote', 'Malote (pontos)'], ['kits', 'Kits/Spot']].map(([k, n]) => `<button type="button" data-atm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${(D.atdModo || 'malote') === k ? 'background:var(--ink);color:#fff;font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>`;
+const togAtd = D => `<div class="alterna" role="group" aria-label="Lista" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface);align-self:flex-start">${[['malote', 'Malote (pontos)'], ['kits', 'Kits/Spot']].map(([k, n]) => `<button type="button" data-atm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${(D.atdModo || 'malote') === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>`;
 const ligarTogAtd = (box, D, c) => box.querySelectorAll('[data-atm]').forEach(b => b.onclick = () => { D.atdModo = b.dataset.atm; listaAtendimentos(box, D, c); });
 async function listaAtendimentos(box, D, c) {
   if (D.atdModo === 'kits') return listaKits(box, D, c);
@@ -3494,7 +3507,7 @@ function pagamentos(box, adis, ls) {
     </div>
     <div class="tabela"><table><thead><tr><th>Data de pagamento</th><th class="n">Parceiros</th><th class="n">Valor</th><th class="n">Adiantado</th><th class="n">Pago</th><th class="n">Saldo a pagar</th></tr></thead><tbody>
     ${lst.map(([k, x]) => { const sd = x.v - x.adi - x.vp - (x.antec || 0); return `<tr><td>${esc(k === '—' ? 'Sem data cadastrada' : k)}</td><td class="n">${x.n}</td><td class="n">${BRL(x.v)}</td><td class="n">${x.adi ? BRL(x.adi) : '—'}</td><td class="n">${x.vp ? BRL(x.vp) : '—'}</td>
-      <td class="n"><b>${BRL(sd)}</b><div style="height:4px;background:#E9E7E3;border-radius:2px;margin-top:4px"><div style="height:4px;width:${T.v ? Math.max(0, 100 * sd / T.v) : 0}%;background:#121112;border-radius:2px"></div></div></td></tr>`; }).join('')}
+      <td class="n"><b>${BRL(sd)}</b><div style="height:4px;background:var(--rule-soft);border-radius:2px;margin-top:4px"><div style="height:4px;width:${T.v ? Math.max(0, 100 * sd / T.v) : 0}%;background:var(--ink);border-radius:2px"></div></div></td></tr>`; }).join('')}
     </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${T.n}</b></td><td class="n"><b>${BRL(T.v)}</b></td><td class="n"><b>${BRL(T.adi)}</b></td><td class="n"><b>${BRL(T.vp)}</b></td><td class="n"><b>${BRL(saldo)}</b></td></tr></tfoot></table></div>
     <p class="nota">Datas fixas do cadastro de cada parceiro. Valores com descontos. "Pago" passa a aparecer quando o pagamento for registrado no portal (etapa do financeiro).</p>`;
 }
@@ -3510,7 +3523,7 @@ async function clientesMes(box, compId, op, parceiroId) {
   box.className = '';
   box.innerHTML = lst.length ? `<div style="display:flex;flex-direction:column;gap:8px">${top.map(([n, x]) => `<div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px">
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n)}">${esc(n)}</span>
-      <span style="height:10px;background:#E9E7E3;border-radius:5px"><span style="display:block;height:10px;width:${100 * x.v / max}%;background:#DB2242;border-radius:5px"></span></span>
+      <span style="height:10px;background:var(--rule-soft);border-radius:5px"><span style="display:block;height:10px;width:${100 * x.v / max}%;background:var(--brand);border-radius:5px"></span></span>
       <span class="num" style="min-width:86px;text-align:right">${BRL(x.v)}</span></div>`).join('')}</div>
     <p class="nota">${lst.length} clientes · ${BRL(tot)}. ${est ? 'Malote por cliente é estimado: o valor de cada parceiro é dividido pela proporção de atendimentos de cada cliente.' : ''}</p>`
     : `<p class="nota">Sem detalhe por cliente para este mês. O administrador carrega em "Histórico por cliente".</p>`;
@@ -3528,10 +3541,10 @@ async function detalheParceiro(tr, pid, c, op) {
   const W = 420, H = 120, L = 22, R = 22, T = 20, B = 22; const max = Math.max(...pts.map(p => p.v), 1);
   const x = i => L + i * (W - L - R) / Math.max(1, pts.length - 1); const y = v => T + (H - T - B) * (1 - v / max);
   linha.querySelector('#dg').innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;display:block">
-    <path d="M${pts.map((p, i) => `${x(i)},${y(p.v)}`).join(' L')}" fill="none" stroke="#121112" stroke-width="2"/>
-    ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="${p.atual ? 5 : 3}" fill="${p.atual ? '#DB2242' : '#121112'}" stroke="#FBFAF8" stroke-width="2"><title>${p.rot}: ${BRL(p.v)}</title></circle>
-      <text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#6E6E72" font-family="Poppins">${p.rot}</text>`).join('')}
-    <text x="${x(pts.findIndex(p => p.atual))}" y="${y(pts.find(p => p.atual).v) - 9}" text-anchor="${pts.findIndex(p => p.atual) === pts.length - 1 ? 'end' : 'middle'}" font-size="12" font-weight="600" fill="#121112" font-family="Poppins">${BRLk(pts.find(p => p.atual).v)}</text></svg>`;
+    <path d="M${pts.map((p, i) => `${x(i)},${y(p.v)}`).join(' L')}" fill="none" stroke="var(--ink)" stroke-width="2"/>
+    ${pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.v)}" r="${p.atual ? 5 : 3}" fill="${p.atual ? 'var(--brand)' : 'var(--ink)'}" stroke="var(--field)" stroke-width="2"><title>${p.rot}: ${BRL(p.v)}</title></circle>
+      <text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="Poppins">${p.rot}</text>`).join('')}
+    <text x="${x(pts.findIndex(p => p.atual))}" y="${y(pts.find(p => p.atual).v) - 9}" text-anchor="${pts.findIndex(p => p.atual) === pts.length - 1 ? 'end' : 'middle'}" font-size="12" font-weight="600" fill="var(--ink)" font-family="Poppins">${BRLk(pts.find(p => p.atual).v)}</text></svg>`;
   clientesMes(linha.querySelector('#dc'), c.id, op, pid);
 }
 
