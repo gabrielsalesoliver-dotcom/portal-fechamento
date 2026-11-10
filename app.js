@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1115';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1135';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1115';
+const VERSAO = '2026.11.10-1135';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -436,13 +436,49 @@ function casca() {
       <div class="tit"><small>Fechamento</small><strong>Administração</strong></div>
       <nav aria-label="Menu">
         ${MENU.map(([g, itens]) => `<div class="grupo">${g}</div>` + itens.map(([id, nome]) =>
-          id ? `<a href="#${id}" class="${S.view === id ? 'on' : ''}">${nome}</a>` : `<a class="off">${nome} <em>em construção</em></a>`).join('')).join('')}
+          id ? `<a href="#${id}" class="${S.view === id ? 'on' : ''}"><span>${nome}</span><span class="badge" data-badge="${id}" hidden></span></a>` : `<a class="off">${nome} <em>em construção</em></a>`).join('')).join('')}
       </nav>
       <div class="rodape"><span>${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span><span style="display:flex;gap:6px;flex-wrap:wrap">${temaBtn()}<button id="sair">Sair</button></span></div>
     </aside>
     <main id="main"></main>
   </div>`;
   $('#sair').onclick = sair;
+  desenharBadges(); atualizarBadges();
+}
+
+// Contadores no menu (competência aberta mais recente): o que está esperando ação
+const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote' };
+function desenharBadges() {
+  const b = S.badges || {}; document.querySelectorAll('[data-badge]').forEach(el => { const n = b[el.dataset.badge] || 0;
+    el.hidden = !n; el.textContent = n > 99 ? '99+' : n; el.title = n ? `${n} ${BADGE_TIT[el.dataset.badge] || ''}${S.badgesMes ? ' · ' + S.badgesMes : ''}` : ''; });
+}
+async function atualizarBadges(forcar = false) {
+  if (!forcar && S.badgesEm && Date.now() - S.badgesEm < 10000) return;
+  S.badgesEm = Date.now();
+  try {
+    const c = (S.comps || []).filter(x => x.status === 'aberta').sort((a, b) => b.mes.localeCompare(a.mes))[0]; if (!c) return;
+    const [parcs, envs, divs, fech, nfr, adis] = await Promise.all([
+      q(sb.from('parceiros').select('id,ativo')),
+      todas(() => sb.from('envios').select('id,parceiro_id,versao,status').eq('competencia_id', c.id).neq('status', 'substituido')),
+      todas(() => sb.from('divergencias').select('envio_id').eq('competencia_id', c.id).eq('situacao', 'precisa_acao')),
+      todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_aprovado,lote_id,pago_em,antec_status').eq('competencia_id', c.id)),
+      todas(() => sb.from('nf_resumo').select('parceiro_id,situacao,recusadas').eq('competencia_id', c.id)),
+      todas(() => sb.from('adiantamentos').select('id,status').eq('competencia_id', c.id)),
+    ]);
+    const ult = {}; envs.forEach(e => { if (!ult[e.parceiro_id] || e.versao > ult[e.parceiro_id].versao) ult[e.parceiro_id] = e; });
+    const fm = Object.fromEntries(fech.map(f => [f.parceiro_id, f])), nm = Object.fromEntries(nfr.map(r => [r.parceiro_id, r]));
+    const bd = { pendencias: 0, conferencia: 0, notas: 0, pacote: 0, adiantamentos: 0 };
+    parcs.filter(p => p.ativo !== false).forEach(p => { const e = ult[p.id], f = fm[p.id], r = nm[p.id];
+      if (f && f.pago_em) return;
+      if (f && f.valor_aprovado != null) {
+        if (r && r.situacao === 'conferida') { if (!f.lote_id) bd.pacote++; }
+        else if (r && r.situacao === 'a_conferir') bd.notas++;
+        else bd.pendencias++; // falta a NF ou NF recusada
+        return; }
+      if (!e || e.status === 'recusado' || divs.some(d => d.envio_id === e.id)) bd.pendencias++; else bd.conferencia++; });
+    bd.adiantamentos = adis.filter(a => a.status === 'solicitado').length + fech.filter(f => f.antec_status === 'solicitada').length;
+    S.badges = bd; S.badgesMes = nomeMes(c.mes); desenharBadges();
+  } catch (e) { /* contadores são só um aviso */ }
 }
 
 function seletorComp(soAbertas = true) {
