@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1025';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1115';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1025';
+const VERSAO = '2026.11.10-1115';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2412,6 +2412,15 @@ async function carregarTesseract() {
   if (!_tess) _tess = new Promise((ok, erro) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; sc.onload = () => ok(window.Tesseract); sc.onerror = () => erro(new Error('Não foi possível carregar o leitor de imagem.')); document.head.appendChild(sc); });
   return _tess;
 }
+// Leitura de imagem com limite de tempo e botão "preencher à mão": nunca deixa a tela travada em "Lendo a NF…"
+async function ocrComPulo(file, idTexto, aviso) {
+  const el = $('#' + idTexto); let pular;
+  const pulo = new Promise(ok => { pular = ok; });
+  if (el && el.parentElement) { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn sec peq'; b.style.marginLeft = '10px'; b.textContent = 'Pular a leitura e preencher à mão';
+    b.onclick = () => pular(''); el.after(b); }
+  const limite = new Promise(ok => setTimeout(() => ok(''), 60000));
+  return Promise.race([textoOCR(file, aviso).catch(() => ''), pulo, limite]);
+}
 async function textoOCR(file, aviso) {
   const T = await carregarTesseract();
   const imgs = [];
@@ -2512,7 +2521,7 @@ async function formNFAdi(file, c, a) {
   const esperado = Number(a.valor); const ctx = { cnpjParceiro: S.parc.cnpj, esperado };
   let lido = { texto: false }, ocr = false;
   try { if (/\.pdf$/i.test(file.name)) lido = lerNF(await textoPDF(file), ctx); } catch (e) { lido = { texto: false }; }
-  if (!lido.texto || (!lido.numero && lido.valor == null)) { ocr = true; try { lido = lerNF(await textoOCR(file, p => { const e = $('#nfad-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo… ${p}%`; }), ctx); } catch (e) { lido = { texto: false }; } }
+  if (!lido.texto || (!lido.numero && lido.valor == null)) { ocr = true; try { lido = lerNF(await ocrComPulo(file, 'nfad-lendo', p => { const e = $('#nfad-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo… ${p}%`; }), ctx); } catch (e) { lido = { texto: false }; } }
   const cad = digitos(S.parc.cnpj); const valOk = lido.valor != null && Math.abs(lido.valor - esperado) < 0.01;
   box.innerHTML = `<div class="linha" style="align-items:flex-end;margin-top:8px">
       <label class="campo">Número<input class="peq" id="na-num" value="${esc(lido.numero || '')}" style="width:150px"></label>
@@ -2541,7 +2550,7 @@ async function formNF(file, c, sugerido, anexos = []) {
   try { if (/\.pdf$/i.test(file.name)) lido = lerNF(await textoPDF(file), ctx); } catch (e) { lido = { texto: false }; }
   if (!lido.texto || (!lido.numero && lido.valor == null)) {
     ocr = true;
-    try { lido = lerNF(await textoOCR(file, p => { const e = $('#nf-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo o conteúdo… ${p}%`; }), ctx); }
+    try { lido = lerNF(await ocrComPulo(file, 'nf-lendo', p => { const e = $('#nf-lendo'); if (e) e.textContent = `A NF é uma imagem: lendo o conteúdo… ${p}%`; }), ctx); }
     catch (e) { lido = { texto: false, erro: e.message }; }
   }
   const hoje = new Date().toISOString().slice(0, 10);
