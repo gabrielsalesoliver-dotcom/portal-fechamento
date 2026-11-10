@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1835';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1845';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1835';
+const VERSAO = '2026.11.10-1845';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3676,7 +3676,7 @@ function popComposicao(item, D, c, ant) {
 }
 
 // ---------- Kits/Spot por cliente ----------
-const CLI_SPOT = [[/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA/, 'Amalfis'],
+const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA/, 'Amalfis'],
   [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA/, 'Crefisa'], [/SHIMADA/, 'Shimada'],
   [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/\bYPE\b|QUIMICA/, 'Ypê'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
   [/PEPPERONE/, 'Pepperone'], [/IFOOD/, 'iFood'], [/CLARO/, 'Claro'], [/S\.? ?V\.? ?C\.? LASER/, 'SVC Laser'], [/\bZIO\b/, 'Zio Brindes'], [/\bARG\b/, 'ARG'],
