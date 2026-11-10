@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-0930';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1025';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-0930';
+const VERSAO = '2026.11.10-1025';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2136,7 +2136,7 @@ const ehF = x => x != null && typeof x === 'object' && !(x instanceof Date) && '
 const valF = x => ehF(x) ? x.v : x;
 const colLetra = n => { let t = ''; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 async function planilhaPadrao({ titulo, sub, abas }) {
-  const wb = new ExcelJS.Workbook(); wb.creator = 'Portal de Fechamento GSM'; wb.created = new Date();
+  const wb = new ExcelJS.Workbook(); wb.creator = 'Portal de Fechamento GSM'; wb.created = new Date(); wb.calcProperties = { fullCalcOnLoad: true };
   const F = { name: 'Calibri', size: 11 }; const MOEDA = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"-"';
   const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
   const fino = { style: 'thin', color: { argb: 'FFD9D9D9' } }; const borda = { top: fino, left: fino, bottom: fino, right: fino };
