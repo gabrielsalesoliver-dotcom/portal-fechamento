@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1845';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1850';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1845';
+const VERSAO = '2026.11.10-1850';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3733,7 +3733,7 @@ async function spotPorCliente(box, c, ant) {
         ${aberto[n] ? ps.map(([pid, p]) => `<tr class="det" ${p.linhas.length ? `data-spotp="${esc(n)}|${pid}" style="background:var(--field);cursor:pointer"` : 'style="background:var(--field)"'}><td colspan="2" style="padding-left:28px">${p.linhas.length ? (abertoP[n + '|' + pid] ? '▾ ' : '▸ ') : ''}${esc(nomeP(pid))}${p.planilha ? ' <span class="nota">(planilha)</span>' : ''}</td><td class="n">${p.n ? fmtN(p.n) : '—'}</td><td class="n">${BRL2(p.v)}</td><td class="n">${p.n ? BRL2(p.v / p.n) : '—'}</td><td class="n">${GA[n]?.parcs[pid] ? BRL2(GA[n].parcs[pid].v) : '—'}</td><td colspan="2"></td></tr>
           ${p.linhas.length && abertoP[n + '|' + pid] ? `<tr class="det" style="background:var(--field)"><td colspan="8" style="padding:0 8px 10px 28px"><table style="width:100%;font-size:12px"><tbody>${p.linhas.sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).map(l => `<tr><td style="width:80px">${l.data ? fmtD(l.data) : '—'}</td><td>${esc(l.cliente || '')}${l.destino && l.destino !== l.cliente ? ` <span class="nota">· ${esc(l.destino)}</span>` : ''}</td><td>${esc(l.cidade || '')}</td><td class="n">${BRL2(l.valor)}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('') : ''}`; }).join('')}
     </tbody></table></div>
-    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas não contam como custo de spot. "Extras sem cliente identificado" são as entregas extras de spot de Anjos (SC) e Cta (Curitiba), que vêm num valor único.</p>` : ''}
+    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas não contam como custo de spot. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
     <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", "Leadec (KIT MASSEI…)" e "Sodexo" com Massei no nome contam como Massei).</p>`;
   box.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => { const n = tr.dataset.spot; D.spotAberto = { ...(D.spotAberto || {}), [n]: !aberto[n] }; spotPorCliente(box, c, ant); });
   box.querySelectorAll('tr[data-spotp]').forEach(tr => tr.onclick = () => { const k = tr.dataset.spotp; D.spotParc = { ...abertoP, [k]: !abertoP[k] }; spotPorCliente(box, c, ant); });
