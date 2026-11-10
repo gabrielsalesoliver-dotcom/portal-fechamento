@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1850';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1905';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1850';
+const VERSAO = '2026.11.10-1905';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2895,7 +2895,7 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
-  const [comps, parcs, fech, prev, efic, adis, ddet] = await Promise.all([
+  const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.rpc('parceiros_resumo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento,lote_id')),
@@ -2903,7 +2903,9 @@ async function vDiretoria(el) {
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
     todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor,origem')).catch(() => []),
+    q(sb.rpc('dir_spot_todos')).catch(() => []),
   ]);
+  reclassificarSpot(fech, spotTodos || [], parcs);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
   const hojeMes = new Date().toISOString().slice(0, 7) + '-01';
   const comComDados = comps.filter(c => c.mes === hojeMes || fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
@@ -3675,6 +3677,20 @@ function popComposicao(item, D, c, ant) {
   tabela(abrirPop(`Outros ajustes · ${mes}`, 'Diferença entre o valor aprovado e malote + kits + fora do Umov − descontos, por parceiro.'), ls, 'Parceiro', 'Normalmente são acertos combinados na aprovação (valor aprovado diferente do calculado).');
 }
 
+// Classificação do extra: cliente de spot ou não (malote lançado como extra / ajuste)
+function cliSpotDe(r, pm) {
+  return r.origem === 'planilha' && /^GSM$/i.test(String(r.cliente || '').trim()) ? (GSM_SPOT.test(pm[r.parceiro_id]?.nome || '') ? 'Extras sem cliente identificado' : 'Ajustes de malote e operacionais') : clienteSpot(r.cliente, r.destino);
+}
+// Na Diretoria, o que veio como extra mas não é spot sai de Kits/Spot: malote de cliente (Dass, Carmen, Vivara) vai para Malote; ajustes vão para Outros ajustes. O total do parceiro não muda.
+function reclassificarSpot(fech, linhas, parcs) {
+  const pm = Object.fromEntries((parcs || []).map(p => [p.id, p])); const aj = {};
+  linhas.forEach(r => { const k = cliSpotDe(r, pm); if (!NAO_SPOT.has(k)) return; const ch = r.competencia_id + '|' + r.parceiro_id; const x = aj[ch] || (aj[ch] = { mal: 0, aj: 0, kit: 0, fora: 0 });
+    const v = Number(r.valor) || 0; if (k === 'Ajustes de malote e operacionais') x.aj += v; else x.mal += v; if (r.origem === 'fora') x.fora += v; else x.kit += v; });
+  fech.forEach(f => { const x = aj[f.competencia_id + '|' + f.parceiro_id]; if (!x) return;
+    f.malote_orig = f.malote; f.kits_orig = f.kits; f.fora_orig = f.fora_umov; f.naoSpot = x;
+    f.malote = (Number(f.malote) || 0) + x.mal; f.kits = (Number(f.kits) || 0) - x.kit; f.fora_umov = (Number(f.fora_umov) || 0) - x.fora; });
+}
+
 // ---------- Kits/Spot por cliente ----------
 const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA/, 'Amalfis'],
   [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA/, 'Crefisa'], [/SHIMADA/, 'Shimada'],
@@ -3709,9 +3725,9 @@ async function spotPorCliente(box, c, ant) {
   const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
   const nomeP = id => pm[id] ? `${pm[id].regiao || ''}${pm[id].nome ? ' · ' + pm[id].nome : ''}` : '—';
   const agrupa = rs => { const g = {}; rs.forEach(r => { const k = r._cli || clienteSpot(r.cliente, r.destino); const x = g[k] || (g[k] = { v: 0, n: 0, parcs: {}, linhas: [] }); x.v += Number(r.valor) || 0; x.n += Number(r.qtd) || 0;
-    const p = x.parcs[r.parceiro_id] || (x.parcs[r.parceiro_id] = { v: 0, n: 0, linhas: [], planilha: r.origem === 'planilha' }); p.v += Number(r.valor) || 0; p.n += Number(r.qtd) || 0; if (r.origem === 'portal') p.linhas.push(r); }); return g; };
+    const p = x.parcs[r.parceiro_id] || (x.parcs[r.parceiro_id] = { v: 0, n: 0, linhas: [], planilha: r.origem === 'planilha' }); p.v += Number(r.valor) || 0; p.n += Number(r.qtd) || 0; if (r.origem !== 'planilha') p.linhas.push(r); }); return g; };
   const pmS = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
-  const cliDe = r => r.origem === 'planilha' && /^GSM$/i.test(String(r.cliente || '').trim()) ? (GSM_SPOT.test(pmS[r.parceiro_id]?.nome || '') ? 'Extras sem cliente identificado' : 'Ajustes de malote e operacionais') : clienteSpot(r.cliente, r.destino);
+  const cliDe = r => cliSpotDe(r, pmS);
   atual = atual.map(r => ({ ...r, _cli: cliDe(r) })); antes = antes.map(r => ({ ...r, _cli: cliDe(r) }));
   const ehSpot = r => !NAO_SPOT.has(r._cli);
   const fora = {}; atual.filter(r => !ehSpot(r)).forEach(r => { const k = r._cli; fora[k] = (fora[k] || 0) + (Number(r.valor) || 0); });
@@ -3733,7 +3749,7 @@ async function spotPorCliente(box, c, ant) {
         ${aberto[n] ? ps.map(([pid, p]) => `<tr class="det" ${p.linhas.length ? `data-spotp="${esc(n)}|${pid}" style="background:var(--field);cursor:pointer"` : 'style="background:var(--field)"'}><td colspan="2" style="padding-left:28px">${p.linhas.length ? (abertoP[n + '|' + pid] ? '▾ ' : '▸ ') : ''}${esc(nomeP(pid))}${p.planilha ? ' <span class="nota">(planilha)</span>' : ''}</td><td class="n">${p.n ? fmtN(p.n) : '—'}</td><td class="n">${BRL2(p.v)}</td><td class="n">${p.n ? BRL2(p.v / p.n) : '—'}</td><td class="n">${GA[n]?.parcs[pid] ? BRL2(GA[n].parcs[pid].v) : '—'}</td><td colspan="2"></td></tr>
           ${p.linhas.length && abertoP[n + '|' + pid] ? `<tr class="det" style="background:var(--field)"><td colspan="8" style="padding:0 8px 10px 28px"><table style="width:100%;font-size:12px"><tbody>${p.linhas.sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).map(l => `<tr><td style="width:80px">${l.data ? fmtD(l.data) : '—'}</td><td>${esc(l.cliente || '')}${l.destino && l.destino !== l.cliente ? ` <span class="nota">· ${esc(l.destino)}</span>` : ''}</td><td>${esc(l.cidade || '')}</td><td class="n">${BRL2(l.valor)}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('') : ''}`; }).join('')}
     </tbody></table></div>
-    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas não contam como custo de spot. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
+    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas na Diretoria não contam como Kits/Spot: malote de cliente entra em Malote e os ajustes em Outros ajustes. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
     <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", "Leadec (KIT MASSEI…)" e "Sodexo" com Massei no nome contam como Massei).</p>`;
   box.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => { const n = tr.dataset.spot; D.spotAberto = { ...(D.spotAberto || {}), [n]: !aberto[n] }; spotPorCliente(box, c, ant); });
   box.querySelectorAll('tr[data-spotp]').forEach(tr => tr.onclick = () => { const k = tr.dataset.spotp; D.spotParc = { ...abertoP, [k]: !abertoP[k] }; spotPorCliente(box, c, ant); });
