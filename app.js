@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1720';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1745';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1720';
+const VERSAO = '2026.11.10-1745';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3377,8 +3377,8 @@ function visaoGeral(box, D, c, ant) {
   <div class="ggrid">
     <section class="gcard"><h3>Composição do custo</h3>
       ${semReal ? '<p class="nota">Sem fechamento neste mês.</p>' : `<div class="gstack">${comp.map(x => `<i style="width:${100 * x[1] / base}%;background:${x[2]}" title="${x[0]}: ${BRL(x[1])}"></i>`).join('')}</div>
-      <table class="gtab"><tbody>${comp.map(x => `<tr><td><i class="gdot" style="background:${x[2]}"></i>${x[0]}</td><td class="n">${BRL(x[1])}</td><td class="n gmut">${Math.round(100 * x[1] / base)}%</td></tr>`).join('')}
-        ${desc ? `<tr><td><i class="gdot" style="background:var(--surface);border:1px solid var(--ink)"></i>Descontos</td><td class="n">${BRL(desc)}</td><td></td></tr>` : ''}
+      <table class="gtab gpop"><tbody>${comp.map(x => `<tr data-pop="${x[0]}" title="Clique para abrir por cliente"><td><i class="gdot" style="background:${x[2]}"></i>${x[0]} <span class="gseta">›</span></td><td class="n">${BRL(x[1])}</td><td class="n gmut">${Math.round(100 * x[1] / base)}%</td></tr>`).join('')}
+        ${desc ? `<tr data-pop="Descontos" title="Clique para abrir por categoria"><td><i class="gdot" style="background:var(--surface);border:1px solid var(--ink)"></i>Descontos <span class="gseta">›</span></td><td class="n">${BRL(desc)}</td><td></td></tr>` : ''}
         <tr class="gtot"><td>Total</td><td class="n">${BRL(custo)}</td><td></td></tr></tbody></table>`}
     </section>
     <section class="gcard"><h3>Mês a mês · ${ano}</h3>
@@ -3402,6 +3402,7 @@ function visaoGeral(box, D, c, ant) {
   box.querySelectorAll('[data-comp]').forEach(e => e.onclick = () => { D.compId = e.dataset.comp; desenharDiretoria(box.closest('main') || $('#main')); });
   box.querySelectorAll('[data-irmapa]').forEach(e => e.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); D.aba = 'mapa'; desenharDiretoria(box.closest('main') || $('#main')); });
   const redes = () => visaoGeral(box, D, c, ant);
+  box.querySelectorAll('[data-pop]').forEach(e => e.onclick = () => popComposicao(e.dataset.pop, D, c, ant));
   box.querySelectorAll('[data-gres]').forEach(e => e.onclick = () => { D.gresAberto = !D.gresAberto; redes(); if (D.gresAberto) setTimeout(() => { const d = $('#gresdet'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 50); });
   box.querySelectorAll('[data-gp]').forEach(e => e.onclick = () => { D.gresPer = e.dataset.gp; redes(); });
   box.querySelectorAll('[data-gs]').forEach(e => e.onclick = () => { const k = e.dataset.gs; const [sk, sd] = D.gresSort || ['total', -1]; D.gresSort = [k, sk === k ? -sd : (k === 'praca' ? 1 : -1)]; redes(); });
@@ -3640,6 +3641,38 @@ async function clientesMes(box, compId, op, parceiroId) {
       <span class="num" style="min-width:86px;text-align:right">${BRL(x.v)}</span></div>`).join('')}</div>
     <p class="nota">${lst.length} clientes · ${BRL(tot)}. ${est ? 'Malote por cliente é estimado: o valor de cada parceiro é dividido pela proporção de atendimentos de cada cliente.' : ''}</p>`
     : `<p class="nota">Sem detalhe por cliente para este mês. O administrador carrega em "Histórico por cliente".</p>`;
+}
+
+// ---------- Pop-up da composição do custo ----------
+function abrirPop(titulo, sub) {
+  document.querySelectorAll('.pop-fundo').forEach(x => x.remove());
+  const f = document.createElement('div'); f.className = 'pop-fundo';
+  f.innerHTML = `<div class="pop-caixa" role="dialog" aria-modal="true"><div class="pop-topo"><div><h2 style="margin:0">${esc(titulo)}</h2>${sub ? `<p class="sub" style="margin:4px 0 0">${sub}</p>` : ''}</div><button type="button" class="btn" data-fechar aria-label="Fechar">✕</button></div><div class="pop-corpo carregando">Carregando…</div></div>`;
+  const fechar = () => { f.remove(); document.removeEventListener('keydown', esc_); };
+  const esc_ = ev => { if (ev.key === 'Escape') fechar(); };
+  f.onclick = ev => { if (ev.target === f || ev.target.closest('[data-fechar]')) fechar(); };
+  document.addEventListener('keydown', esc_); document.body.appendChild(f);
+  return f.querySelector('.pop-corpo');
+}
+function popComposicao(item, D, c, ant) {
+  const n = v => Number(v) || 0; const mes = nomeMes(c.mes);
+  const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
+  const nomeP = id => pm[id] ? `${pm[id].regiao || ''}${pm[id].nome ? ' · ' + pm[id].nome : ''}` : '—';
+  if (item === 'Kits/Spot' || item === 'Fora do Umov') { spotPorCliente(abrirPop(`Kits/Spot por cliente · ${mes}`, 'Kits, spots e serviços fora do Umov. Clique no cliente para ver os parceiros e no parceiro para ver cada kit.'), c, ant); return; }
+  if (item === 'Malote') { clientesMes(abrirPop(`Malote por cliente · ${mes}`, 'Valor do malote de cada parceiro dividido pelos atendimentos de cada cliente.'), c.id, 'malote', null); return; }
+  const fe = D.fech.filter(f => f.competencia_id === c.id);
+  const tabela = (box, linhas, cab, nota) => { box.className = ''; const tot = linhas.reduce((a, l) => a + l.v, 0);
+    box.innerHTML = linhas.length ? `<div class="tabela"><table><thead><tr><th>${cab}</th><th class="n">Valor</th><th class="n">%</th></tr></thead><tbody>${linhas.sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).map(l => `<tr><td><b>${esc(l.k)}</b>${l.det ? `<br><span class="nota">${l.det}</span>` : ''}</td><td class="n">${BRL2(l.v)}</td><td class="n">${tot ? Math.round(100 * l.v / tot) : 0}%</td></tr>`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL2(tot)}</b></td><td></td></tr></tfoot></table></div>${nota ? `<p class="nota">${nota}</p>` : ''}` : '<p class="nota">Nada lançado neste mês.</p>'; };
+  if (item === 'Descontos') {
+    const dd = (D.ddet || []).filter(x => x.competencia_id === c.id); const g = {};
+    dd.forEach(x => { const k = x.categoria || 'Outros'; const y = g[k] || (g[k] = { k, v: 0, ps: {} }); y.v += n(x.valor); y.ps[x.parceiro_id] = (y.ps[x.parceiro_id] || 0) + n(x.valor); });
+    const ls = Object.values(g).map(y => ({ k: y.k, v: y.v, det: Object.entries(y.ps).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([pid, v]) => `${esc(nomeP(pid))} ${BRL(v)}`).join(' · ') }));
+    tabela(abrirPop(`Descontos · ${mes}`, 'Por categoria, com os parceiros que mais tiveram desconto.'), ls.length ? ls : fe.filter(r => n(r.descontos)).map(r => ({ k: nomeP(r.parceiro_id), v: n(r.descontos) })), ls.length ? 'Categoria' : 'Parceiro');
+    return;
+  }
+  const total = r => n(r.valor_aprovado ?? r.valor_final);
+  const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.descontos) })).filter(l => Math.abs(l.v) > 0.5);
+  tabela(abrirPop(`Outros ajustes · ${mes}`, 'Diferença entre o valor aprovado e malote + kits + fora do Umov − descontos, por parceiro.'), ls, 'Parceiro', 'Normalmente são acertos combinados na aprovação (valor aprovado diferente do calculado).');
 }
 
 // ---------- Kits/Spot por cliente ----------
