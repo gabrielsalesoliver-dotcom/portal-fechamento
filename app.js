@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-1135';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-1720';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-1135';
+const VERSAO = '2026.11.10-1720';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2965,6 +2965,7 @@ function desenharDiretoria(el) {
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
   <section class="bloco"><h2>Evolução em 2026 · ${OPS[op]}</h2><div id="graf" style="position:relative"></div></section>
   <section class="bloco"><h2>Clientes de ${nomeMes(c.mes)}</h2><div id="dcli" class="carregando">Carregando…</div></section>
+  <section class="bloco"><h2>Kits/Spot por cliente · ${nomeMes(c.mes)}</h2><p class="sub">Quanto cada cliente custou em kits e spots, comparado com ${ant ? nomeMes(ant.mes) : 'o mês anterior'}. Clique no cliente para ver os parceiros; clique no parceiro para ver cada kit (meses lançados pelo portal).</p><div id="dspot" class="carregando">Carregando…</div></section>
   </div>
   <div data-sec="variacao" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>O que mudou de ${ant ? nomeMes(ant.mes) : '—'} para ${nomeMes(c.mes)}</h2><div id="dponte" style="position:relative"></div></section></div>
   <div data-sec="eficiencia" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Custo unitário e execução · ${nomeMes(c.mes)}</h2><div id="defic"></div></section></div>
@@ -3018,6 +3019,7 @@ function desenharDiretoria(el) {
   resumoAno($('#rprev'), serieComp.concat(serieProj), id => doMes(id).reduce((a, r) => a + (Number(r.kits) || 0) + (Number(r.fora_umov) || 0), 0), Array.isArray(D.proj));
   projecaoParceiros($('#pprev'), D, proj, mesesProj);
   clientesMes($('#dcli'), c.id, op, null);
+  spotPorCliente($('#dspot'), c, ant);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
   $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
   const pr = $('#dprint'); if (pr) pr.onclick = () => window.print();
@@ -3638,6 +3640,64 @@ async function clientesMes(box, compId, op, parceiroId) {
       <span class="num" style="min-width:86px;text-align:right">${BRL(x.v)}</span></div>`).join('')}</div>
     <p class="nota">${lst.length} clientes · ${BRL(tot)}. ${est ? 'Malote por cliente é estimado: o valor de cada parceiro é dividido pela proporção de atendimentos de cada cliente.' : ''}</p>`
     : `<p class="nota">Sem detalhe por cliente para este mês. O administrador carrega em "Histórico por cliente".</p>`;
+}
+
+// ---------- Kits/Spot por cliente ----------
+const CLI_SPOT = [[/MASSEI|LEADEC|\bJSL\b/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA/, 'Amalfis'],
+  [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA/, 'Crefisa'], [/SHIMADA/, 'Shimada'],
+  [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/\bYPE\b|QUIMICA/, 'Ypê'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
+  [/PEPPERONE/, 'Pepperone'], [/IFOOD/, 'iFood'], [/CLARO/, 'Claro'], [/S\.? ?V\.? ?C\.? LASER/, 'SVC Laser'], [/\bZIO\b/, 'Zio Brindes'], [/\bARG\b/, 'ARG'],
+  [/PRO VERDE/, 'Pro Verde'], [/ROAR/, 'Roar'], [/PERSONAL BRINDES/, '153 Personal'], [/IDEIA E COSTURA/, 'Ideia e Costura'], [/OUTBACK/, 'Outback'], [/SODEXO/, 'Sodexo'],
+  [/MERCANTIL/, 'Banco Mercantil'], [/EMBRACON/, 'Embracon'], [/CO[OR]PERCARGO/, 'Coopercargo'], [/\bCARMEN\b/, 'Carmen Steffens'],
+  [/FIORINO|\bVAN\b/, 'Coletas dedicadas (Fiorino/Van)'],
+  [/\bGSM\b/, 'GSM (transferências)'], [/REDESPACHO|TRANSFER/, 'Redespacho / transferência']];
+const GEN_SPOT = /^(OUTRO|OUTROS|SEM CLIENTE|SERVICO FORA DO UMOV|EXTRAS DO MES)?$/;
+function clienteSpot(t, destino) {
+  const N = x => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const u = N(t), dn = N(destino);
+  const k = CLI_SPOT.find(([r]) => r.test(u)) || (GEN_SPOT.test(u) ? CLI_SPOT.find(([r]) => r.test(dn)) : null); if (k) return k[1];
+  if (GEN_SPOT.test(u)) return u === 'SEM CLIENTE' && !dn ? 'Kit sem cliente informado' : 'Outros serviços';
+  const w = u.replace(/^KITS? /, '').replace(/[(·].*$/, '').split(/[\s\-–]+/).filter(Boolean);
+  if (!w.length) return 'Sem cliente';
+  const n = (w[0].length <= 2 && w[1] ? w[0] + ' ' + w[1] : w[0]).toLowerCase();
+  return n.replace(/(^|\s)\S/g, x => x.toUpperCase());
+}
+async function spotPorCliente(box, c, ant) {
+  const D = S.dir; D.spot = D.spot || {};
+  const pega = async id => D.spot[id] || (D.spot[id] = await q(sb.rpc('dir_spot_cliente', { p_comp: id })));
+  let atual, antes;
+  try { [atual, antes] = await Promise.all([pega(c.id), ant ? pega(ant.id) : []]); }
+  catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+  if (S.dir.compId !== c.id) return;
+  const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
+  const nomeP = id => pm[id] ? `${pm[id].regiao || ''}${pm[id].nome ? ' · ' + pm[id].nome : ''}` : '—';
+  const agrupa = rs => { const g = {}; rs.forEach(r => { const k = clienteSpot(r.cliente, r.destino); const x = g[k] || (g[k] = { v: 0, n: 0, parcs: {}, linhas: [] }); x.v += Number(r.valor) || 0; x.n += Number(r.qtd) || 0;
+    const p = x.parcs[r.parceiro_id] || (x.parcs[r.parceiro_id] = { v: 0, n: 0, linhas: [], planilha: r.origem === 'planilha' }); p.v += Number(r.valor) || 0; p.n += Number(r.qtd) || 0; if (r.origem === 'portal') p.linhas.push(r); }); return g; };
+  const parcial = c.status !== 'fechada'; const pAtual = new Set(atual.map(r => r.parceiro_id));
+  const G = agrupa(atual), GA = agrupa(parcial ? antes.filter(r => pAtual.has(r.parceiro_id)) : antes);
+  const lst = Object.entries(G).sort((a, b) => b[1].v - a[1].v);
+  const tot = lst.reduce((a, [, x]) => a + x.v, 0), totA = Object.values(GA).reduce((a, x) => a + x.v, 0);
+  box.className = '';
+  if (!lst.length) { box.innerHTML = '<p class="nota">Nenhum kit ou spot lançado neste mês até agora.</p>'; return; }
+  const max = lst[0][1].v || 1; const aberto = D.spotAberto || {}; const abertoP = D.spotParc || {};
+  const varTxt = (v, va) => va ? `<span style="color:${v > va ? 'var(--brand)' : 'var(--muted)'}">${v >= va ? '+' : ''}${BRL(v - va)}</span>` : '<span class="nota">novo</span>';
+  box.innerHTML = `<div class="linha" style="justify-content:space-between;margin-bottom:8px"><span class="nota">${lst.length} clientes · ${BRL(tot)} · ${pAtual.size} parceiros lançados${ant ? ` · ${nomeMes(ant.mes)}${parcial ? ', mesmos parceiros' : ''}: ${BRL(totA)}` : ''}</span><button class="btn" id="spot-xls">Baixar Excel</button></div>
+    <div class="tabela"><table><thead><tr><th>Cliente</th><th></th><th class="n">Kits/Spot</th><th class="n">Valor</th><th class="n">Ticket</th><th class="n">${ant ? MES3[+ant.mes.slice(5, 7) - 1] : 'Mês ant.'}${parcial ? '*' : ''}</th><th class="n">Variação</th><th class="n">Parceiros</th></tr></thead><tbody>
+    ${lst.map(([n, x]) => { const va = GA[n]?.v || 0; const ps = Object.entries(x.parcs).sort((a, b) => b[1].v - a[1].v);
+      return `<tr data-spot="${esc(n)}" style="cursor:pointer"><td><b>${aberto[n] ? '▾' : '▸'} ${esc(n)}</b></td><td style="width:22%"><span style="display:block;height:10px;background:var(--rule-soft);border-radius:5px"><span style="display:block;height:10px;width:${100 * x.v / max}%;background:var(--brand);border-radius:5px"></span></span></td>
+        <td class="n">${x.n ? fmtN(x.n) : '—'}</td><td class="n">${BRL2(x.v)}</td><td class="n">${x.n ? BRL2(x.v / x.n) : '—'}</td><td class="n">${va ? BRL2(va) : '—'}</td><td class="n">${varTxt(x.v, va)}</td><td class="n">${ps.length}</td></tr>
+        ${aberto[n] ? ps.map(([pid, p]) => `<tr class="det" ${p.linhas.length ? `data-spotp="${esc(n)}|${pid}" style="background:var(--field);cursor:pointer"` : 'style="background:var(--field)"'}><td colspan="2" style="padding-left:28px">${p.linhas.length ? (abertoP[n + '|' + pid] ? '▾ ' : '▸ ') : ''}${esc(nomeP(pid))}${p.planilha ? ' <span class="nota">(planilha)</span>' : ''}</td><td class="n">${p.n ? fmtN(p.n) : '—'}</td><td class="n">${BRL2(p.v)}</td><td class="n">${p.n ? BRL2(p.v / p.n) : '—'}</td><td class="n">${GA[n]?.parcs[pid] ? BRL2(GA[n].parcs[pid].v) : '—'}</td><td colspan="2"></td></tr>
+          ${p.linhas.length && abertoP[n + '|' + pid] ? `<tr class="det" style="background:var(--field)"><td colspan="8" style="padding:0 8px 10px 28px"><table style="width:100%;font-size:12px"><tbody>${p.linhas.sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).map(l => `<tr><td style="width:80px">${l.data ? fmtD(l.data) : '—'}</td><td>${esc(l.cliente || '')}${l.destino && l.destino !== l.cliente ? ` <span class="nota">· ${esc(l.destino)}</span>` : ''}</td><td>${esc(l.cidade || '')}</td><td class="n">${BRL2(l.valor)}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('') : ''}`; }).join('')}
+    </tbody></table></div>
+    <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", "Leadec (KIT MASSEI…)" e "Sodexo" com Massei no nome contam como Massei).</p>`;
+  box.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => { const n = tr.dataset.spot; D.spotAberto = { ...(D.spotAberto || {}), [n]: !aberto[n] }; spotPorCliente(box, c, ant); });
+  box.querySelectorAll('tr[data-spotp]').forEach(tr => tr.onclick = () => { const k = tr.dataset.spotp; D.spotParc = { ...abertoP, [k]: !abertoP[k] }; spotPorCliente(box, c, ant); });
+  box.querySelector('#spot-xls').onclick = () => {
+    const resumo = lst.map(([n, x]) => ({ 'Cliente': n, 'Kits/Spot': x.n, 'Valor': x.v, 'Ticket': x.n ? x.v / x.n : 0, [`Valor ${ant ? nomeMes(ant.mes) : 'mês anterior'}`]: GA[n]?.v || 0, 'Diferença': x.v - (GA[n]?.v || 0), 'Parceiros': Object.keys(x.parcs).length }));
+    const det = []; lst.forEach(([n, x]) => Object.entries(x.parcs).forEach(([pid, p]) => { if (p.linhas.length) p.linhas.forEach(l => det.push({ 'Cliente': n, 'Parceiro': nomeP(pid), 'Data': l.data ? fmtD(l.data) : '', 'Kit / serviço': l.cliente || '', 'Destino': l.destino || '', 'Cidade': l.cidade || '', 'Qtd': Number(l.qtd) || 0, 'Valor': Number(l.valor) || 0 }));
+      else det.push({ 'Cliente': n, 'Parceiro': nomeP(pid), 'Data': '', 'Kit / serviço': '(total da planilha)', 'Destino': '', 'Cidade': '', 'Qtd': p.n, 'Valor': p.v }); }));
+    baixarXlsx(`Kits_Spot_por_cliente_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Kits/Spot por cliente', sub: nomeMes(c.mes), abas: [{ nome: 'Por cliente', linhas: resumo }, { nome: 'Detalhe', linhas: det }] });
+  };
 }
 
 async function detalheParceiro(tr, pid, c, op) {
