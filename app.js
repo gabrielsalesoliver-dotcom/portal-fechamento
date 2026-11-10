@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.09-1535';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-0900';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.09-1535';
+const VERSAO = '2026.11.10-0900';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -308,7 +308,10 @@ async function vPendencias() {
 }
 
 // ---------- Base do mês do parceiro em Excel (para mandar enquanto nem todos usam o portal) ----------
-async function exportarBaseParceiro(c, parc) {
+// Grupo de praças do mesmo parceiro (ex.: Gristch - GO/MT/PR/RS, Salvador1/2/3): nome antes do " - ", sem número no fim
+const grupoDe = p => norm(String(p.regiao || '').split(' - ')[0].replace(/\d+\s*$/, '').trim());
+const nomeGrupo = p => String(p.regiao || '').split(' - ')[0].replace(/\d+\s*$/, '').trim();
+async function dadosBaseParceiro(c, parc) {
   const pid = parc.id;
   const [pts, upp, kits, contr] = await Promise.all([
     todas(() => sb.from('pontos_vigentes').select('cod_int,cliente,loja,cidade,uf,frequencia,previsto,v_unit').eq('competencia_id', c.id).eq('parceiro_id', pid).order('cliente')),
@@ -325,6 +328,11 @@ async function exportarBaseParceiro(c, parc) {
     return { 'Cliente': p.cliente, 'Cod. Int': p.cod_int, 'Loja': p.loja, 'Cidade': p.cidade, 'UF': p.uf, 'Frequência': p.frequencia, 'Previsto (atend.)': Number(p.previsto) || 0, 'Realizado Umov (atend.)': feitos, 'Diferença (atend.)': feitos - (Number(p.previsto) || 0), 'V. Unit': vu, 'Valor': +(feitos * vu).toFixed(2) }; });
   const K = kitsU.map(k => { const ret = k.situacao === 'Retornada de Campo';
     return { 'Ref. Umov': k.id_umov, 'Kit': k.grupo_cliente, 'Cliente': k.cliente, 'Cidade': k.cidade, 'Data prevista': (k.data_prevista || '').slice(0, 10), 'Data final': (k.data_final || '').slice(0, 10), 'Situação': k.situacao, 'Valor': ret ? ticket : 0 }; });
+  return { M, K, fixo, ticket };
+}
+async function exportarBaseParceiro(c, parc) {
+  const d = await dadosBaseParceiro(c, parc); if (!d) return null;
+  const { M, K, fixo, ticket } = d;
   const vM = M.reduce((a, x) => a + x['Valor'], 0), vK = K.reduce((a, x) => a + x['Valor'], 0);
   const resumo = [
     { 'Item': 'Contrato fixo', 'Quantidade': null, 'Valor': fixo },
@@ -337,6 +345,29 @@ async function exportarBaseParceiro(c, parc) {
     { nome: 'Malote', linhas: M.length ? M : [{ 'Cliente': '(sem pontos de malote)' }] },
     { nome: 'Kits', linhas: K.length ? K : [{ 'Ref. Umov': '(sem kits no Umov)' }] }] });
   return { buf, nome: `Base_${nomeMes(c.mes).replace('/', '_')}_${safeName(parc.regiao || 'parceiro')}.xlsx` };
+}
+// Uma única planilha com todas as praças do grupo: resumo por praça + malote e kits com a coluna Praça
+async function exportarBaseGrupo(c, parcs) {
+  const res = [], M = [], K = [];
+  for (const p of parcs) { const d = await dadosBaseParceiro(c, p); if (!d) continue;
+    const vM = d.M.reduce((a, x) => a + x['Valor'], 0), vK = d.K.reduce((a, x) => a + x['Valor'], 0);
+    res.push({ 'Praça': p.regiao, 'Parceiro': p.nome || '', 'Fixo do contrato': d.fixo, 'Malote (atend. Umov)': d.M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), 'Malote': +vM.toFixed(2),
+      'Kits retornados': d.K.filter(x => x['Valor'] > 0).length, 'Kits/Spot': +vK.toFixed(2), 'Total': +(d.fixo + vM + vK).toFixed(2) });
+    d.M.forEach(x => M.push({ 'Praça': p.regiao, ...x })); d.K.forEach(x => K.push({ 'Praça': p.regiao, ...x })); }
+  if (!res.length) return null;
+  const g = nomeGrupo(parcs[0]); const prazo = c.prazo_envio ? ` · confira e devolva até ${fmtD(c.prazo_envio)}` : '';
+  const buf = await planilhaPadrao({ titulo: `Base do mês · ${g} · ${res.length} praças`, sub: `${nomeMes(c.mes)}${prazo}`, abas: [
+    { nome: 'Resumo por praça', linhas: res, sub: 'Valores pela base GSM, antes dos ajustes do parceiro (kits pelo ticket médio de cada praça). Informe extras e divergências com explicação.' },
+    { nome: 'Malote', linhas: M.length ? M : [{ 'Praça': '(sem pontos de malote)' }] },
+    { nome: 'Kits', linhas: K.length ? K : [{ 'Praça': '(sem kits no Umov)' }] }] });
+  return { buf, nome: `Base_${nomeMes(c.mes).replace('/', '_')}_${safeName(g)}_${res.length}_pracas.xlsx` };
+}
+async function baixarBaseGrupo(c, parcs, btn) {
+  const t = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
+  try { const r = await exportarBaseGrupo(c, parcs); if (!r) return alertaTopo('Nenhuma praça do grupo tem base neste mês.');
+    baixarBlob(new Blob([r.buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), r.nome); }
+  catch (e) { alertaTopo('Não foi possível gerar a base do grupo: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = t; } }
 }
 async function baixarBaseParceiro(c, parc, btn) {
   const t = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
@@ -1375,7 +1406,7 @@ async function baseParceiro(c) {
       <div class="kpi"><small>Valor que você vai enviar</small><b>${BRL2(totalParc)}</b><span>${ult ? `último envio: ${fmtDH(ult.enviado_em)}` : 'ainda não enviado'}</span></div>
       ${adiMes ? `<div class="kpi neutro"><small>A receber no fechamento</small><b>${BRL2(totalParc - adiMes)}</b><span>valor do mês − ${BRL2(adiMes)} já adiantado</span></div>` : ''}
     </div>
-    <div class="linha" style="justify-content:flex-end;margin:-6px 0 0">${S.previa && !trava ? '<button class="btn peq" id="imp-rel">Importar relatório do parceiro</button>' : ''}<button class="btn sec peq" id="bx-base">Baixar base em Excel</button></div>
+    <div class="linha" style="justify-content:flex-end;margin:-6px 0 0">${S.previa && !trava ? '<button class="btn peq" id="imp-rel">Importar relatório do parceiro</button>' : ''}<button class="btn sec peq" id="bx-base">Baixar base em Excel</button>${(() => { if (!S.previa) return ''; const gr = (S.parceiros || []).filter(p => p.ativo !== false && grupoDe(p) === grupoDe(S.parc)); return gr.length > 1 ? `<button class="btn sec peq" id="bx-grupo" title="${esc(gr.map(p => p.regiao).join(', '))}">Baixar base do grupo ${esc(nomeGrupo(S.parc))} (${gr.length} praças)</button>` : ''; })()}</div>
     <div id="impbox"></div>
     ${per || (S.previa && !trava) ? `<div class="msg ${per ? 'alerta' : ''}" style="margin:6px 0;padding:8px 12px" id="per-box">${per ? `<b>Período de apuração: ${fmtD(per.inicio)} a ${fmtD(per.fim)}</b>${per.obs ? ` · ${esc(per.obs)}` : ''}. Só os atendimentos do Umov dentro dessas datas contam neste fechamento, e o previsto é proporcional ao período.` : 'Fechamento do mês inteiro.'}
       ${S.previa && !trava ? ` <a href="#" id="per-ed">${per ? 'alterar' : 'Definir um período (ex.: quinzena)'}</a>${per ? ' · <a href="#" id="per-rm">voltar para o mês inteiro</a>' : ''}` : ''}</div>` : ''}
@@ -1385,6 +1416,8 @@ async function baseParceiro(c) {
     <div id="baseaba"></div>`;
   box.querySelectorAll('[data-ba]').forEach(b => b.onclick = () => { S.baseAba = b.dataset.ba; baseParceiro(c); });
   $('#bx-base').onclick = e => baixarBaseParceiro(c, S.parc, e.currentTarget);
+  const bg = $('#bx-grupo'); if (bg) bg.onclick = async e => { const btn = e.currentTarget; const ids = (S.parceiros || []).filter(p => p.ativo !== false && grupoDe(p) === grupoDe(S.parc)).map(p => p.id);
+    try { const gr = await q(sb.from('parceiros').select('id,regiao,nome,ticket_kit,ativo').in('id', ids).order('regiao')); baixarBaseGrupo(c, gr, btn); } catch (er) { alertaTopo(er.message); } };
   const salvaPer = async (ini, fim, obs) => { try { await q(sb.rpc('definir_periodo_parceiro', { p_comp: c.id, p_parceiro: pid, p_inicio: ini, p_fim: fim, p_obs: obs || null })); baseParceiro(c); } catch (e) { alertaTopo(e.message); } };
   const pe = $('#per-ed'); if (pe) pe.onclick = ev => { ev.preventDefault(); const b = $('#per-box');
     b.innerHTML = `<div class="linha" style="align-items:flex-end"><label class="campo">De<input type="date" class="peq" id="per-i" value="${per?.inicio || c.mes}"></label><label class="campo">Até<input type="date" class="peq" id="per-f" value="${per?.fim || ''}"></label>
