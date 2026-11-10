@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.10-0900';
+import { lerLinhas, casar } from './importa.js?v=2026.11.10-0930';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.10-0900';
+const VERSAO = '2026.11.10-0930';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -325,7 +325,7 @@ async function dadosBaseParceiro(c, parc) {
   const um = Object.fromEntries(upp.map(u => [u.cod_int, u]));
   const vistos = new Set(); const kitsU = kits.filter(k => { if (vistos.has(k.id_umov)) return false; vistos.add(k.id_umov); return true; });
   const M = pts.map(p => { const u = um[p.cod_int]; const feitos = u ? Number(u.retornadas) || 0 : 0; const vu = Number(p.v_unit) || 0;
-    return { 'Cliente': p.cliente, 'Cod. Int': p.cod_int, 'Loja': p.loja, 'Cidade': p.cidade, 'UF': p.uf, 'Frequência': p.frequencia, 'Previsto (atend.)': Number(p.previsto) || 0, 'Realizado Umov (atend.)': feitos, 'Diferença (atend.)': feitos - (Number(p.previsto) || 0), 'V. Unit': vu, 'Valor': +(feitos * vu).toFixed(2) }; });
+    return { 'Cliente': p.cliente, 'Cod. Int': p.cod_int, 'Loja': p.loja, 'Cidade': p.cidade, 'UF': p.uf, 'Frequência': p.frequencia, 'Previsto (atend.)': Number(p.previsto) || 0, 'Realizado Umov (atend.)': feitos, 'Diferença (atend.)': { f: '[Realizado Umov (atend.)]-[Previsto (atend.)]', v: feitos - (Number(p.previsto) || 0) }, 'V. Unit': vu, 'Valor': { f: '[Realizado Umov (atend.)]*[V. Unit]', v: +(feitos * vu).toFixed(2) } }; });
   const K = kitsU.map(k => { const ret = k.situacao === 'Retornada de Campo';
     return { 'Ref. Umov': k.id_umov, 'Kit': k.grupo_cliente, 'Cliente': k.cliente, 'Cidade': k.cidade, 'Data prevista': (k.data_prevista || '').slice(0, 10), 'Data final': (k.data_final || '').slice(0, 10), 'Situação': k.situacao, 'Valor': ret ? ticket : 0 }; });
   return { M, K, fixo, ticket };
@@ -333,12 +333,18 @@ async function dadosBaseParceiro(c, parc) {
 async function exportarBaseParceiro(c, parc) {
   const d = await dadosBaseParceiro(c, parc); if (!d) return null;
   const { M, K, fixo, ticket } = d;
-  const vM = M.reduce((a, x) => a + x['Valor'], 0), vK = K.reduce((a, x) => a + x['Valor'], 0);
+  const vM = M.reduce((a, x) => a + valF(x['Valor']), 0), vK = K.reduce((a, x) => a + x['Valor'], 0);
+  const qM = M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), qK = K.filter(x => x['Valor'] > 0).length;
+  // Resumo puxa das abas Malote e Kits (soma e contagem por fórmula)
+  const cM = n => M.length ? colLetra(Object.keys(M[0]).indexOf(n) + 1) : null, cK = n => K.length ? colLetra(Object.keys(K[0]).indexOf(n) + 1) : null;
+  const fimM = 4 + M.length, fimK = 4 + K.length;
   const resumo = [
     { 'Item': 'Contrato fixo', 'Quantidade': null, 'Valor': fixo },
-    { 'Item': 'Malote: atendimentos registrados no Umov', 'Quantidade': M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), 'Valor': +vM.toFixed(2) },
-    { 'Item': `Kits/Spot retornados (ticket médio ${BRL2(ticket)})`, 'Quantidade': K.filter(x => x['Valor'] > 0).length, 'Valor': +vK.toFixed(2) },
-  ].filter(x => x['Valor'] || x['Quantidade']);
+    { 'Item': 'Malote: atendimentos registrados no Umov × valor unitário', 'Quantidade': M.length ? { f: `SUM(Malote!${cM('Realizado Umov (atend.)')}5:${cM('Realizado Umov (atend.)')}${fimM})`, v: qM } : 0,
+      'Valor': M.length ? { f: `SUM(Malote!${cM('Valor')}5:${cM('Valor')}${fimM})`, v: +vM.toFixed(2) } : 0, _q: qM, _v: vM },
+    { 'Item': `Kits/Spot retornados (ticket médio ${BRL2(ticket)})`, 'Quantidade': K.length ? { f: `COUNTIF(Kits!${cK('Valor')}5:${cK('Valor')}${fimK},">0")`, v: qK } : 0,
+      'Valor': K.length ? { f: `SUM(Kits!${cK('Valor')}5:${cK('Valor')}${fimK})`, v: +vK.toFixed(2) } : 0, _q: qK, _v: vK },
+  ].filter(x => (x._v ?? x['Valor']) || x._q).map(({ _q, _v, ...x }) => x);
   const prazo = c.prazo_envio ? ` · confira e devolva até ${fmtD(c.prazo_envio)}` : '';
   const buf = await planilhaPadrao({ titulo: `Base do mês · ${parc.regiao} · ${parc.nome || ''}`, sub: `${nomeMes(c.mes)}${prazo}`, abas: [
     { nome: 'Resumo', linhas: resumo, sub: 'Valores pela base GSM, antes dos ajustes do parceiro. Informe extras e divergências com explicação.' },
@@ -349,12 +355,21 @@ async function exportarBaseParceiro(c, parc) {
 // Uma única planilha com todas as praças do grupo: resumo por praça + malote e kits com a coluna Praça
 async function exportarBaseGrupo(c, parcs) {
   const res = [], M = [], K = [];
+  const tmp = [];
   for (const p of parcs) { const d = await dadosBaseParceiro(c, p); if (!d) continue;
-    const vM = d.M.reduce((a, x) => a + x['Valor'], 0), vK = d.K.reduce((a, x) => a + x['Valor'], 0);
-    res.push({ 'Praça': p.regiao, 'Parceiro': p.nome || '', 'Fixo do contrato': d.fixo, 'Malote (atend. Umov)': d.M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), 'Malote': +vM.toFixed(2),
-      'Kits retornados': d.K.filter(x => x['Valor'] > 0).length, 'Kits/Spot': +vK.toFixed(2), 'Total': +(d.fixo + vM + vK).toFixed(2) });
+    const vM = d.M.reduce((a, x) => a + valF(x['Valor']), 0), vK = d.K.reduce((a, x) => a + x['Valor'], 0);
+    tmp.push({ p, d, vM, vK, qM: d.M.reduce((a, x) => a + x['Realizado Umov (atend.)'], 0), qK: d.K.filter(x => x['Valor'] > 0).length });
     d.M.forEach(x => M.push({ 'Praça': p.regiao, ...x })); d.K.forEach(x => K.push({ 'Praça': p.regiao, ...x })); }
-  if (!res.length) return null;
+  if (!tmp.length) return null;
+  // Resumo por praça com SOMASES/CONT.SES nas abas Malote e Kits (coluna Praça)
+  const cM = n => colLetra(Object.keys(M[0] || { 'Praça': 0 }).indexOf(n) + 1), cK = n => colLetra(Object.keys(K[0] || { 'Praça': 0 }).indexOf(n) + 1);
+  const rM = col => `Malote!$${col}$5:$${col}$${4 + M.length}`, rK = col => `Kits!$${col}$5:$${col}$${4 + K.length}`;
+  tmp.forEach(({ p, d, vM, vK, qM, qK }) => res.push({ 'Praça': p.regiao, 'Parceiro': p.nome || '', 'Fixo do contrato': d.fixo,
+    'Realizado Umov (atend.)': M.length ? { f: `SUMIFS(${rM(cM('Realizado Umov (atend.)'))},${rM('A')},[Praça])`, v: qM } : 0,
+    'Valor Malote': M.length ? { f: `SUMIFS(${rM(cM('Valor'))},${rM('A')},[Praça])`, v: +vM.toFixed(2) } : 0,
+    'Kits retornados': K.length ? { f: `COUNTIFS(${rK('A')},[Praça],${rK(cK('Valor'))},">0")`, v: qK } : 0,
+    'Valor Kits/Spot': K.length ? { f: `SUMIFS(${rK(cK('Valor'))},${rK('A')},[Praça])`, v: +vK.toFixed(2) } : 0,
+    'Total': { f: '[Fixo do contrato]+[Valor Malote]+[Valor Kits/Spot]', v: +(d.fixo + vM + vK).toFixed(2) } }));
   const g = nomeGrupo(parcs[0]); const prazo = c.prazo_envio ? ` · confira e devolva até ${fmtD(c.prazo_envio)}` : '';
   const buf = await planilhaPadrao({ titulo: `Base do mês · ${g} · ${res.length} praças`, sub: `${nomeMes(c.mes)}${prazo}`, abas: [
     { nome: 'Resumo por praça', linhas: res, sub: 'Valores pela base GSM, antes dos ajustes do parceiro (kits pelo ticket médio de cada praça). Informe extras e divergências com explicação.' },
@@ -2116,6 +2131,10 @@ async function dadosLote(lote) {
 // ---------- Planilhas no padrão GSM (todas as exportações, exceto a capa do financeiro) ----------
 const RX_MOEDA = /^(V\. |Valor|Fixo|Malote|Previsto$|Abaixo|Acima|Descontos|Save|Economia|Diferença|Ticket|Total|A pagar)|- previsto$|\(realizado\)$/;
 const RX_SOMA_INT = /^(Pontos|Kits|Realizado|Umov |Previsto \(|Realizado \(|Previsto \(Qtd)|atendimentos$/;
+// Célula com fórmula: { f: 'SUM(...)' ou '[Coluna A]*[Coluna B]', v: resultado }. [Nome da coluna] vira a célula da mesma linha.
+const ehF = x => x != null && typeof x === 'object' && !(x instanceof Date) && 'f' in x;
+const valF = x => ehF(x) ? x.v : x;
+const colLetra = n => { let t = ''; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 async function planilhaPadrao({ titulo, sub, abas }) {
   const wb = new ExcelJS.Workbook(); wb.creator = 'Portal de Fechamento GSM'; wb.created = new Date();
   const F = { name: 'Calibri', size: 11 }; const MOEDA = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"-"';
@@ -2125,7 +2144,7 @@ async function planilhaPadrao({ titulo, sub, abas }) {
   for (const aba of abas) {
     const ws = wb.addWorksheet(aba.nome.replace(/[\\\/?*\[\]:]/g, ' ').slice(0, 31), { views: [{ state: 'frozen', ySplit: 4, showGridLines: false }] });
     const L = aba.linhas || []; const cols = aba.colunas || (L.length ? Object.keys(L[0]) : ['(sem dados)']);
-    const tipo = cols.map(k => { const vs = L.map(r => r[k]).filter(v => v != null && v !== ''); if (!vs.length) return 'txt';
+    const tipo = cols.map(k => { const vs = L.map(r => valF(r[k])).filter(v => v != null && v !== ''); if (!vs.length) return 'txt';
       if (vs.every(v => typeof v === 'number')) return RX_MOEDA.test(k) ? 'moeda' : vs.every(Number.isInteger) ? 'int' : 'num';
       if (vs.every(v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v))) return 'data'; return 'txt'; });
     const nc = cols.length;
@@ -2137,6 +2156,10 @@ async function planilhaPadrao({ titulo, sub, abas }) {
       c.alignment = { vertical: 'middle', horizontal: ['moeda', 'int', 'num'].includes(tipo[j]) ? 'right' : 'left', wrapText: true }; });
     L.forEach((r, i) => { const row = ws.getRow(5 + i);
       cols.forEach((k, j) => { const c = row.getCell(j + 1); let v = r[k];
+        if (ehF(v)) { const fm = String(v.f).replace(/\[([^\]]+)\]/g, (m0, nm) => { const jj = cols.indexOf(nm); return jj >= 0 ? `${colLetra(jj + 1)}${5 + i}` : m0; });
+          c.value = { formula: fm, result: v.v ?? undefined }; c.font = F; c.border = borda;
+          if (tipo[j] === 'moeda') c.numFmt = MOEDA; else if (tipo[j] === 'int') c.numFmt = '#,##0'; else if (tipo[j] === 'num') c.numFmt = '#,##0.00';
+          if (i % 2) c.fill = fill('FFF7F6F4'); return; }
         if (tipo[j] === 'data' && v) { const [y, m, d] = v.slice(0, 10).split('-').map(Number); v = new Date(Date.UTC(y, m - 1, d)); c.numFmt = 'dd/mm/yyyy'; }
         c.value = v === undefined || v === '' ? null : v; c.font = F; c.border = borda;
         if (tipo[j] === 'moeda') c.numFmt = MOEDA; else if (tipo[j] === 'int') c.numFmt = '#,##0'; else if (tipo[j] === 'num') c.numFmt = '#,##0.00';
@@ -2145,9 +2168,9 @@ async function planilhaPadrao({ titulo, sub, abas }) {
     if (L.length && somar.some(Boolean)) { const tr = ws.getRow(5 + L.length); const ini = 5, fim = 4 + L.length;
       cols.forEach((k, j) => { const c = tr.getCell(j + 1); c.font = { ...F, bold: true }; c.fill = fill('FFEDEBE8'); c.border = { ...borda, top: { style: 'medium', color: { argb: 'FF262626' } } };
         if (j === 0) c.value = 'Total';
-        else if (somar[j]) { const col = ws.getColumn(j + 1).letter; c.value = { formula: `SUBTOTAL(9,${col}${ini}:${col}${fim})`, result: L.reduce((a, r) => a + (Number(r[k]) || 0), 0) }; c.numFmt = tipo[j] === 'moeda' ? MOEDA : '#,##0'; } }); }
+        else if (somar[j]) { const col = ws.getColumn(j + 1).letter; c.value = { formula: `SUBTOTAL(9,${col}${ini}:${col}${fim})`, result: L.reduce((a, r) => a + (Number(valF(r[k])) || 0), 0) }; c.numFmt = tipo[j] === 'moeda' ? MOEDA : '#,##0'; } }); }
     if (L.length) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + L.length, column: nc } };
-    cols.forEach((k, j) => { const amostra = L.slice(0, 400).map(r => r[k] == null ? '' : tipo[j] === 'moeda' ? 'R$ ' + Number(r[k]).toFixed(2) + '000' : String(r[k]));
+    cols.forEach((k, j) => { const amostra = L.slice(0, 400).map(r => { const x = valF(r[k]); return x == null ? '' : tipo[j] === 'moeda' ? 'R$ ' + Number(x).toFixed(2) + '000' : String(x); });
       const w = Math.max(Math.min(String(k).length, 22), ...amostra.map(x => x.length)) + 2; ws.getColumn(j + 1).width = Math.max(9, Math.min(w, 48)); });
     ws.pageSetup = { orientation: nc > 7 ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '4:4', margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
     ws.headerFooter = { oddFooter: '&L&8Portal de Fechamento GSM&R&8Página &P de &N' };
