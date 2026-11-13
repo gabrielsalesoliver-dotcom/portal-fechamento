@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.11-1430';
+import { lerLinhas, casar } from './importa.js?v=2026.11.13-0900';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.11-1430';
+const VERSAO = '2026.11.13-0900';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3014,6 +3014,7 @@ function desenharDiretoria(el) {
   <div data-sec="mapa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Mapa de custos · ${nomeMes(c.mes)}</h2><p class="sub">Onde agir para reduzir custo. O custo de cada parceiro é dividido entre os estados pela quantidade de pontos que ele atende em cada um. Clique em um estado para ver os parceiros e a ação sugerida.</p><div id="dmapa"></div></section></div>
   <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Quadro de pagamentos · ${nomeMes(c.mes)}</h2><div id="dquadro"></div></section><section class="bloco"><h2>Agenda de pagamentos · todas as competências</h2><div id="dagenda"></div></section><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
+  <div data-sec="carteira" style="display:flex;flex-direction:column;gap:22px"><div id="dcart"><div class="carregando">Carregando…</div></div></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
@@ -3047,6 +3048,7 @@ function desenharDiretoria(el) {
   if (D.aba === 'lotes') { listaLotes($('#dlotes'), c.id, false); quadroPagamentos($('#dquadro'), c); agendaPagamentos($('#dagenda')); }
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
   if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
+  if (D.aba === 'carteira') carteiraDir($('#dcart'), D);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
@@ -3293,7 +3295,7 @@ function graficoPrev(box, tbox, pts, atualId) {
 }
 
 const SO_FIN = ['atendimentos', 'eficiencia']; // abas operacionais: financeiro e GSM
-const ABAS_DIR = [['geral', 'Visão geral'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+const ABAS_DIR = [['geral', 'Visão geral'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['carteira', 'Movimentação de pontos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
 function visaoGeral(box, D, c, ant) {
@@ -3683,6 +3685,120 @@ async function clientesMes(box, compId, op, parceiroId) {
       <span class="num" style="min-width:86px;text-align:right">${BRL(x.v)}</span></div>`).join('')}</div>
     <p class="nota">${lst.length} clientes · ${BRL(tot)}. ${est ? 'Malote por cliente é estimado: o valor de cada parceiro é dividido pela proporção de atendimentos de cada cliente.' : ''}</p>`
     : `<p class="nota">Sem detalhe por cliente para este mês. O administrador carrega em "Histórico por cliente".</p>`;
+}
+
+// ---------- Movimentação de pontos (carteira: inclusões, cancelamentos, suspensões…) ----------
+const TIPOS_MOV = [ // [chave, rótulo, grupo: entra | sai | freq | outro]
+  ['inclus', 'Inclusão', 'entra'], ['aquisi', 'Aquisição de malote', 'entra'], ['reativ', 'Reativação', 'entra'],
+  ['cancel', 'Cancelamento', 'sai'], ['suspens', 'Suspensão', 'sai'],
+  ['redu', 'Redução de frequência', 'freq'], ['aument', 'Aumento de frequência', 'freq'], ['troca', 'Troca de frequência', 'freq'],
+  ['altera', 'Alteração cadastral', 'outro'], ['esporad', 'Atendimento esporádico', 'outro']];
+const tipoMov = t => { const u = String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); return TIPOS_MOV.find(([k]) => u.includes(k)) || ['outro', t || '—', 'outro']; };
+function visitasMes(f) {
+  const u = String(f || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  if (/DIARI/.test(u)) return 21.7; if (/QUINZ/.test(u)) return 2; if (/MENSAL/.test(u)) return 1; if (/SEMANAL/.test(u)) return 4.33;
+  const d = new Set((u.match(/\b(SEG|TER|QUA|QUI|SEX|SAB)/g) || [])); return (d.size || 1) * 4.33;
+}
+async function carteiraDir(box, D) {
+  if (!D.cart) {
+    box.innerHTML = '<div class="carregando">Carregando as movimentações da carteira…</div>';
+    try { const [mov, st, imp] = await Promise.all([todas(() => sb.rpc('dir_carteira_mov')), todas(() => sb.rpc('dir_carteira_status')), q(sb.from('carteira_importacoes').select('arquivo,importado_em').order('importado_em', { ascending: false }).limit(1)).catch(() => [])]);
+      D.cart = { mov, st, imp: imp[0] }; }
+    catch (e) { box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+    if (D.aba !== 'carteira') return;
+  }
+  const { mov, st, imp } = D.cart; const F = D.cartF || (D.cartF = { per: 12, tipo: 'todos', parc: '', busca: '', lim: 200 });
+  const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p])); const nomeP = id => pm[id] ? pm[id].regiao : 'Sem parceiro (rota GSM)';
+  const hoje = new Date().toISOString().slice(0, 10);
+  const ultMes = mov.reduce((a, m) => m.data && m.data <= hoje && m.data > a ? m.data : a, '').slice(0, 7) || hoje.slice(0, 7);
+  const meses = []; { let [y, m] = ultMes.split('-').map(Number); const n = F.per === 'ano' ? m : F.per; for (let i = 0; i < n; i++) { meses.unshift(`${y}-${String(m).padStart(2, '0')}`); m--; if (!m) { m = 12; y--; } } }
+  const ini = meses[0] + '-01', fimM = meses[meses.length - 1];
+  const R = mov.map(m => { const [k, rot, g] = tipoMov(m.tipo); return { ...m, k, rot, g, mes: (m.data || '').slice(0, 7), imp: (Number(m.v_unit) || 0) * visitasMes(m.frequencia || m.freq_cad) }; });
+  const noPer = R.filter(r => r.data >= ini && r.mes <= fimM && (!F.parc || (F.parc === '_sem' ? !r.parceiro_id : r.parceiro_id === F.parc)));
+  const futuros = R.filter(r => r.data > hoje);
+  const soma = (rs, g) => rs.filter(r => r.g === g);
+  const kp = k => noPer.filter(r => r.k === k).length;
+  const ent = soma(noPer, 'entra'), sai = soma(noPer, 'sai'), frq = soma(noPer, 'freq');
+  const impE = ent.reduce((a, r) => a + r.imp, 0), impS = sai.reduce((a, r) => a + r.imp, 0);
+  // gráfico mês a mês (entradas acima, saídas abaixo)
+  const porMes = meses.map(m => { const rs = noPer.filter(r => r.mes === m); return { m, e: rs.filter(r => r.g === 'entra').length, s: rs.filter(r => r.g === 'sai').length, f: rs.filter(r => r.g === 'freq').length }; });
+  const mx = Math.max(1, ...porMes.map(x => Math.max(x.e, x.s))); const W = 760, Hh = 110, bw = Math.min(46, (W - 40) / porMes.length - 8);
+  const svg = `<svg viewBox="0 -18 ${W} ${Hh * 2 + 58}" style="width:100%;max-width:${W}px;height:auto" role="img" aria-label="Entradas e saídas de pontos por mês">
+    <line x1="30" x2="${W - 10}" y1="${Hh + 10}" y2="${Hh + 10}" stroke="var(--rule)"/>
+    ${porMes.map((x, i) => { const cx = 40 + i * ((W - 50) / porMes.length); const he = Hh * x.e / mx, hs = Hh * x.s / mx;
+      return `<g><title>${MES3[+x.m.slice(5) - 1]}/${x.m.slice(2, 4)}: ${x.e} entradas, ${x.s} saídas, ${x.f} mudanças de frequência</title>
+      <rect x="${cx}" y="${Hh + 10 - he}" width="${bw}" height="${he}" fill="var(--ink)" rx="3"/><rect x="${cx}" y="${Hh + 10}" width="${bw}" height="${hs}" fill="var(--brand)" rx="3"/>
+      ${x.e ? `<text x="${cx + bw / 2}" y="${Hh + 4 - he}" text-anchor="middle" font-size="11" fill="var(--ink)">${x.e}</text>` : ''}
+      ${x.s ? `<text x="${cx + bw / 2}" y="${Hh + 24 + hs}" text-anchor="middle" font-size="11" fill="var(--brand-deep, var(--brand))">${x.s}</text>` : ''}
+      <text x="${cx + bw / 2}" y="${Hh * 2 + 36}" text-anchor="middle" font-size="11" fill="var(--muted)">${MES3[+x.m.slice(5) - 1]}/${x.m.slice(2, 4)}</text></g>`; }).join('')}</svg>`;
+  // situação hoje
+  const stP = st.filter(r => !F.parc || (F.parc === '_sem' ? !r.parceiro_id : r.parceiro_id === F.parc));
+  const susp = stP.filter(r => r.situacao === 'Suspenso'), suspAg = susp.filter(r => r.desde > hoje), suspHj = susp.filter(r => !(r.desde > hoje));
+  const canc = stP.filter(r => r.situacao === 'Cancelado');
+  const compUlt = st[0]?.comp_ult;
+  const alertaUmov = stP.filter(r => r.atend_ult > 0 && !(r.desde > hoje) && r.desde && compUlt && r.desde < compUlt.slice(0, 8) + '01');
+  const alertaCad = stP.filter(r => r.cad_situacao === 'Ativo' && !(r.desde > hoje));
+  // agrupamentos
+  const agrupa = key => { const g = {}; noPer.forEach(r => { const k = key(r); const x = g[k] || (g[k] = { k, e: 0, s: 0, f: 0, o: 0, impS: 0, impE: 0 }); x[r.g === 'entra' ? 'e' : r.g === 'sai' ? 's' : r.g === 'freq' ? 'f' : 'o']++; if (r.g === 'sai') x.impS += r.imp; if (r.g === 'entra') x.impE += r.imp; }); return Object.values(g).sort((a, b) => (b.e + b.s + b.f) - (a.e + a.s + a.f)); };
+  const porCli = agrupa(r => (r.cliente || '—').trim().toUpperCase()), porParc = agrupa(r => r.parceiro_id || '_sem');
+  const tabG = (lst, rot, nome, attr) => `<div class="tabela"><table><thead><tr><th>${rot}</th><th class="n">Entradas</th><th class="n">Saídas</th><th class="n">Saldo</th><th class="n">Mud. frequência</th><th class="n" title="Custo mensal estimado com o parceiro: valor unitário × visitas por mês">Custo/mês saindo</th></tr></thead><tbody>
+    ${lst.slice(0, 15).map(x => `<tr ${attr(x)} style="cursor:pointer"><td><b>${esc(nome(x))}</b></td><td class="n">${x.e || '—'}</td><td class="n" style="color:${x.s ? 'var(--brand-deep, var(--brand))' : ''}">${x.s || '—'}</td><td class="n"><b>${x.e - x.s > 0 ? '+' : ''}${x.e - x.s}</b></td><td class="n">${x.f || '—'}</td><td class="n">${x.impS ? BRL(x.impS) : '—'}</td></tr>`).join('')}</tbody></table></div>${lst.length > 15 ? `<p class="nota">Mostrando os 15 com mais movimentações de ${lst.length}.</p>` : ''}`;
+  // lista
+  let lista = noPer.filter(r => F.tipo === 'todos' || r.g === F.tipo || r.k === F.tipo);
+  if (F.busca) { const b = F.busca.toLowerCase(); lista = lista.filter(r => `${r.cliente} ${r.loja} ${r.cidade} ${r.cod_int} ${nomeP(r.parceiro_id)}`.toLowerCase().includes(b)); }
+  lista.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const pill = r => `<span class="pill ${r.g === 'sai' ? 'alerta' : r.g === 'entra' ? 'escuro' : ''}">${esc(r.rot)}</span>`;
+  const parcsOp = [...new Set(R.map(r => r.parceiro_id).filter(Boolean))].map(id => [id, nomeP(id)]).sort((a, b) => a[1].localeCompare(b[1]));
+  const kpi = (rot, n, sub, alvo) => `<button type="button" class="kpi" data-ftipo="${alvo}" style="text-align:left;cursor:pointer;border:1px solid ${F.tipo === alvo ? 'var(--ink)' : 'var(--rule)'};background:var(--surface);border-radius:10px;padding:12px 14px;min-width:140px;flex:1"><span style="font-size:12px;color:var(--muted)">${rot}</span><b style="display:block;font-size:24px">${n}</b><span style="font-size:12px;color:var(--muted)">${sub || '&nbsp;'}</span></button>`;
+  const tabSt = (rs, extra) => rs.length ? `<div class="tabela"><table><thead><tr><th>Ponto</th><th>Parceiro</th><th>Desde</th>${extra[0]}</tr></thead><tbody>${rs.slice(0, 60).map(r => `<tr><td><b>${esc(r.loja || r.cod_int)}</b><br><span class="nota">${esc(r.cod_int)} · ${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</span></td><td>${esc(nomeP(r.parceiro_id))}</td><td style="white-space:nowrap">${fmtD(r.desde)}</td>${extra[1](r)}</tr>`).join('')}</tbody></table></div>${rs.length > 60 ? `<p class="nota">+${rs.length - 60} pontos (no Excel).</p>` : ''}` : '<p class="nota">Nenhum.</p>';
+  box.innerHTML = `
+  <section class="bloco"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:10px"><div><h2 style="margin:0">Movimentação de pontos</h2>
+      <p class="sub" style="margin:4px 0 0">Inclusões, cancelamentos, suspensões e mudanças de frequência da carteira (planilha de Inclusão e Cancelamento${imp ? `, importada em ${fmtDH(imp.importado_em)}` : ''}). Últimos dados: ${MES3[+ultMes.slice(5) - 1]}/${ultMes.slice(0, 4)}.</p></div>
+    <div class="linha" style="gap:8px;flex-wrap:wrap">
+      <div class="alterna" role="group" aria-label="Período" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[[3, '3 meses'], [6, '6 meses'], [12, '12 meses'], ['ano', ultMes.slice(0, 4)]].map(([v, t]) => `<button type="button" class="btn ${F.per === v ? '' : 'sec'} peq" data-fper="${v}">${t}</button>`).join('')}</div>
+      <select id="cart-parc" class="peq" style="max-width:240px"><option value="">Todos os parceiros</option>${parcsOp.map(([id, n]) => `<option value="${id}" ${F.parc === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="_sem" ${F.parc === '_sem' ? 'selected' : ''}>Sem parceiro (rota GSM)</option></select>
+      <button class="btn sec peq" id="cart-xls">Baixar Excel</button></div></div>
+    <div class="linha" style="gap:10px;flex-wrap:wrap;margin-top:14px">
+      ${kpi('Entradas', ent.length, `${kp('inclus') + kp('aquisi')} inclusões · ${kp('reativ')} reativações`, 'entra')}
+      ${kpi('Saídas', sai.length, `${kp('cancel')} cancelamentos · ${kp('suspens')} suspensões`, 'sai')}
+      ${kpi('Saldo de pontos', (ent.length - sai.length > 0 ? '+' : '') + (ent.length - sai.length), 'entradas − saídas', 'todos')}
+      ${kpi('Mudanças de frequência', frq.length, `${kp('redu')} reduções · ${kp('aument')} aumentos · ${kp('troca')} trocas`, 'freq')}
+      ${kpi('Alterações cadastrais', soma(noPer, 'outro').length, '', 'outro')}</div>
+    <div style="margin-top:16px">${svg}</div>
+    <p class="nota">Barras escuras: entradas (inclusão, aquisição de malote, reativação). Barras vermelhas: saídas (cancelamento, suspensão). Custo/mês é estimado só para os pontos com parceiro e valor unitário no cadastro: valor unitário × visitas por mês pela frequência.${futuros.length ? ` Há ${futuros.length} movimentações agendadas para depois de hoje.` : ''}</p></section>
+  <section class="bloco"><h2>Situação hoje</h2>
+    <div class="linha" style="gap:10px;flex-wrap:wrap">
+      ${kpi('Suspensos', suspHj.length, suspAg.length ? `+${suspAg.length} suspensões agendadas` : '', 'x')}
+      ${kpi('Cancelados (histórico)', canc.length, `${canc.filter(r => r.desde >= ini).length} no período`, 'x')}
+      ${kpi('Atenção: ainda com atendimento', alertaUmov.length, compUlt ? `no Umov de ${nomeMes(compUlt)}` : '', 'x')}
+      ${kpi('Atenção: ativos no cadastro', alertaCad.length, 'cancelados/suspensos', 'x')}</div>
+    ${alertaUmov.length ? `<h3 style="margin:18px 0 6px">Cancelados ou suspensos que ainda tiveram atendimento no Umov de ${compUlt ? nomeMes(compUlt) : '—'}</h3><p class="sub">Possível custo indevido: o cliente parou, mas o parceiro seguiu visitando (ou o ponto voltou e a planilha não registrou a reativação).</p>
+      ${tabSt(alertaUmov.sort((a, b) => b.atend_ult - a.atend_ult), ['<th>Situação</th><th class="n">Atend. Umov</th><th class="n">Custo estimado</th>', r => `<td><span class="pill alerta">${esc(r.situacao)}</span></td><td class="n">${r.atend_ult}</td><td class="n">${r.v_unit ? BRL(r.atend_ult * r.v_unit) : '—'}</td>`])}` : ''}
+    ${alertaCad.length ? `<h3 style="margin:18px 0 6px">Cancelados ou suspensos que continuam "Ativo" no cadastro de pontos</h3><p class="sub">Entram no previsto e na base do parceiro. Vale inativar no cadastro (ou confirmar que voltaram).</p>
+      ${tabSt(alertaCad, ['<th>Situação</th><th class="n">V. Unit</th>', r => `<td><span class="pill alerta">${esc(r.situacao)}</span></td><td class="n">${r.v_unit != null ? BRL2(r.v_unit) : '—'}</td>`])}` : ''}
+    <h3 style="margin:18px 0 6px">Suspensos</h3>${tabSt(susp.sort((a, b) => String(b.desde).localeCompare(String(a.desde))), ['<th></th>', r => `<td>${r.desde > hoje ? '<span class="pill">Agendada</span>' : ''}${r.retorno ? ` <span class="nota">retorno ${fmtD(r.retorno)}</span>` : ''}</td>`])}
+  </section>
+  <section class="bloco"><h2>Por cliente</h2>${tabG(porCli, 'Cliente', x => x.k, x => `data-fbusca="${esc(x.k)}"`)}</section>
+  <section class="bloco"><h2>Por parceiro</h2>${tabG(porParc, 'Parceiro', x => nomeP(x.k === '_sem' ? null : x.k), x => `data-fparc="${x.k}"`)}</section>
+  <section class="bloco"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Movimentações (${lista.length})</h2>
+      <div class="linha" style="gap:8px;flex-wrap:wrap">${[['todos', 'Todas'], ['entra', 'Entradas'], ['sai', 'Saídas'], ['cancel', 'Cancelamentos'], ['suspens', 'Suspensões'], ['freq', 'Frequência']].map(([v, t]) => `<button type="button" class="btn ${F.tipo === v ? '' : 'sec'} peq" data-ftipo="${v}">${t}</button>`).join('')}
+        <input id="cart-busca" class="peq" placeholder="Buscar cliente, loja, cidade, código" value="${esc(F.busca)}" style="min-width:240px"></div></div>
+    <div class="tabela" style="margin-top:10px"><table><thead><tr><th>Data</th><th>Movimento</th><th>Cliente / ponto</th><th>Cidade</th><th>Parceiro</th><th>Frequência</th><th class="n">Custo/mês</th></tr></thead><tbody>
+      ${lista.slice(0, F.lim).map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}${r.data > hoje ? '<br><span class="pill">Agendada</span>' : ''}</td><td>${pill(r)}</td><td><b>${esc(r.loja || r.cliente || '')}</b><br><span class="nota">${esc(r.cod_int || '')} · ${esc(r.cliente || '')}</span></td><td>${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</td><td>${esc(nomeP(r.parceiro_id))}</td><td>${esc(r.frequencia || '')}</td><td class="n">${r.imp ? BRL(r.imp) : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nenhuma movimentação com esses filtros.</td></tr>'}
+    </tbody></table></div>${lista.length > F.lim ? `<button class="btn sec peq" id="cart-mais" style="margin-top:8px">Ver mais ${Math.min(200, lista.length - F.lim)}</button>` : ''}</section>`;
+  const re = () => carteiraDir(box, D);
+  box.querySelectorAll('[data-fper]').forEach(b => b.onclick = () => { F.per = b.dataset.fper === 'ano' ? 'ano' : +b.dataset.fper; re(); });
+  box.querySelectorAll('[data-ftipo]').forEach(b => b.onclick = () => { if (b.dataset.ftipo === 'x') return; F.tipo = b.dataset.ftipo; F.lim = 200; re(); });
+  box.querySelectorAll('[data-fbusca]').forEach(b => b.onclick = () => { F.busca = b.dataset.fbusca; F.lim = 200; re(); box.querySelector('#cart-busca')?.scrollIntoView({ block: 'center' }); });
+  box.querySelectorAll('[data-fparc]').forEach(b => b.onclick = () => { F.parc = b.dataset.fparc; re(); });
+  box.querySelector('#cart-parc').onchange = e => { F.parc = e.target.value; re(); };
+  let tmr; box.querySelector('#cart-busca').oninput = e => { clearTimeout(tmr); tmr = setTimeout(() => { F.busca = e.target.value; F.lim = 200; re(); const i = box.querySelector('#cart-busca'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 350); };
+  const mais = box.querySelector('#cart-mais'); if (mais) mais.onclick = () => { F.lim += 200; re(); };
+  box.querySelector('#cart-xls').onclick = () => baixarXlsx(`Movimentacao_pontos_${meses[0]}_a_${fimM}.xlsx`, { titulo: 'Movimentação de pontos', sub: `${meses[0]} a ${fimM}${F.parc ? ' · ' + nomeP(F.parc === '_sem' ? null : F.parc) : ''}`, abas: [
+    { nome: 'Movimentações', linhas: lista.map(r => ({ 'Data': fmtD(r.data), 'Movimento': r.rot, 'Grupo': { entra: 'Entrada', sai: 'Saída', freq: 'Frequência', outro: 'Outro' }[r.g], 'Cliente': r.cliente || '', 'Cód. Int': r.cod_int || '', 'Ponto': r.loja || '', 'Cidade': r.cidade || '', 'UF': r.uf || '', 'Parceiro': nomeP(r.parceiro_id), 'Frequência': r.frequencia || '', 'V. Unit parceiro': Number(r.v_unit) || 0, 'Custo/mês estimado': Math.round(r.imp * 100) / 100 })) },
+    { nome: 'Por cliente', linhas: porCli.map(x => ({ 'Cliente': x.k, 'Entradas': x.e, 'Saídas': x.s, 'Saldo': x.e - x.s, 'Mud. frequência': x.f, 'Custo/mês saindo': Math.round(x.impS * 100) / 100 })) },
+    { nome: 'Por parceiro', linhas: porParc.map(x => ({ 'Parceiro': nomeP(x.k === '_sem' ? null : x.k), 'Entradas': x.e, 'Saídas': x.s, 'Saldo': x.e - x.s, 'Mud. frequência': x.f, 'Custo/mês saindo': Math.round(x.impS * 100) / 100 })) },
+    { nome: 'Suspensos e cancelados', linhas: stP.map(r => ({ 'Situação': r.situacao + (r.desde > hoje ? ' (agendada)' : ''), 'Desde': fmtD(r.desde), 'Cód. Int': r.cod_int, 'Ponto': r.loja || '', 'Cliente': r.cliente || '', 'Cidade': r.cidade || '', 'UF': r.uf || '', 'Parceiro': nomeP(r.parceiro_id), 'Cadastro': r.cad_situacao || '', 'Atend. Umov último mês': r.atend_ult || 0, 'Retorno previsto': r.retorno ? fmtD(r.retorno) : '' })) }] });
 }
 
 // ---------- Pop-up da composição do custo ----------
