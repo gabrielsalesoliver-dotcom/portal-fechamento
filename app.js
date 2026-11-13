@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.13-1130';
+import { lerLinhas, casar } from './importa.js?v=2026.11.13-1200';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.13-1130';
+const VERSAO = '2026.11.13-1200';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3110,6 +3110,7 @@ const FERIADOS_NAC = ['2026-01-01', '2026-02-16', '2026-02-17', '2026-04-03', '2
   '2027-01-01', '2027-02-08', '2027-02-09', '2027-03-26', '2027-04-21', '2027-05-01', '2027-05-27', '2027-09-07', '2027-10-12', '2027-11-02', '2027-11-15', '2027-11-20', '2027-12-25'];
 function diasUteis(mes) { const [y, m] = mes.split('-').map(Number); let n = 0; for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) { const dt = new Date(y, m - 1, d); const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; if (dt.getDay() % 6 && !FERIADOS_NAC.includes(iso)) n++; } return n; }
 // Projeção para a diretoria: 2026 (realizado + projetado) e 2027 (carteira de hoje, ajustada pelos dias úteis de cada mês)
+const pctS = v => (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
 function projecaoCEO(box, D, proj, valorOp) {
   if (!box) return;
   if (D.proj && D.proj.erro) { box.innerHTML = `<div class="msg erro">${esc(D.proj.erro)}</div>`; return; }
@@ -3121,6 +3122,15 @@ function projecaoCEO(box, D, proj, valorOp) {
   const ult3 = fechadas.slice(-3); const kitsP = {};
   ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + (n(f.kits) + n(f.fora_umov)) / ult3.length; }));
   const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
+  // Crescimento de Kits/Spot: tendência linear do ano (R$ a mais por mês, pelos meses fechados do ano) ou % ao mês escolhido
+  const fAno = fechadas.filter(c => c.mes.startsWith(String(ano)));
+  const serieK = fAno.map(c => D.fech.filter(f => f.competencia_id === c.id).reduce((a, f) => a + n(f.kits) + n(f.fora_umov), 0));
+  const nk = serieK.length, xm = (nk - 1) / 2, ym = serieK.reduce((a, v) => a + v, 0) / (nk || 1);
+  const slope = nk > 2 ? serieK.reduce((a, v, i) => a + (i - xm) * (v - ym), 0) / serieK.reduce((a, _, i) => a + (i - xm) ** 2, 0) : 0;
+  const gSel = D.kitsG === undefined ? 'trend' : D.kitsG;
+  const ultFech = fechadas.slice(-1)[0]?.mes; const mesesDesde = mes => ultFech ? (+mes.slice(0, 4) - +ultFech.slice(0, 4)) * 12 + (+mes.slice(5, 7) - +ultFech.slice(5, 7)) : 0;
+  const fatorK = mes => { const k = Math.max(0, mesesDesde(mes) - 1); return gSel === 'trend' ? (kitsTot + Math.max(0, slope) * k) / (kitsTot || 1) : Math.pow(1 + Number(gSel), k); };
+  const kitsMes = mes => kitsTot * fatorK(mes);
   const descMed = ult3.length ? ult3.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + n(f.descontos), 0), 0) / ult3.length : 0;
   // Execução histórica: malote realizado ÷ previsto (calendarizado) nos últimos 3 meses fechados que têm previsto
   const comPrev = fechadas.filter(c => D.prev.some(x => x.competencia_id === c.id && x.previsto != null)).slice(-3);
@@ -3145,17 +3155,17 @@ function projecaoCEO(box, D, proj, valorOp) {
       linhas.push({ mes, origem: `Em andamento (${nF} fechados)`, fixo: null, varv: mal, kits: kt, desc: ds, total: tt });
     } else if (comp && D.prev.some(x => x.competencia_id === comp.id && x.previsto != null)) {
       const pv = D.prev.filter(x => x.competencia_id === comp.id && x.previsto != null).reduce((a, x) => a + n(x.previsto), 0) * exec;
-      linhas.push({ mes, origem: 'Previsto (base do mês)', fixo: null, varv: pv, kits: kitsTot, desc: descMed, total: pv + kitsTot + descMed });
+      linhas.push({ mes, origem: 'Previsto (base do mês)', fixo: null, varv: pv, kits: kitsMes(mes), desc: descMed, total: pv + kitsMes(mes) + descMed });
     } else if (proj.some(r => r.mes === mes)) {
       const rs = proj.filter(r => r.mes === mes); const fx = rs.reduce((a, r) => a + n(r.valor_fixo), 0) * exec, cal = rs.reduce((a, r) => a + n(r.calendarizado), 0) * exec;
-      linhas.push({ mes, origem: 'Projeção', fixo: fx, varv: cal - fx, kits: kitsTot, desc: descMed, total: cal + kitsTot + descMed });
+      linhas.push({ mes, origem: 'Projeção', fixo: fx, varv: cal - fx, kits: kitsMes(mes), desc: descMed, total: cal + kitsMes(mes) + descMed });
     }
   }
   const lin2 = []; const porParc = {};
   for (let m = 1; m <= 12; m++) {
     const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const f = duBase ? diasUteis(mes) / duBase : 1;
-    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0 }); pp.fixo += a; pp.varv += b; pp.kits += kitsP[r.parceiro_id] || 0; });
-    lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsTot, desc: descMed, total: fx + vv + kitsTot + descMed });
+    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0 }); pp.fixo += a; pp.varv += b; pp.kits += (kitsP[r.parceiro_id] || 0) * fatorK(mes); });
+    lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsMes(mes), desc: descMed, total: fx + vv + kitsMes(mes) + descMed });
   }
   const sum = (ls, k) => ls.reduce((a, x) => a + n(x[k]), 0);
   const realAno = linhas.filter(x => x.origem === 'Realizado'), restAno = linhas.filter(x => x.origem !== 'Realizado');
@@ -3171,12 +3181,16 @@ function projecaoCEO(box, D, proj, valorOp) {
       ${kpi(`Restante de ${ano}`, BRL(sum(restAno, 'total')), restAno.map(x => MES3[+x.mes.slice(5, 7) - 1]).join(', ') || '—')}
       ${kpi(`Projeção ${prox}`, BRL(tot27), `média ${BRL(tot27 / 12)}/mês`)}
       ${kpi(`${prox} × ${ano}`, pct(tot26 ? tot27 / tot26 - 1 : null), 'com a carteira de hoje, sem reajustes')}</div>
+    <div class="linha" style="gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center"><span style="font-size:13px"><b>Crescimento de Kits/Spot:</b></span>
+      <div class="alterna" role="group" aria-label="Crescimento de Kits/Spot" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['trend', `Tendência ${ano} (+${BRL(Math.max(0, slope))}/mês)`], ['0', 'Sem crescimento'], ['0.01', '1%/mês'], ['0.02', '2%/mês'], ['0.03', '3%/mês'], ['0.05', '5%/mês']].map(([v, t]) => `<button type="button" class="btn ${String(gSel) === v ? '' : 'sec'} peq" data-kg="${v}">${t}</button>`).join('')}</div>
+      <span class="nota">Kits/Spot em ${ano}: ${serieK.map((v, i) => `${MES3[+fAno[i].mes.slice(5, 7) - 1]} ${BRL(v)}`).join(' · ')}. Com a opção escolhida, Dez/${String(prox).slice(2)} fica em ${BRL(kitsMes(`${prox}-12-01`))}/mês.</span></div>
     <div style="display:flex;align-items:flex-end;gap:4px;height:180px;margin:18px 0 6px">${barras}</div>
     <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox}.</p>
     <details open><summary style="cursor:pointer;font-weight:600;margin:10px 0">${ano} mês a mês</summary>${tab(linhas)}</details>
     <details><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} mês a mês</summary>${tab(lin2)}</details>
     <div class="linha" style="margin-top:10px"><button class="btn sec peq" id="pceox">Baixar Excel</button></div>
-    <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot e descontos: média dos últimos 3 meses fechados (${BRL(kitsTot)} e ${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
+    <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot: parte da média dos últimos 3 meses fechados (${BRL(kitsTot)}/mês) e cresce ${gSel === 'trend' ? `${BRL(Math.max(0, slope))} por mês (tendência linear dos meses fechados de ${ano})` : `${pctS(Number(gSel))} ao mês (percentual escolhido)`}. Descontos: média dos últimos 3 meses (${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
+  box.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { D.kitsG = b.dataset.kg; projecaoCEO(box, D, proj, valorOp); });
   $('#pceox').onclick = () => {
     const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
     const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100 });
