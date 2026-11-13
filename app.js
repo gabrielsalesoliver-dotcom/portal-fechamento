@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.13-1035';
+import { lerLinhas, casar } from './importa.js?v=2026.11.13-1130';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.13-1035';
+const VERSAO = '2026.11.13-1130';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3017,6 +3017,7 @@ function desenharDiretoria(el) {
   <div data-sec="carteira" style="display:flex;flex-direction:column;gap:22px"><div id="dcart"><div class="carregando">Carregando…</div></div></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
+  <section class="bloco"><h2>Projeção de custo · restante de 2026 e ano de 2027</h2><div id="pceo"><div class="carregando">Calculando a projeção…</div></div></section>
   <section class="bloco"><h2>Previsto (calendarizado) x Realizado · Malote</h2>
     <p class="sub">Previsto = valor fixo do contrato + atendimentos calendarizados de cada ponto × valor unitário. Realizado = malote fechado do parceiro. Kits/Spot não entram na previsão.</p>
     <div id="rprev"></div><div id="gprev" style="position:relative"></div><div id="tprev"></div></section>
@@ -3062,6 +3063,7 @@ function desenharDiretoria(el) {
   graficoPrev($('#gprev'), $('#tprev'), serieComp.concat(serieProj), c.id);
   resumoAno($('#rprev'), serieComp.concat(serieProj), id => doMes(id).reduce((a, r) => a + (Number(r.kits) || 0) + (Number(r.fora_umov) || 0), 0), Array.isArray(D.proj));
   projecaoParceiros($('#pprev'), D, proj, mesesProj);
+  projecaoCEO($('#pceo'), D, proj, valorOp);
   clientesMes($('#dcli'), c.id, op, null);
   spotPorCliente($('#dspot'), c, ant);
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
@@ -3103,6 +3105,87 @@ function grafico(box, pts) {
 }
 
 // Projeção por parceiro dos meses que ainda não têm base (carteira atual)
+// Dias úteis (seg–sex) sem feriados nacionais
+const FERIADOS_NAC = ['2026-01-01', '2026-02-16', '2026-02-17', '2026-04-03', '2026-04-21', '2026-05-01', '2026-06-04', '2026-09-07', '2026-10-12', '2026-11-02', '2026-11-15', '2026-11-20', '2026-12-25',
+  '2027-01-01', '2027-02-08', '2027-02-09', '2027-03-26', '2027-04-21', '2027-05-01', '2027-05-27', '2027-09-07', '2027-10-12', '2027-11-02', '2027-11-15', '2027-11-20', '2027-12-25'];
+function diasUteis(mes) { const [y, m] = mes.split('-').map(Number); let n = 0; for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) { const dt = new Date(y, m - 1, d); const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; if (dt.getDay() % 6 && !FERIADOS_NAC.includes(iso)) n++; } return n; }
+// Projeção para a diretoria: 2026 (realizado + projetado) e 2027 (carteira de hoje, ajustada pelos dias úteis de cada mês)
+function projecaoCEO(box, D, proj, valorOp) {
+  if (!box) return;
+  if (D.proj && D.proj.erro) { box.innerHTML = `<div class="msg erro">${esc(D.proj.erro)}</div>`; return; }
+  if (!Array.isArray(D.proj)) return;
+  const n = v => Number(v) || 0;
+  const ano = new Date().getFullYear() >= 2027 ? 2027 : 2026; const prox = ano + 1;
+  const fechadas = D.comps.filter(c => c.status === 'fechada' && D.fech.some(f => f.competencia_id === c.id));
+  // Kits/Spot por parceiro: média dos últimos 3 meses fechados
+  const ult3 = fechadas.slice(-3); const kitsP = {};
+  ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + (n(f.kits) + n(f.fora_umov)) / ult3.length; }));
+  const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
+  const descMed = ult3.length ? ult3.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + n(f.descontos), 0), 0) / ult3.length : 0;
+  // Execução histórica: malote realizado ÷ previsto (calendarizado) nos últimos 3 meses fechados que têm previsto
+  const comPrev = fechadas.filter(c => D.prev.some(x => x.competencia_id === c.id && x.previsto != null)).slice(-3);
+  const pS = comPrev.reduce((a, c) => a + D.prev.filter(x => x.competencia_id === c.id).reduce((b, x) => b + n(x.previsto), 0), 0);
+  const rS = comPrev.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + n(f.malote_orig ?? f.malote), 0), 0);
+  const exec = pS && rS ? Math.min(1.1, Math.max(0.8, rS / pS)) : 1;
+  const mesesProj = [...new Set(proj.map(r => r.mes))].sort(); const ultP = mesesProj.slice(-1)[0];
+  const base = proj.filter(r => r.mes === ultP); const duBase = diasUteis(ultP);
+  const linhas = [];
+  for (let m = 1; m <= 12; m++) {
+    const mes = `${ano}-${String(m).padStart(2, '0')}-01`; const comp = D.comps.find(c => c.mes === mes);
+    if (comp && comp.status === 'fechada' && D.fech.some(f => f.competencia_id === comp.id)) {
+      const fe = D.fech.filter(f => f.competencia_id === comp.id);
+      linhas.push({ mes, origem: 'Realizado', fixo: null, varv: fe.reduce((a, f) => a + n(f.malote), 0), kits: fe.reduce((a, f) => a + n(f.kits) + n(f.fora_umov), 0), desc: fe.reduce((a, f) => a + n(f.descontos), 0), total: fe.reduce((a, f) => a + valorOp(f, 'tudo'), 0) });
+    } else if (comp && D.fech.some(f => f.competencia_id === comp.id)) {
+      // mês em andamento: parceiros já fechados pelo valor do fechamento; os demais pelo último mês fechado
+      const fe = Object.fromEntries(D.fech.filter(f => f.competencia_id === comp.id).map(f => [f.parceiro_id, f]));
+      const ultC = fechadas.slice(-1)[0]; const ultF = ultC ? D.fech.filter(f => f.competencia_id === ultC.id) : [];
+      const ids = new Set([...Object.keys(fe), ...ultF.map(f => f.parceiro_id)]);
+      let mal = 0, kt = 0, ds = 0, tt = 0, nF = 0;
+      ids.forEach(id => { const f = fe[id] || ultF.find(x => x.parceiro_id === id); if (!f) return; if (fe[id]) nF++; mal += n(f.malote); kt += n(f.kits) + n(f.fora_umov); ds += n(f.descontos); tt += valorOp(f, 'tudo'); });
+      linhas.push({ mes, origem: `Em andamento (${nF} fechados)`, fixo: null, varv: mal, kits: kt, desc: ds, total: tt });
+    } else if (comp && D.prev.some(x => x.competencia_id === comp.id && x.previsto != null)) {
+      const pv = D.prev.filter(x => x.competencia_id === comp.id && x.previsto != null).reduce((a, x) => a + n(x.previsto), 0) * exec;
+      linhas.push({ mes, origem: 'Previsto (base do mês)', fixo: null, varv: pv, kits: kitsTot, desc: descMed, total: pv + kitsTot + descMed });
+    } else if (proj.some(r => r.mes === mes)) {
+      const rs = proj.filter(r => r.mes === mes); const fx = rs.reduce((a, r) => a + n(r.valor_fixo), 0) * exec, cal = rs.reduce((a, r) => a + n(r.calendarizado), 0) * exec;
+      linhas.push({ mes, origem: 'Projeção', fixo: fx, varv: cal - fx, kits: kitsTot, desc: descMed, total: cal + kitsTot + descMed });
+    }
+  }
+  const lin2 = []; const porParc = {};
+  for (let m = 1; m <= 12; m++) {
+    const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const f = duBase ? diasUteis(mes) / duBase : 1;
+    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0 }); pp.fixo += a; pp.varv += b; pp.kits += kitsP[r.parceiro_id] || 0; });
+    lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsTot, desc: descMed, total: fx + vv + kitsTot + descMed });
+  }
+  const sum = (ls, k) => ls.reduce((a, x) => a + n(x[k]), 0);
+  const realAno = linhas.filter(x => x.origem === 'Realizado'), restAno = linhas.filter(x => x.origem !== 'Realizado');
+  const tot26 = sum(linhas, 'total'), tot27 = sum(lin2, 'total');
+  const mx = Math.max(...linhas.concat(lin2).map(x => x.total), 1);
+  const barras = linhas.concat(lin2).map(x => `<div title="${nomeMes(x.mes)}: ${BRL(x.total)} (${x.origem})" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0"><div style="width:100%;height:${Math.round(150 * x.total / mx)}px;background:${x.origem === 'Realizado' ? 'var(--ink)' : x.mes.startsWith(String(prox)) ? 'var(--num-light, #F0C2CC)' : 'var(--brand)'};border-radius:4px 4px 0 0"></div><span style="font-size:10px;color:var(--muted)">${MES3[+x.mes.slice(5, 7) - 1]}${x.mes.slice(5, 7) === '01' ? '/' + x.mes.slice(2, 4) : ''}</span></div>`).join('');
+  const kpi = (r, v, s) => `<div style="flex:1;min-width:170px;border:1px solid var(--rule);border-radius:10px;padding:12px 14px;background:var(--surface)"><span style="font-size:12px;color:var(--muted)">${r}</span><b style="display:block;font-size:22px">${v}</b><span style="font-size:12px;color:var(--muted)">${s}</span></div>`;
+  const tab = (ls) => `<div class="tabela"><table><thead><tr><th>Mês</th><th>Origem</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Descontos</th><th class="n">Total</th></tr></thead><tbody>
+    ${ls.map(x => `<tr><td><b>${nomeMes(x.mes)}</b>${x.du ? `<br><span class="nota">${x.du} dias úteis</span>` : ''}</td><td><span class="pill ${x.origem === 'Realizado' ? 'escuro' : ''}">${x.origem}</span></td><td class="n">${x.fixo == null ? '—' : BRL(x.fixo)}</td><td class="n">${x.fixo == null ? BRL(x.varv) + '<br><span class="nota">malote total</span>' : BRL(x.varv)}</td><td class="n">${BRL(x.kits)}</td><td class="n">${BRL(x.desc)}</td><td class="n"><b>${BRL(x.total)}</b></td></tr>`).join('')}
+    </tbody><tfoot><tr><td colspan="6"><b>Total</b></td><td class="n"><b>${BRL(sum(ls, 'total'))}</b></td></tr></tfoot></table></div>`;
+  box.innerHTML = `<div class="linha" style="gap:10px;flex-wrap:wrap">
+      ${kpi(`${ano} fechado (realizado + projeção)`, BRL(tot26), `${realAno.length} meses realizados · ${restAno.length} projetados`)}
+      ${kpi(`Restante de ${ano}`, BRL(sum(restAno, 'total')), restAno.map(x => MES3[+x.mes.slice(5, 7) - 1]).join(', ') || '—')}
+      ${kpi(`Projeção ${prox}`, BRL(tot27), `média ${BRL(tot27 / 12)}/mês`)}
+      ${kpi(`${prox} × ${ano}`, pct(tot26 ? tot27 / tot26 - 1 : null), 'com a carteira de hoje, sem reajustes')}</div>
+    <div style="display:flex;align-items:flex-end;gap:4px;height:180px;margin:18px 0 6px">${barras}</div>
+    <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox}.</p>
+    <details open><summary style="cursor:pointer;font-weight:600;margin:10px 0">${ano} mês a mês</summary>${tab(linhas)}</details>
+    <details><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} mês a mês</summary>${tab(lin2)}</details>
+    <div class="linha" style="margin-top:10px"><button class="btn sec peq" id="pceox">Baixar Excel</button></div>
+    <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot e descontos: média dos últimos 3 meses fechados (${BRL(kitsTot)} e ${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
+  $('#pceox').onclick = () => {
+    const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+    const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100 });
+    baixarXlsx(`Projecao_${ano}_${prox}.xlsx`, { titulo: `Projeção de custo ${ano} e ${prox}`, sub: 'Última milha · parceiros', abas: [
+      { nome: `${ano}`, linhas: linhas.map(mesL) }, { nome: `${prox}`, linhas: lin2.map(mesL) },
+      { nome: `${prox} por parceiro`, linhas: Object.entries(porParc).map(([id, x]) => ({ 'Parceiro': pm[id]?.nome || '', 'Região': pm[id]?.regiao || '', 'Tipo': pm[id]?.tipo || '', 'Fixo no ano': Math.round(x.fixo * 100) / 100, 'Variável no ano': Math.round(x.varv * 100) / 100, 'Kits/Spot no ano (média)': Math.round(x.kits * 100) / 100, 'Total no ano': Math.round((x.fixo + x.varv + x.kits) * 100) / 100 })).sort((a, b) => b['Total no ano'] - a['Total no ano']) }] });
+  };
+}
+
 function projecaoParceiros(box, D, proj, meses) {
   if (!box) return;
   if (D.proj && D.proj.erro) { box.innerHTML = `<div class="msg erro">${esc(D.proj.erro)}</div>`; return; }
