@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.13-1000';
+import { lerLinhas, casar } from './importa.js?v=2026.11.13-1000b';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.13-1000';
+const VERSAO = '2026.11.13-1000b';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3765,7 +3765,7 @@ async function carteiraDir(box, D) {
   const ctr = {}; (contratos || []).forEach(c => { if (Number(c.valor_fixo) > 0 && (!c.fim || c.fim >= hoje) && (!ctr[c.parceiro_id] || c.inicio > ctr[c.parceiro_id].inicio)) ctr[c.parceiro_id] = c; });
   const visAt = {}, ptsAt = {}; (ativos || []).forEach(a => { visAt[a.parceiro_id] = (visAt[a.parceiro_id] || 0) + visitasMes(a.frequencia) * Number(a.pontos); ptsAt[a.parceiro_id] = (ptsAt[a.parceiro_id] || 0) + Number(a.pontos); });
   const neg = Object.entries(ctr).map(([pid, c]) => {
-    const ref = [c.inicio || '2026-01-01', ini].sort()[1];
+    const ref = c.inicio || '2026-01-01';
     const perdidos = st.filter(r => r.parceiro_id === pid && !(r.desde > hoje) && r.desde >= ref && !(r.retorno && r.retorno <= hoje));
     const vp = perdidos.reduce((a, r) => a + visitasMes(r.frequencia), 0); const va = visAt[pid] || 0;
     const fr = vp / ((va + vp) || 1);
@@ -3773,13 +3773,13 @@ async function carteiraDir(box, D) {
   }).filter(x => x.perdidos.length && (!F.parc || x.pid === F.parc)).sort((a, b) => b.red - a.red);
   const negTot = neg.reduce((a, x) => a + x.red, 0); const negAb = D.negAberto || {};
   const negociacaoHtml = `<section class="bloco"><h2>Onde negociar · contratos fechados com pontos que saíram</h2>
-    <p class="sub">Parceiros com valor fixo de contrato que perderam pontos (cancelados ou suspensos e ainda sem reativação) no período escolhido acima (ou desde o início do contrato, se for mais recente). Use o período para olhar só o que saiu depois da última negociação do fixo. A redução sugerida é proporcional às visitas por mês que deixaram de existir: fixo × visitas perdidas ÷ (visitas dos pontos ativos hoje + visitas perdidas).</p>
+    <p class="sub">Parceiros com valor fixo de contrato que perderam pontos (cancelados ou suspensos e ainda sem reativação) desde a última negociação do fixo (data de início do contrato; hoje 01/09/2026 para todos). Não depende do período escolhido acima. A redução sugerida é proporcional às visitas por mês que deixaram de existir: fixo × visitas perdidas ÷ (visitas dos pontos ativos hoje + visitas perdidas).</p>
     ${neg.length ? `<div class="linha" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">${kpi('Parceiros para negociar', neg.length, '', 'x')}${kpi('Redução potencial / mês', BRL(negTot), `≈ ${BRL(negTot * 12)} por ano`, 'x')}${kpi('Pontos que saíram', neg.reduce((a, x) => a + x.perdidos.length, 0), `${neg.reduce((a, x) => a + x.canc, 0)} cancelados · ${neg.reduce((a, x) => a + x.susp, 0)} suspensos`, 'x')}</div>
     <div class="tabela"><table><thead><tr><th>Parceiro</th><th class="n">Fixo do contrato</th><th class="n">Pontos ativos hoje</th><th class="n">Saíram</th><th class="n" title="Visitas por mês dos pontos que saíram">Visitas/mês perdidas</th><th class="n">% da operação</th><th class="n">Redução sugerida/mês</th><th class="n">Fixo sugerido</th></tr></thead><tbody>
     ${neg.map(x => `<tr data-negp="${x.pid}" style="cursor:pointer"><td><b>${negAb[x.pid] ? '▾' : '▸'} ${esc(nomeP(x.pid))}</b><br><span class="nota">saídas desde ${fmtD(x.ref)}${x.c.observacao ? ' · ' + esc(x.c.observacao.slice(0, 50)) : ''}</span></td><td class="n">${BRL(x.c.valor_fixo)}</td><td class="n">${fmtN(x.pa)}</td><td class="n">${x.perdidos.length}<br><span class="nota">${x.canc} canc. · ${x.susp} susp.</span></td><td class="n">${fmtN(Math.round(x.vp))}</td><td class="n">${(x.fr * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</td><td class="n"><b>${BRL(x.red)}</b></td><td class="n">${BRL(Number(x.c.valor_fixo) - x.red)}</td></tr>
       ${negAb[x.pid] ? `<tr><td colspan="8" style="background:var(--field);padding:6px 10px 12px 28px"><table style="width:100%;font-size:12px"><tbody>${x.perdidos.sort((a, b) => String(b.desde).localeCompare(String(a.desde))).map(r => `<tr><td style="width:90px">${fmtD(r.desde)}</td><td><span class="pill ${r.situacao === 'Cancelado' ? 'alerta' : ''}">${esc(r.situacao)}</span></td><td><b>${esc(r.loja || r.cod_int)}</b> <span class="nota">${esc(r.cod_int)} · ${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</span></td><td>${esc(r.frequencia || '')}</td><td class="n">${fmtN(Math.round(visitasMes(r.frequencia) * 10) / 10)} vis./mês</td>${r.atend_ult ? `<td><span class="pill alerta">${r.atend_ult} atend. no Umov</span></td>` : '<td></td>'}</tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
     </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(neg.reduce((a, x) => a + Number(x.c.valor_fixo), 0))}</b></td><td colspan="4"></td><td class="n"><b>${BRL(negTot)}</b></td><td></td></tr></tfoot></table></div>
-    <p class="nota">Pontos com "atend. no Umov" ainda receberam visita no último mês: confirme com o parceiro antes de usar na negociação. Se o fixo já foi renegociado depois de alguma saída, atualize o início do contrato no cadastro do parceiro para a conta partir da data nova. O parceiro de cada ponto cancelado vem do cadastro ou, para pontos que já saíram do cadastro, das planilhas de fechamento de 2026.</p>`
+    <p class="nota">Pontos com "atend. no Umov" ainda receberam visita no último mês: confirme com o parceiro antes de usar na negociação. Quando renegociar um fixo, atualize o início do contrato do parceiro para a conta recomeçar da data nova. O parceiro de cada ponto cancelado vem do cadastro ou, para pontos que já saíram do cadastro, das planilhas de fechamento de 2026.</p>`
       : '<p class="nota">Nenhum parceiro com contrato fixo perdeu pontos no período.</p>'}</section>`;
   const tabSt = (rs, extra) => rs.length ? `<div class="tabela"><table><thead><tr><th>Ponto</th><th>Parceiro</th><th>Desde</th>${extra[0]}</tr></thead><tbody>${rs.slice(0, 60).map(r => `<tr><td><b>${esc(r.loja || r.cod_int)}</b><br><span class="nota">${esc(r.cod_int)} · ${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</span></td><td>${esc(nomeP(r.parceiro_id))}</td><td style="white-space:nowrap">${fmtD(r.desde)}</td>${extra[1](r)}</tr>`).join('')}</tbody></table></div>${rs.length > 60 ? `<p class="nota">+${rs.length - 60} pontos (no Excel).</p>` : ''}` : '<p class="nota">Nenhum.</p>';
   box.innerHTML = `
