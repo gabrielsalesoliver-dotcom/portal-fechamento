@@ -2,7 +2,7 @@
 import { decodeText, parseCSV, parseUmov, resumoUmov, parseCarteira, parseAtendimentos, parseHistorico, parseRelatorio, numBR, norm } from './parse.js?v=2026.11.03-1420';
 import BR from './brasil.js?v=2026.11.03-1420';
 import { gerarModelo } from './modelo.js?v=2026.11.03-1420';
-import { lerLinhas, casar } from './importa.js?v=2026.11.13-0900';
+import { lerLinhas, casar } from './importa.js?v=2026.11.13-1000';
 
 const SB_URL = 'https://quqatijyafqgybzkbuhv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cWF0aWp5YWZxZ3liemtidWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU0NTIsImV4cCI6MjEwNzcxMTQ1Mn0.BTIoDePK8klSS3k2RwwQ6WPuFPJ4SJt16GFjDcpP4r0';
@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.13-0900';
+const VERSAO = '2026.11.13-1000';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3702,12 +3702,13 @@ function visitasMes(f) {
 async function carteiraDir(box, D) {
   if (!D.cart) {
     box.innerHTML = '<div class="carregando">Carregando as movimentações da carteira…</div>';
-    try { const [mov, st, imp] = await Promise.all([todas(() => sb.rpc('dir_carteira_mov')), todas(() => sb.rpc('dir_carteira_status')), q(sb.from('carteira_importacoes').select('arquivo,importado_em').order('importado_em', { ascending: false }).limit(1)).catch(() => [])]);
-      D.cart = { mov, st, imp: imp[0] }; }
+    try { const [mov, st, imp, ativos, contratos] = await Promise.all([todas(() => sb.rpc('dir_carteira_mov')), todas(() => sb.rpc('dir_carteira_status')), q(sb.from('carteira_importacoes').select('arquivo,importado_em').order('importado_em', { ascending: false }).limit(1)).catch(() => []),
+        todas(() => sb.rpc('dir_carteira_ativos')).catch(() => []), q(sb.from('contratos').select('parceiro_id,valor_fixo,inicio,fim,observacao')).catch(() => [])]);
+      D.cart = { mov, st, imp: imp[0], ativos, contratos }; }
     catch (e) { box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
     if (D.aba !== 'carteira') return;
   }
-  const { mov, st, imp } = D.cart; const F = D.cartF || (D.cartF = { per: 12, tipo: 'todos', parc: '', busca: '', lim: 200 });
+  const { mov, st, imp, ativos, contratos } = D.cart; const F = D.cartF || (D.cartF = { per: 12, tipo: 'todos', parc: '', busca: '', lim: 200 });
   const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p])); const nomeP = id => pm[id] ? pm[id].regiao : 'Sem parceiro (rota GSM)';
   const hoje = new Date().toISOString().slice(0, 10);
   const ultMes = mov.reduce((a, m) => m.data && m.data <= hoje && m.data > a ? m.data : a, '').slice(0, 7) || hoje.slice(0, 7);
@@ -3719,6 +3720,16 @@ async function carteiraDir(box, D) {
   const soma = (rs, g) => rs.filter(r => r.g === g);
   const kp = k => noPer.filter(r => r.k === k).length;
   const ent = soma(noPer, 'entra'), sai = soma(noPer, 'sai'), frq = soma(noPer, 'freq');
+  // Saldo líquido por ponto: compara a situação antes do período com a do fim do período (suspenso e reativado no período não conta)
+  const fimData = (fimM + '-31') < hoje ? fimM + '-31' : hoje;
+  const estado = r => r.g === 'entra' ? 'A' : r.k === 'cancel' ? 'C' : 'S';
+  const porPonto = {}; R.filter(r => (r.g === 'entra' || r.g === 'sai') && r.cod_int && (!F.parc || (F.parc === '_sem' ? !r.parceiro_id : r.parceiro_id === F.parc))).sort((a, b) => String(a.data).localeCompare(String(b.data)) || a.id - b.id)
+    .forEach(r => { const x = porPonto[r.cod_int] || (porPonto[r.cod_int] = { antes: null, primeiro: null, fim: null, r }); if (r.data < ini) x.antes = estado(r); else if (r.data <= fimData) { if (!x.primeiro) x.primeiro = r; x.fim = estado(r); x.r = r; } });
+  const liq = { saiu: [], entrou: [], volta: [], entraSai: [] };
+  Object.values(porPonto).forEach(x => { if (!x.primeiro) return;
+    const antes = x.antes || (x.primeiro.g === 'sai' ? 'A' : 'X'); const ativoAntes = antes === 'A', ativoFim = x.fim === 'A';
+    if (ativoAntes && !ativoFim) liq.saiu.push(x.r); else if (!ativoAntes && ativoFim) liq.entrou.push(x.r); else if (ativoAntes && ativoFim) liq.volta.push(x.r); else liq.entraSai.push(x.r); });
+  const saldoLiq = liq.entrou.length - liq.saiu.length;
   const impE = ent.reduce((a, r) => a + r.imp, 0), impS = sai.reduce((a, r) => a + r.imp, 0);
   // gráfico mês a mês (entradas acima, saídas abaixo)
   const porMes = meses.map(m => { const rs = noPer.filter(r => r.mes === m); return { m, e: rs.filter(r => r.g === 'entra').length, s: rs.filter(r => r.g === 'sai').length, f: rs.filter(r => r.g === 'freq').length }; });
@@ -3750,6 +3761,26 @@ async function carteiraDir(box, D) {
   const pill = r => `<span class="pill ${r.g === 'sai' ? 'alerta' : r.g === 'entra' ? 'escuro' : ''}">${esc(r.rot)}</span>`;
   const parcsOp = [...new Set(R.map(r => r.parceiro_id).filter(Boolean))].map(id => [id, nomeP(id)]).sort((a, b) => a[1].localeCompare(b[1]));
   const kpi = (rot, n, sub, alvo) => `<button type="button" class="kpi" data-ftipo="${alvo}" style="text-align:left;cursor:pointer;border:1px solid ${F.tipo === alvo ? 'var(--ink)' : 'var(--rule)'};background:var(--surface);border-radius:10px;padding:12px 14px;min-width:140px;flex:1"><span style="font-size:12px;color:var(--muted)">${rot}</span><b style="display:block;font-size:24px">${n}</b><span style="font-size:12px;color:var(--muted)">${sub || '&nbsp;'}</span></button>`;
+  // ---- Onde negociar: contratos fechados com pontos que saíram ----
+  const ctr = {}; (contratos || []).forEach(c => { if (Number(c.valor_fixo) > 0 && (!c.fim || c.fim >= hoje) && (!ctr[c.parceiro_id] || c.inicio > ctr[c.parceiro_id].inicio)) ctr[c.parceiro_id] = c; });
+  const visAt = {}, ptsAt = {}; (ativos || []).forEach(a => { visAt[a.parceiro_id] = (visAt[a.parceiro_id] || 0) + visitasMes(a.frequencia) * Number(a.pontos); ptsAt[a.parceiro_id] = (ptsAt[a.parceiro_id] || 0) + Number(a.pontos); });
+  const neg = Object.entries(ctr).map(([pid, c]) => {
+    const ref = [c.inicio || '2026-01-01', ini].sort()[1];
+    const perdidos = st.filter(r => r.parceiro_id === pid && !(r.desde > hoje) && r.desde >= ref && !(r.retorno && r.retorno <= hoje));
+    const vp = perdidos.reduce((a, r) => a + visitasMes(r.frequencia), 0); const va = visAt[pid] || 0;
+    const fr = vp / ((va + vp) || 1);
+    return { pid, c, ref, perdidos, canc: perdidos.filter(r => r.situacao === 'Cancelado').length, susp: perdidos.filter(r => r.situacao === 'Suspenso').length, vp, va, pa: ptsAt[pid] || 0, fr, red: Number(c.valor_fixo) * fr };
+  }).filter(x => x.perdidos.length && (!F.parc || x.pid === F.parc)).sort((a, b) => b.red - a.red);
+  const negTot = neg.reduce((a, x) => a + x.red, 0); const negAb = D.negAberto || {};
+  const negociacaoHtml = `<section class="bloco"><h2>Onde negociar · contratos fechados com pontos que saíram</h2>
+    <p class="sub">Parceiros com valor fixo de contrato que perderam pontos (cancelados ou suspensos e ainda sem reativação) no período escolhido acima (ou desde o início do contrato, se for mais recente). Use o período para olhar só o que saiu depois da última negociação do fixo. A redução sugerida é proporcional às visitas por mês que deixaram de existir: fixo × visitas perdidas ÷ (visitas dos pontos ativos hoje + visitas perdidas).</p>
+    ${neg.length ? `<div class="linha" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">${kpi('Parceiros para negociar', neg.length, '', 'x')}${kpi('Redução potencial / mês', BRL(negTot), `≈ ${BRL(negTot * 12)} por ano`, 'x')}${kpi('Pontos que saíram', neg.reduce((a, x) => a + x.perdidos.length, 0), `${neg.reduce((a, x) => a + x.canc, 0)} cancelados · ${neg.reduce((a, x) => a + x.susp, 0)} suspensos`, 'x')}</div>
+    <div class="tabela"><table><thead><tr><th>Parceiro</th><th class="n">Fixo do contrato</th><th class="n">Pontos ativos hoje</th><th class="n">Saíram</th><th class="n" title="Visitas por mês dos pontos que saíram">Visitas/mês perdidas</th><th class="n">% da operação</th><th class="n">Redução sugerida/mês</th><th class="n">Fixo sugerido</th></tr></thead><tbody>
+    ${neg.map(x => `<tr data-negp="${x.pid}" style="cursor:pointer"><td><b>${negAb[x.pid] ? '▾' : '▸'} ${esc(nomeP(x.pid))}</b><br><span class="nota">saídas desde ${fmtD(x.ref)}${x.c.observacao ? ' · ' + esc(x.c.observacao.slice(0, 50)) : ''}</span></td><td class="n">${BRL(x.c.valor_fixo)}</td><td class="n">${fmtN(x.pa)}</td><td class="n">${x.perdidos.length}<br><span class="nota">${x.canc} canc. · ${x.susp} susp.</span></td><td class="n">${fmtN(Math.round(x.vp))}</td><td class="n">${(x.fr * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</td><td class="n"><b>${BRL(x.red)}</b></td><td class="n">${BRL(Number(x.c.valor_fixo) - x.red)}</td></tr>
+      ${negAb[x.pid] ? `<tr><td colspan="8" style="background:var(--field);padding:6px 10px 12px 28px"><table style="width:100%;font-size:12px"><tbody>${x.perdidos.sort((a, b) => String(b.desde).localeCompare(String(a.desde))).map(r => `<tr><td style="width:90px">${fmtD(r.desde)}</td><td><span class="pill ${r.situacao === 'Cancelado' ? 'alerta' : ''}">${esc(r.situacao)}</span></td><td><b>${esc(r.loja || r.cod_int)}</b> <span class="nota">${esc(r.cod_int)} · ${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</span></td><td>${esc(r.frequencia || '')}</td><td class="n">${fmtN(Math.round(visitasMes(r.frequencia) * 10) / 10)} vis./mês</td>${r.atend_ult ? `<td><span class="pill alerta">${r.atend_ult} atend. no Umov</span></td>` : '<td></td>'}</tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
+    </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(neg.reduce((a, x) => a + Number(x.c.valor_fixo), 0))}</b></td><td colspan="4"></td><td class="n"><b>${BRL(negTot)}</b></td><td></td></tr></tfoot></table></div>
+    <p class="nota">Pontos com "atend. no Umov" ainda receberam visita no último mês: confirme com o parceiro antes de usar na negociação. Se o fixo já foi renegociado depois de alguma saída, atualize o início do contrato no cadastro do parceiro para a conta partir da data nova. O parceiro de cada ponto cancelado vem do cadastro ou, para pontos que já saíram do cadastro, das planilhas de fechamento de 2026.</p>`
+      : '<p class="nota">Nenhum parceiro com contrato fixo perdeu pontos no período.</p>'}</section>`;
   const tabSt = (rs, extra) => rs.length ? `<div class="tabela"><table><thead><tr><th>Ponto</th><th>Parceiro</th><th>Desde</th>${extra[0]}</tr></thead><tbody>${rs.slice(0, 60).map(r => `<tr><td><b>${esc(r.loja || r.cod_int)}</b><br><span class="nota">${esc(r.cod_int)} · ${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</span></td><td>${esc(nomeP(r.parceiro_id))}</td><td style="white-space:nowrap">${fmtD(r.desde)}</td>${extra[1](r)}</tr>`).join('')}</tbody></table></div>${rs.length > 60 ? `<p class="nota">+${rs.length - 60} pontos (no Excel).</p>` : ''}` : '<p class="nota">Nenhum.</p>';
   box.innerHTML = `
   <section class="bloco"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:10px"><div><h2 style="margin:0">Movimentação de pontos</h2>
@@ -3761,11 +3792,12 @@ async function carteiraDir(box, D) {
     <div class="linha" style="gap:10px;flex-wrap:wrap;margin-top:14px">
       ${kpi('Entradas', ent.length, `${kp('inclus') + kp('aquisi')} inclusões · ${kp('reativ')} reativações`, 'entra')}
       ${kpi('Saídas', sai.length, `${kp('cancel')} cancelamentos · ${kp('suspens')} suspensões`, 'sai')}
-      ${kpi('Saldo de pontos', (ent.length - sai.length > 0 ? '+' : '') + (ent.length - sai.length), 'entradas − saídas', 'todos')}
+      ${kpi('Saldo líquido de pontos', (saldoLiq > 0 ? '+' : '') + saldoLiq, `${liq.entrou.length} entraram · ${liq.saiu.length} saíram de vez · ${liq.volta.length} suspensos e já reativados (não contam)`, 'todos')}
       ${kpi('Mudanças de frequência', frq.length, `${kp('redu')} reduções · ${kp('aument')} aumentos · ${kp('troca')} trocas`, 'freq')}
       ${kpi('Alterações cadastrais', soma(noPer, 'outro').length, '', 'outro')}</div>
     <div style="margin-top:16px">${svg}</div>
     <p class="nota">Barras escuras: entradas (inclusão, aquisição de malote, reativação). Barras vermelhas: saídas (cancelamento, suspensão). Custo/mês é estimado só para os pontos com parceiro e valor unitário no cadastro: valor unitário × visitas por mês pela frequência.${futuros.length ? ` Há ${futuros.length} movimentações agendadas para depois de hoje.` : ''}</p></section>
+  ${negociacaoHtml}
   <section class="bloco"><h2>Situação hoje</h2>
     <div class="linha" style="gap:10px;flex-wrap:wrap">
       ${kpi('Suspensos', suspHj.length, suspAg.length ? `+${suspAg.length} suspensões agendadas` : '', 'x')}
@@ -3787,6 +3819,7 @@ async function carteiraDir(box, D) {
       ${lista.slice(0, F.lim).map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}${r.data > hoje ? '<br><span class="pill">Agendada</span>' : ''}</td><td>${pill(r)}</td><td><b>${esc(r.loja || r.cliente || '')}</b><br><span class="nota">${esc(r.cod_int || '')} · ${esc(r.cliente || '')}</span></td><td>${esc([r.cidade, r.uf].filter(Boolean).join('/'))}</td><td>${esc(nomeP(r.parceiro_id))}</td><td>${esc(r.frequencia || '')}</td><td class="n">${r.imp ? BRL(r.imp) : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="nota">Nenhuma movimentação com esses filtros.</td></tr>'}
     </tbody></table></div>${lista.length > F.lim ? `<button class="btn sec peq" id="cart-mais" style="margin-top:8px">Ver mais ${Math.min(200, lista.length - F.lim)}</button>` : ''}</section>`;
   const re = () => carteiraDir(box, D);
+  box.querySelectorAll('[data-negp]').forEach(b => b.onclick = () => { D.negAberto = { ...negAb, [b.dataset.negp]: !negAb[b.dataset.negp] }; re(); });
   box.querySelectorAll('[data-fper]').forEach(b => b.onclick = () => { F.per = b.dataset.fper === 'ano' ? 'ano' : +b.dataset.fper; re(); });
   box.querySelectorAll('[data-ftipo]').forEach(b => b.onclick = () => { if (b.dataset.ftipo === 'x') return; F.tipo = b.dataset.ftipo; F.lim = 200; re(); });
   box.querySelectorAll('[data-fbusca]').forEach(b => b.onclick = () => { F.busca = b.dataset.fbusca; F.lim = 200; re(); box.querySelector('#cart-busca')?.scrollIntoView({ block: 'center' }); });
@@ -3798,6 +3831,7 @@ async function carteiraDir(box, D) {
     { nome: 'Movimentações', linhas: lista.map(r => ({ 'Data': fmtD(r.data), 'Movimento': r.rot, 'Grupo': { entra: 'Entrada', sai: 'Saída', freq: 'Frequência', outro: 'Outro' }[r.g], 'Cliente': r.cliente || '', 'Cód. Int': r.cod_int || '', 'Ponto': r.loja || '', 'Cidade': r.cidade || '', 'UF': r.uf || '', 'Parceiro': nomeP(r.parceiro_id), 'Frequência': r.frequencia || '', 'V. Unit parceiro': Number(r.v_unit) || 0, 'Custo/mês estimado': Math.round(r.imp * 100) / 100 })) },
     { nome: 'Por cliente', linhas: porCli.map(x => ({ 'Cliente': x.k, 'Entradas': x.e, 'Saídas': x.s, 'Saldo': x.e - x.s, 'Mud. frequência': x.f, 'Custo/mês saindo': Math.round(x.impS * 100) / 100 })) },
     { nome: 'Por parceiro', linhas: porParc.map(x => ({ 'Parceiro': nomeP(x.k === '_sem' ? null : x.k), 'Entradas': x.e, 'Saídas': x.s, 'Saldo': x.e - x.s, 'Mud. frequência': x.f, 'Custo/mês saindo': Math.round(x.impS * 100) / 100 })) },
+    { nome: 'Onde negociar', linhas: neg.flatMap(x => x.perdidos.map(r => ({ 'Parceiro': nomeP(x.pid), 'Fixo do contrato': Number(x.c.valor_fixo), 'Contrato desde': fmtD(x.ref), 'Redução sugerida (parceiro)': Math.round(x.red * 100) / 100, 'Situação': r.situacao, 'Desde': fmtD(r.desde), 'Cód. Int': r.cod_int, 'Ponto': r.loja || '', 'Cidade': r.cidade || '', 'UF': r.uf || '', 'Frequência': r.frequencia || '', 'Visitas/mês': Math.round(visitasMes(r.frequencia) * 10) / 10, 'Atend. Umov último mês': r.atend_ult || 0 }))) },
     { nome: 'Suspensos e cancelados', linhas: stP.map(r => ({ 'Situação': r.situacao + (r.desde > hoje ? ' (agendada)' : ''), 'Desde': fmtD(r.desde), 'Cód. Int': r.cod_int, 'Ponto': r.loja || '', 'Cliente': r.cliente || '', 'Cidade': r.cidade || '', 'UF': r.uf || '', 'Parceiro': nomeP(r.parceiro_id), 'Cadastro': r.cad_situacao || '', 'Atend. Umov último mês': r.atend_ult || 0, 'Retorno previsto': r.retorno ? fmtD(r.retorno) : '' })) }] });
 }
 
