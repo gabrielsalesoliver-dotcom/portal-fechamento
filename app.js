@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.13-1215';
+const VERSAO = '2026.11.16-1540';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3061,7 +3061,7 @@ function desenharDiretoria(el) {
   const serieComp = serieP.map(x => !x.p && mesesProj.includes(x.c.mes) ? { ...x, p: somaProj(x.c.mes), origem: 'projecao', proj: true, temReal: true } : x);
   const serieProj = mesesProj.filter(m => !D.comps.some(x => x.mes === m)).map(m => ({ c: { id: 'proj-' + m, mes: m }, p: somaProj(m), r: null, origem: 'projecao', proj: true }));
   graficoPrev($('#gprev'), $('#tprev'), serieComp.concat(serieProj), c.id);
-  resumoAno($('#rprev'), serieComp.concat(serieProj), id => doMes(id).reduce((a, r) => a + (Number(r.kits) || 0) + (Number(r.fora_umov) || 0), 0), Array.isArray(D.proj));
+  resumoAno($('#rprev'), serieComp.concat(serieProj), id => doMes(id).reduce((a, r) => a + (Number(r.kits) || 0) + (Number(r.fora_umov) || 0) + (Number(r.atend_extra) || 0), 0), Array.isArray(D.proj));
   projecaoParceiros($('#pprev'), D, proj, mesesProj);
   projecaoCEO($('#pceo'), D, proj, valorOp);
   clientesMes($('#dcli'), c.id, op, null);
@@ -3120,11 +3120,11 @@ function projecaoCEO(box, D, proj, valorOp) {
   const fechadas = D.comps.filter(c => c.status === 'fechada' && D.fech.some(f => f.competencia_id === c.id));
   // Kits/Spot por parceiro: média dos últimos 3 meses fechados
   const ult3 = fechadas.slice(-3); const kitsP = {};
-  ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + (n(f.kits) + n(f.fora_umov)) / ult3.length; }));
+  ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + (n(f.kits) + n(f.fora_umov) + n(f.atend_extra)) / ult3.length; }));
   const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
   // Crescimento de Kits/Spot: tendência linear do ano (R$ a mais por mês, pelos meses fechados do ano) ou % ao mês escolhido
   const fAno = fechadas.filter(c => c.mes.startsWith(String(ano)));
-  const serieK = fAno.map(c => D.fech.filter(f => f.competencia_id === c.id).reduce((a, f) => a + n(f.kits) + n(f.fora_umov), 0));
+  const serieK = fAno.map(c => D.fech.filter(f => f.competencia_id === c.id).reduce((a, f) => a + n(f.kits) + n(f.fora_umov) + n(f.atend_extra), 0));
   const nk = serieK.length, xm = (nk - 1) / 2, ym = serieK.reduce((a, v) => a + v, 0) / (nk || 1);
   const slope = nk > 2 ? serieK.reduce((a, v, i) => a + (i - xm) * (v - ym), 0) / serieK.reduce((a, _, i) => a + (i - xm) ** 2, 0) : 0;
   const gSel = D.kitsG === undefined ? 'trend' : D.kitsG;
@@ -3144,14 +3144,14 @@ function projecaoCEO(box, D, proj, valorOp) {
     const mes = `${ano}-${String(m).padStart(2, '0')}-01`; const comp = D.comps.find(c => c.mes === mes);
     if (comp && comp.status === 'fechada' && D.fech.some(f => f.competencia_id === comp.id)) {
       const fe = D.fech.filter(f => f.competencia_id === comp.id);
-      linhas.push({ mes, origem: 'Realizado', fixo: null, varv: fe.reduce((a, f) => a + n(f.malote), 0), kits: fe.reduce((a, f) => a + n(f.kits) + n(f.fora_umov), 0), desc: fe.reduce((a, f) => a + n(f.descontos), 0), total: fe.reduce((a, f) => a + valorOp(f, 'tudo'), 0) });
+      linhas.push({ mes, origem: 'Realizado', fixo: null, varv: fe.reduce((a, f) => a + n(f.malote), 0), kits: fe.reduce((a, f) => a + n(f.kits) + n(f.fora_umov) + n(f.atend_extra), 0), desc: fe.reduce((a, f) => a + n(f.descontos), 0), total: fe.reduce((a, f) => a + valorOp(f, 'tudo'), 0) });
     } else if (comp && D.fech.some(f => f.competencia_id === comp.id)) {
       // mês em andamento: parceiros já fechados pelo valor do fechamento; os demais pelo último mês fechado
       const fe = Object.fromEntries(D.fech.filter(f => f.competencia_id === comp.id).map(f => [f.parceiro_id, f]));
       const ultC = fechadas.slice(-1)[0]; const ultF = ultC ? D.fech.filter(f => f.competencia_id === ultC.id) : [];
       const ids = new Set([...Object.keys(fe), ...ultF.map(f => f.parceiro_id)]);
       let mal = 0, kt = 0, ds = 0, tt = 0, nF = 0;
-      ids.forEach(id => { const f = fe[id] || ultF.find(x => x.parceiro_id === id); if (!f) return; if (fe[id]) nF++; mal += n(f.malote); kt += n(f.kits) + n(f.fora_umov); ds += n(f.descontos); tt += valorOp(f, 'tudo'); });
+      ids.forEach(id => { const f = fe[id] || ultF.find(x => x.parceiro_id === id); if (!f) return; if (fe[id]) nF++; mal += n(f.malote); kt += n(f.kits) + n(f.fora_umov) + n(f.atend_extra); ds += n(f.descontos); tt += valorOp(f, 'tudo'); });
       linhas.push({ mes, origem: `Em andamento (${nF} fechados)`, fixo: null, varv: mal, kits: kt, desc: ds, total: tt });
     } else if (comp && D.prev.some(x => x.competencia_id === comp.id && x.previsto != null)) {
       const pv = D.prev.filter(x => x.competencia_id === comp.id && x.previsto != null).reduce((a, x) => a + n(x.previsto), 0) * exec;
@@ -3291,7 +3291,7 @@ async function mapaCustos(box, D, c) {
   // por parceiro
   const P = {};
   fech.forEach(f => { const rs = rows.filter(r => r.parceiro_id === f.parceiro_id); const prev = rs.reduce((a, r) => a + n(r.atend_previsto), 0), real = rs.reduce((a, r) => a + n(r.atend_realizado), 0);
-    const malote = n(f.malote), kits = n(f.kits) + n(f.fora_umov), custo = valorOp(f, 'tudo'); const fixo = fixoDe(f.parceiro_id);
+    const malote = n(f.malote), kits = n(f.kits) + n(f.fora_umov) + n(f.atend_extra), custo = valorOp(f, 'tudo'); const fixo = fixoDe(f.parceiro_id);
     const exec = prev ? real / prev : null; const ocioso = fixo && exec != null ? fixo * Math.max(0, 1 - exec) : 0; const acima = prevP[f.parceiro_id] != null ? Math.max(0, malote - prevP[f.parceiro_id]) : 0;
     P[f.parceiro_id] = { id: f.parceiro_id, p: pm[f.parceiro_id] || {}, rs, prev, real, malote, kits, custo, fixo, exec, ocioso, acima, potencial: ocioso + acima, cpa: real ? (malote + kits) / real : null }; });
   const nac = (() => { const ls = Object.values(P).filter(x => x.real); const a = ls.reduce((s, x) => s + x.malote + x.kits, 0), b = ls.reduce((s, x) => s + x.real, 0); return b ? a / b : null; })();
@@ -3403,8 +3403,8 @@ function visaoGeral(box, D, c, ant) {
   const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
   const fe = doMes(c.id), fa = ant ? doMes(ant.id) : [];
   const custo = fe.reduce((a, r) => a + total(r), 0), custoAnt = fa.reduce((a, r) => a + total(r), 0);
-  const mal = fe.reduce((a, r) => a + n(r.malote), 0), kit = fe.reduce((a, r) => a + n(r.kits), 0), fora = fe.reduce((a, r) => a + n(r.fora_umov), 0), desc = fe.reduce((a, r) => a + n(r.descontos), 0);
-  const outros = custo - mal - kit - fora - desc;
+  const mal = fe.reduce((a, r) => a + n(r.malote), 0), kit = fe.reduce((a, r) => a + n(r.kits), 0), fora = fe.reduce((a, r) => a + n(r.fora_umov), 0), atx = fe.reduce((a, r) => a + n(r.atend_extra), 0), desc = fe.reduce((a, r) => a + n(r.descontos), 0);
+  const outros = custo - mal - kit - fora - atx - desc;
   const prevPor = Object.fromEntries(prevDe(c.id).map(p => [p.parceiro_id, n(p.previsto)]));
   const previsto = Object.values(prevPor).reduce((a, v) => a + v, 0);
   const malComPrev = fe.filter(r => prevPor[r.parceiro_id] != null).reduce((a, r) => a + n(r.malote), 0);
@@ -3467,7 +3467,7 @@ function visaoGeral(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const pend = parceirosMes - nFech;
 
-  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', fora, 'var(--brand-deep)'], ['Outros ajustes', outros, 'var(--on-dark)']].filter(x => x[1] > 0.5);
+  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', fora, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', outros, 'var(--on-dark)']].filter(x => x[1] > 0.5);
   const base = comp.reduce((a, x) => a + x[1], 0) || 1;
   const maxS = Math.max(...serie.map(s => Math.max(s.v, s.p)), 1);
   const tile = (rot, val, sub, cls = '') => `<div class="gtile ${cls}"><small>${rot}</small><b>${val}</b><span>${sub}</span></div>`;
@@ -3582,14 +3582,14 @@ function ponte(box, D, c, ant) {
   const n = v => Number(v) || 0; const tot = r => valorOp(r, 'tudo');
   const pA = Object.fromEntries(prv.map(r => [r.parceiro_id, r])); const pC = Object.fromEntries(cur.map(r => [r.parceiro_id, r]));
   const cont = cur.filter(r => pA[r.parceiro_id]);
-  const comp = { malote: 0, kits: 0, desc: 0, outros: 0 };
+  const comp = { malote: 0, kits: 0, atx: 0, desc: 0, outros: 0 };
   cont.forEach(r => { const a = pA[r.parceiro_id];
-    comp.malote += n(r.malote) - n(a.malote); comp.kits += n(r.kits) - n(a.kits); comp.desc += n(r.descontos) - n(a.descontos);
-    comp.outros += (tot(r) - n(r.malote) - n(r.kits) - n(r.descontos)) - (tot(a) - n(a.malote) - n(a.kits) - n(a.descontos)); });
+    comp.malote += n(r.malote) - n(a.malote); comp.kits += n(r.kits) - n(a.kits); comp.atx += n(r.atend_extra) - n(a.atend_extra); comp.desc += n(r.descontos) - n(a.descontos);
+    comp.outros += (tot(r) - n(r.malote) - n(r.kits) - n(r.atend_extra) - n(r.descontos)) - (tot(a) - n(a.malote) - n(a.kits) - n(a.atend_extra) - n(a.descontos)); });
   const novos = cur.filter(r => !pA[r.parceiro_id]); const sairam = prv.filter(r => !pC[r.parceiro_id]);
   const vA = prv.reduce((a, r) => a + tot(r), 0), vC = cur.reduce((a, r) => a + tot(r), 0);
   const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
-  const passos = [['Malote', comp.malote], ['Kits/Spot', comp.kits], ['Descontos', comp.desc], ['Outros ajustes', comp.outros], [`Parceiros novos (${novos.length})`, novos.reduce((a, r) => a + tot(r), 0)], [`Parceiros que saíram (${sairam.length})`, -sairam.reduce((a, r) => a + tot(r), 0)]].filter(x => Math.abs(x[1]) >= 0.5);
+  const passos = [['Malote', comp.malote], ['Kits/Spot', comp.kits], [ATX, comp.atx], ['Descontos', comp.desc], ['Outros ajustes', comp.outros], [`Parceiros novos (${novos.length})`, novos.reduce((a, r) => a + tot(r), 0)], [`Parceiros que saíram (${sairam.length})`, -sairam.reduce((a, r) => a + tot(r), 0)]].filter(x => Math.abs(x[1]) >= 0.5);
   const barras = [{ rot: MES3[+ant.mes.slice(5, 7) - 1], ini: 0, fim: vA, tipo: 'total' }]; let acc = vA;
   passos.forEach(([r, v]) => { barras.push({ rot: r, ini: acc, fim: acc + v, tipo: v >= 0 ? 'sobe' : 'desce', v }); acc += v; });
   barras.push({ rot: MES3[+c.mes.slice(5, 7) - 1], ini: 0, fim: vC, tipo: 'total' });
@@ -3969,6 +3969,14 @@ function popComposicao(item, D, c, ant) {
   const fe = D.fech.filter(f => f.competencia_id === c.id);
   const tabela = (box, linhas, cab, nota) => { box.className = ''; const tot = linhas.reduce((a, l) => a + l.v, 0);
     box.innerHTML = linhas.length ? `<div class="tabela"><table><thead><tr><th>${cab}</th><th class="n">Valor</th><th class="n">%</th></tr></thead><tbody>${linhas.sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).map(l => `<tr><td><b>${esc(l.k)}</b>${l.det ? `<br><span class="nota">${l.det}</span>` : ''}</td><td class="n">${BRL2(l.v)}</td><td class="n">${tot ? Math.round(100 * l.v / tot) : 0}%</td></tr>`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL2(tot)}</b></td><td></td></tr></tfoot></table></div>${nota ? `<p class="nota">${nota}</p>` : ''}` : '<p class="nota">Nada lançado neste mês.</p>'; };
+  if (item === ATX) {
+    const box = abrirPop(`${ATX} · ${mes}`, 'Atendimentos de malote além do contrato: 2ª visita de ponto mensal (ex.: Crefisa) e atendimentos extras lançados. Não contam como Kits/Spot.');
+    (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
+      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente', { p_comp: c.id }))); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+      const g = {}; rs.filter(r => cliSpotDe(r, pm) === ATX).forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, n: 0, ls: [] }); y.v += n(r.valor); y.n += n(r.qtd) || 1; y.ls.push(r); });
+      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, det: y.ls.slice(0, 8).map(l => esc(l.origem === 'planilha' ? `${l.cliente} (planilha)` : (l.destino || l.cliente || ''))).join(' · ') + (y.ls.length > 8 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro', 'Antes ficavam em Kits/Spot como "Crefisa" e "Atendimento". O total do parceiro não muda.');
+    })(); return;
+  }
   if (item === 'Descontos') {
     const dd = (D.ddet || []).filter(x => x.competencia_id === c.id); const g = {};
     dd.forEach(x => { const k = x.categoria || 'Outros'; const y = g[k] || (g[k] = { k, v: 0, ps: {} }); y.v += n(x.valor); y.ps[x.parceiro_id] = (y.ps[x.parceiro_id] || 0) + n(x.valor); });
@@ -3977,7 +3985,7 @@ function popComposicao(item, D, c, ant) {
     return;
   }
   const total = r => n(r.valor_aprovado ?? r.valor_final);
-  const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.descontos) })).filter(l => Math.abs(l.v) > 0.5);
+  const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos) })).filter(l => Math.abs(l.v) > 0.5);
   tabela(abrirPop(`Outros ajustes · ${mes}`, 'Diferença entre o valor aprovado e malote + kits + fora do Umov − descontos, por parceiro.'), ls, 'Parceiro', 'Normalmente são acertos combinados na aprovação (valor aprovado diferente do calculado).');
 }
 
@@ -3988,23 +3996,25 @@ function cliSpotDe(r, pm) {
 // Na Diretoria, o que veio como extra mas não é spot sai de Kits/Spot: malote de cliente (Dass, Carmen, Vivara) vai para Malote; ajustes vão para Outros ajustes. O total do parceiro não muda.
 function reclassificarSpot(fech, linhas, parcs) {
   const pm = Object.fromEntries((parcs || []).map(p => [p.id, p])); const aj = {};
-  linhas.forEach(r => { const k = cliSpotDe(r, pm); if (!NAO_SPOT.has(k)) return; const ch = r.competencia_id + '|' + r.parceiro_id; const x = aj[ch] || (aj[ch] = { mal: 0, aj: 0, kit: 0, fora: 0 });
-    const v = Number(r.valor) || 0; if (k === 'Ajustes de malote e operacionais') x.aj += v; else x.mal += v; if (r.origem === 'fora') x.fora += v; else x.kit += v; });
+  linhas.forEach(r => { const k = cliSpotDe(r, pm); if (!NAO_SPOT.has(k) && k !== ATX) return; const ch = r.competencia_id + '|' + r.parceiro_id; const x = aj[ch] || (aj[ch] = { mal: 0, aj: 0, atx: 0, kit: 0, fora: 0 });
+    const v = Number(r.valor) || 0; if (k === ATX) x.atx += v; else if (k === 'Ajustes de malote e operacionais') x.aj += v; else x.mal += v; if (r.origem === 'fora') x.fora += v; else x.kit += v; });
   fech.forEach(f => { const x = aj[f.competencia_id + '|' + f.parceiro_id]; if (!x) return;
     f.malote_orig = f.malote; f.kits_orig = f.kits; f.fora_orig = f.fora_umov; f.naoSpot = x;
-    f.malote = (Number(f.malote) || 0) + x.mal; f.kits = (Number(f.kits) || 0) - x.kit; f.fora_umov = (Number(f.fora_umov) || 0) - x.fora; });
+    f.malote = (Number(f.malote) || 0) + x.mal; f.kits = (Number(f.kits) || 0) - x.kit; f.fora_umov = (Number(f.fora_umov) || 0) - x.fora; f.atend_extra = x.atx; });
 }
 
 // ---------- Kits/Spot por cliente ----------
-const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA/, 'Amalfis'],
-  [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA/, 'Crefisa'], [/SHIMADA/, 'Shimada'],
-  [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/\bYPE\b|QUIMICA/, 'Ypê'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
-  [/PEPPERONE/, 'Pepperone'], [/IFOOD/, 'iFood'], [/CLARO/, 'Claro'], [/S\.? ?V\.? ?C\.? LASER/, 'SVC Laser'], [/\bZIO\b/, 'Zio Brindes'], [/\bARG\b/, 'ARG'],
-  [/PRO VERDE/, 'Pro Verde'], [/ROAR/, 'Roar'], [/PERSONAL BRINDES/, '153 Personal'], [/IDEIA E COSTURA/, 'Ideia e Costura'], [/OUTBACK/, 'Outback'], [/SODEXO/, 'Sodexo'],
+const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b|OUTBACK|SODEXO|\bYPE\b|QUIMICA AMPARO/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA|CLARO/, 'Amalfis'],
+  [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA|^ATENDIMENTOS? EXTRA|^ATENDIMENTOS?\b/, 'Atendimentos extras'], [/SHIMADA/, 'Shimada'],
+  [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
+  [/PEPPERONE/, 'Pepperone'], [/IFOOD/, 'iFood'], [/S\.? ?V\.? ?C\.? LASER/, 'SVC Laser'], [/\bZIO\b/, 'Zio Brindes'], [/\bARG\b/, 'ARG'],
+  [/PRO VERDE/, 'Pro Verde'], [/ROAR/, 'Roar'], [/PERSONAL BRINDES/, '153 Personal'], [/IDEIA E COSTURA/, 'Ideia e Costura'],
   [/MERCANTIL/, 'Banco Mercantil'], [/EMBRACON/, 'Embracon'], [/CO[OR]PERCARGO/, 'Coopercargo'], [/\bCARMEN\b/, 'Carmen Steffens'],
-  [/FIORINO|\bVAN\b/, 'Coletas dedicadas (Fiorino/Van)'],
+  [/FIORINO|\bVAN\b/, 'Localiza'],
   [/\bGSM\b/, 'GSM Group (remetente)'], [/REDESPACHO|TRANSFER/, 'Redespacho / transferência']];
 // clientes de malote que vieram lançados como extra: ficam fora do custo de spot (aparecem à parte)
+// atendimentos de malote além do contrato (2ª visita de ponto mensal, Crefisa, "Atendimento extra"): composição própria
+const ATX = 'Atendimentos extras';
 const NAO_SPOT = new Set(['Grupo Dass', 'Carmen Steffens', 'Vivara', 'Ajustes de malote e operacionais']);
 // linhas "GSM" das planilhas: só Anjos (SC) e Cta (Curitiba) são entregas extras de spot (sem cliente informado); o resto é ajuste de malote, taxa ou acerto
 const GSM_SPOT = /^(anjos|cta)$/i;
@@ -4033,7 +4043,7 @@ async function spotPorCliente(box, c, ant) {
   const pmS = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
   const cliDe = r => cliSpotDe(r, pmS);
   atual = atual.map(r => ({ ...r, _cli: cliDe(r) })); antes = antes.map(r => ({ ...r, _cli: cliDe(r) }));
-  const ehSpot = r => !NAO_SPOT.has(r._cli);
+  const ehSpot = r => !NAO_SPOT.has(r._cli) && r._cli !== ATX;
   const fora = {}; atual.filter(r => !ehSpot(r)).forEach(r => { const k = r._cli; fora[k] = (fora[k] || 0) + (Number(r.valor) || 0); });
   const foraTot = Object.values(fora).reduce((a, v) => a + v, 0);
   atual = atual.filter(ehSpot); antes = antes.filter(ehSpot);
@@ -4053,8 +4063,8 @@ async function spotPorCliente(box, c, ant) {
         ${aberto[n] ? ps.map(([pid, p]) => `<tr class="det" ${p.linhas.length ? `data-spotp="${esc(n)}|${pid}" style="background:var(--field);cursor:pointer"` : 'style="background:var(--field)"'}><td colspan="2" style="padding-left:28px">${p.linhas.length ? (abertoP[n + '|' + pid] ? '▾ ' : '▸ ') : ''}${esc(nomeP(pid))}${p.planilha ? ' <span class="nota">(planilha)</span>' : ''}</td><td class="n">${p.n ? fmtN(p.n) : '—'}</td><td class="n">${BRL2(p.v)}</td><td class="n">${p.n ? BRL2(p.v / p.n) : '—'}</td><td class="n">${GA[n]?.parcs[pid] ? BRL2(GA[n].parcs[pid].v) : '—'}</td><td colspan="2"></td></tr>
           ${p.linhas.length && abertoP[n + '|' + pid] ? `<tr class="det" style="background:var(--field)"><td colspan="8" style="padding:0 8px 10px 28px"><table style="width:100%;font-size:12px"><tbody>${p.linhas.sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).map(l => `<tr><td style="width:80px">${l.data ? fmtD(l.data) : '—'}</td><td>${esc(l.cliente || '')}${l.destino && l.destino !== l.cliente ? ` <span class="nota">· ${esc(l.destino)}</span>` : ''}</td><td>${esc(l.cidade || '')}</td><td class="n">${BRL2(l.valor)}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('') : ''}`; }).join('')}
     </tbody></table></div>
-    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas na Diretoria não contam como Kits/Spot: malote de cliente entra em Malote e os ajustes em Outros ajustes. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
-    <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", "Leadec (KIT MASSEI…)" e "Sodexo" com Massei no nome contam como Massei).</p>`;
+    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas na Diretoria não contam como Kits/Spot: malote de cliente entra em Malote, os atendimentos além do contrato (Crefisa, 2ª visita, "Atendimento extra") em Atendimentos extras e os ajustes em Outros ajustes. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
+    <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", Leadec, Sodexo, Outback e Ypê contam como Massei; Claro conta como Amalfis; coletas dedicadas de Fiorino/Van contam como Localiza).</p>`;
   box.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => { const n = tr.dataset.spot; D.spotAberto = { ...(D.spotAberto || {}), [n]: !aberto[n] }; spotPorCliente(box, c, ant); });
   box.querySelectorAll('tr[data-spotp]').forEach(tr => tr.onclick = () => { const k = tr.dataset.spotp; D.spotParc = { ...abertoP, [k]: !abertoP[k] }; spotPorCliente(box, c, ant); });
   box.querySelector('#spot-xls').onclick = () => {
