@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.16-1650';
+const VERSAO = '2026.11.16-1700';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4062,7 +4062,10 @@ function popComposicao(item, D, c, ant) {
 
 // Classificação do extra: cliente de spot ou não (malote lançado como extra / ajuste)
 function cliSpotDe(r, pm) {
-  return r.origem === 'planilha' && /^GSM$/i.test(String(r.cliente || '').trim()) ? (GSM_SPOT.test(pm[r.parceiro_id]?.nome || '') ? 'Extras sem cliente identificado' : 'Ajustes de malote e operacionais') : clienteSpot(r.cliente, r.destino);
+  if (r.origem === 'planilha' && /^GSM$/i.test(String(r.cliente || '').trim())) return GSM_SPOT.test(pm[r.parceiro_id]?.nome || '') ? 'Extras sem cliente identificado' : 'Ajustes de malote e operacionais';
+  const k = clienteSpot(r.cliente, r.destino);
+  // Itaperuna (Elite): CIEE e as remessas com a GSM como remetente são a quinzena de malote do parceiro
+  return k === 'CIEE' && /itaperuna/i.test(pm[r.parceiro_id]?.regiao || '') ? QUINZ : k;
 }
 // Na Diretoria, o que veio como extra mas não é spot sai de Kits/Spot: malote de cliente (Dass, Carmen, Vivara) vai para Malote; ajustes vão para Outros ajustes. O total do parceiro não muda.
 function reclassificarSpot(fech, linhas, parcs) {
@@ -4075,6 +4078,8 @@ function reclassificarSpot(fech, linhas, parcs) {
 }
 
 // ---------- Kits/Spot por cliente ----------
+const ATX = 'Atendimentos extras';
+const QUINZ = 'Quinzena de malote';
 const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b|OUTBACK|SODEXO|\bYPE\b|QUIMICA AMPARO/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA|CLARO/, 'Amalfis'],
   [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA|^ATENDIMENTOS? EXTRA|^ATENDIMENTOS?\b/, 'Atendimentos extras'], [/SHIMADA/, 'Shimada'],
   [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
@@ -4082,11 +4087,10 @@ const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLO
   [/PRO VERDE/, 'Pro Verde'], [/ROAR/, 'Roar'], [/PERSONAL BRINDES/, '153 Personal'], [/IDEIA E COSTURA/, 'Ideia e Costura'],
   [/MERCANTIL/, 'Banco Mercantil'], [/EMBRACON/, 'Embracon'], [/CO[OR]PERCARGO/, 'Coopercargo'], [/\bCARMEN\b/, 'Carmen Steffens'],
   [/FIORINO|\bVAN\b/, 'Localiza'],
-  [/\bGSM\b/, 'Quinzena de malote (GSM remetente)'], [/REDESPACHO|TRANSFER/, 'Redespacho / transferência']];
+  [/\bGSM\b/, QUINZ], [/REDESPACHO|TRANSFER/, 'Redespacho / transferência']];
 // clientes de malote que vieram lançados como extra: ficam fora do custo de spot (aparecem à parte)
 // atendimentos de malote além do contrato (2ª visita de ponto mensal, Crefisa, "Atendimento extra"): composição própria
-const ATX = 'Atendimentos extras';
-const NAO_SPOT = new Set(['Grupo Dass', 'Carmen Steffens', 'Vivara', 'Quinzena de malote (GSM remetente)', 'Ajustes de malote e operacionais']);
+const NAO_SPOT = new Set(['Grupo Dass', 'Carmen Steffens', 'Vivara', QUINZ, 'Ajustes de malote e operacionais']);
 // linhas "GSM" das planilhas: só Anjos (SC) e Cta (Curitiba) são entregas extras de spot (sem cliente informado); o resto é ajuste de malote, taxa ou acerto
 const GSM_SPOT = /^(anjos|cta)$/i;
 const GEN_SPOT = /^(OUTRO|OUTROS|SEM CLIENTE|SERVICO FORA DO UMOV|EXTRAS DO MES)?$/;
@@ -4134,7 +4138,7 @@ async function spotPorCliente(box, c, ant) {
         ${aberto[n] ? ps.map(([pid, p]) => `<tr class="det" ${p.linhas.length ? `data-spotp="${esc(n)}|${pid}" style="background:var(--field);cursor:pointer"` : 'style="background:var(--field)"'}><td colspan="2" style="padding-left:28px">${p.linhas.length ? (abertoP[n + '|' + pid] ? '▾ ' : '▸ ') : ''}${esc(nomeP(pid))}${p.planilha ? ' <span class="nota">(planilha)</span>' : ''}</td><td class="n">${p.n ? fmtN(p.n) : '—'}</td><td class="n">${BRL2(p.v)}</td><td class="n">${p.n ? BRL2(p.v / p.n) : '—'}</td><td class="n">${GA[n]?.parcs[pid] ? BRL2(GA[n].parcs[pid].v) : '—'}</td><td colspan="2"></td></tr>
           ${p.linhas.length && abertoP[n + '|' + pid] ? `<tr class="det" style="background:var(--field)"><td colspan="8" style="padding:0 8px 10px 28px"><table style="width:100%;font-size:12px"><tbody>${p.linhas.sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).map(l => `<tr><td style="width:80px">${l.data ? fmtD(l.data) : '—'}</td><td>${esc(l.cliente || '')}${l.destino && l.destino !== l.cliente ? ` <span class="nota">· ${esc(l.destino)}</span>` : ''}</td><td>${esc(l.cidade || '')}</td><td class="n">${BRL2(l.valor)}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('') : ''}`; }).join('')}
     </tbody></table></div>
-    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas na Diretoria não contam como Kits/Spot: malote de cliente e a quinzena de malote com a GSM como remetente (Itaperuna) entram em Malote, os atendimentos além do contrato (Crefisa, 2ª visita, "Atendimento extra") em Atendimentos extras e os ajustes em Outros ajustes. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
+    ${foraTot ? `<p class="nota" style="margin-top:8px"><b>Fora do spot:</b> ${Object.entries(fora).map(([k, v]) => `${esc(k)} ${BRL2(v)}`).join(' · ')} (total ${BRL2(foraTot)}). Malotes lançados como extra e ajustes (tributação, peso extra, acertos de mês, taxas, retirada por atraso); continuam no valor do fechamento, mas na Diretoria não contam como Kits/Spot: malote de cliente e a quinzena de malote de Itaperuna (CIEE e remessas com a GSM como remetente) entram em Malote, os atendimentos além do contrato (Crefisa, 2ª visita, "Atendimento extra") em Atendimentos extras e os ajustes em Outros ajustes. As entregas extras de Anjos (SC) e Cta (Curitiba) vêm num valor único; em setembro foram abertas por cliente a partir das faturas ("Sem cliente na fatura" = coletas da Anjos que trazem só o número da NF).</p>` : ''}
     <p class="nota">Meses até setembro vêm do histórico das planilhas (total por cliente e parceiro). A partir de outubro vêm dos relatórios lançados no portal, kit a kit; parceiro ainda não lançado não aparece. ${parcial ? `* Mês em aberto: a comparação com ${ant ? nomeMes(ant.mes) : 'o mês anterior'} usa só os parceiros já lançados, para não parecer queda.` : ''} O cliente é identificado pelo nome do kit (ex.: "KIT MASSEI…", Leadec, Sodexo, Outback e Ypê contam como Massei; Claro conta como Amalfis; coletas dedicadas de Fiorino/Van contam como Localiza).</p>`;
   box.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => { const n = tr.dataset.spot; D.spotAberto = { ...(D.spotAberto || {}), [n]: !aberto[n] }; spotPorCliente(box, c, ant); });
   box.querySelectorAll('tr[data-spotp]').forEach(tr => tr.onclick = () => { const k = tr.dataset.spotp; D.spotParc = { ...abertoP, [k]: !abertoP[k] }; spotPorCliente(box, c, ant); });
