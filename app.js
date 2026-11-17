@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.17-1715';
+const VERSAO = '2026.11.17-1745';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3014,7 +3014,7 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
-  const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos] = await Promise.all([
+  const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos, nomesMes] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.rpc('parceiros_resumo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento,lote_id')),
@@ -3023,6 +3023,7 @@ async function vDiretoria(el) {
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
     todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor,origem')).catch(() => []),
     todas(() => sb.rpc('dir_spot_todos')).catch(e => { console.error('dir_spot_todos', e); return []; }),
+    todas(() => sb.from('parceiro_nome_mes').select('competencia_id,parceiro_id,nome,razao_social,cnpj')).catch(() => []),
   ]);
   reclassificarSpot(fech, spotTodos || [], parcs);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
@@ -3031,7 +3032,7 @@ async function vDiretoria(el) {
   if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.aba = D.aba || 'geral';
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.nomesMes = nomesMes || []; D.aba = D.aba || 'geral';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const vig = comComDados.find(c => c.mes === hojeMes); if (vig) D.compId = vig.id; }
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
@@ -3647,6 +3648,14 @@ function evolucaoPracas(box, D, c) {
   const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
   const R = {};
   D.fech.forEach(f => { const i = mi[f.competencia_id]; if (i == null) return; const x = R[f.parceiro_id] || (R[f.parceiro_id] = { id: f.parceiro_id, p: pm[f.parceiro_id] || {}, v: Array(meses.length).fill(null) }); x.v[i] = (x.v[i] || 0) + val(f); });
+  // quem era o parceiro (nome e razão social) em cada mês, para mostrar as trocas na mesma praça
+  const NM = {}; (D.nomesMes || []).forEach(r => { const i = mi[r.competencia_id]; if (i != null) (NM[r.parceiro_id] || (NM[r.parceiro_id] = []))[i] = r; });
+  const nmDe = (id, i) => (NM[id] || [])[i] || null;
+  const chave = r => r ? norm((r.nome || '') + '|' + (r.razao_social || '')) : '';
+  const trocas = id => { const out = []; let ant = null; meses.forEach((m, i) => { const r = nmDe(id, i); if (!r) return; if (ant && chave(ant) !== chave(r)) out.push({ i, de: ant, para: r }); ant = r; }); return out; };
+  const curto = t => String(t || '').split(/\s+/).slice(0, 2).join(' ');
+  const rotTroca = t => norm(t.de.nome || '') !== norm(t.para.nome || '') ? `${t.de.nome} → ${t.para.nome}` : `${curto(t.de.razao_social)} → ${curto(t.para.razao_social)}`;
+  const nmTxt = r => r ? `${esc(r.nome || '')}${r.razao_social && norm(r.razao_social) !== norm(r.nome || '') ? ' · ' + esc(r.razao_social) : ''}` : '';
   const iC = meses.length - 1; const mFim = MES3[+meses[iC].mes.slice(5, 7) - 1];
   let L = Object.values(R).map(x => {
     const atual = x.v[iC];
@@ -3670,7 +3679,8 @@ function evolucaoPracas(box, D, c) {
   // célula do mês: fundo pela variação sobre o mês anterior do mesmo parceiro
   const cel = (x, i) => { const v = x.v[i]; if (v == null) return '<td class="n gmut">—</td>'; const a = i > 0 ? x.v[i - 1] : null; const q = a ? v / a - 1 : 0;
     const k = Math.min(1, Math.abs(q) / 0.3); const bg = a && Math.abs(q) >= 0.02 ? `background:color-mix(in srgb, ${q > 0 ? 'var(--brand)' : '#3E8E5E'} ${Math.round(8 + 30 * k)}%, transparent)` : '';
-    return `<td class="n" style="${bg}" title="${esc(x.p.regiao || '')} · ${MES3[+meses[i].mes.slice(5, 7) - 1]}: ${BRL(v)}${a ? ` (${pct(q)} sobre o mês anterior)` : ''}">${BRL(v)}</td>`; };
+    const nm = nmDe(x.id, i); const tr = trocas(x.id).some(t => t.i === i);
+    return `<td class="n" style="${bg}${tr ? ';box-shadow:inset 3px 0 0 var(--ink)' : ''}" title="${esc(x.p.regiao || '')} · ${MES3[+meses[i].mes.slice(5, 7) - 1]}: ${BRL(v)}${a ? ` (${pct(q)} sobre o mês anterior)` : ''}${nm ? '\n' + esc(nm.nome || '') + ' · ' + esc(nm.razao_social || '') + (nm.cnpj ? ' · ' + esc(nm.cnpj) : '') : ''}${tr ? '\nTroca de parceiro neste mês' : ''}">${BRL(v)}</td>`; };
   box.innerHTML = `<div class="linha" style="justify-content:space-between;align-items:center;gap:10px"><h3>Evolução por praça · ${ano} até ${mFim}</h3>
     <div class="linha" style="gap:8px">${alt('data-em', Object.entries(MET), met)}${alt('data-eb', [['ant', 'Sobre o mês anterior'], ['inicio', 'Sobre o 1º mês']], baseK)}</div></div>
   <p class="sub" style="margin:0">${mFim} contra ${rotBase} (${MET[met].toLowerCase()}): <b style="color:var(--brand-deep)">${sobe.length} praça(s) aumentaram, +${BRL(sobe.reduce((a, x) => a + x.d, 0))}</b> · <b style="color:#3E8E5E">${desce.length} reduziram, −${BRL(-desce.reduce((a, x) => a + x.d, 0))}</b>. Marque as praças na tabela para ver as linhas no gráfico.</p>
@@ -3679,10 +3689,10 @@ function evolucaoPracas(box, D, c) {
   <div id="evgraf" style="position:relative"></div>
   <div class="linha" style="justify-content:space-between;align-items:center"><input id="evfiltro" class="peq" placeholder="Filtrar praça ou parceiro" value="${esc(D.evFiltro || '')}" style="min-width:220px"><button class="btn sec peq" id="evx">Baixar Excel</button></div>
   <div class="tabela" style="max-height:560px;overflow:auto"><table class="gtab" style="font-size:13px"><thead><tr><th style="width:28px"></th>${th('praca', 'Praça', '')}${th('d', 'Variação R$')}${th('pc', 'Var. %')}${meses.map((x, i) => th('m' + i, MES3[+x.mes.slice(5, 7) - 1])).join('')}</tr></thead><tbody>
-  ${L.map(x => `<tr data-er="${x.id}" style="cursor:pointer"><td><input type="checkbox" ${sel.includes(x.id) ? 'checked' : ''} aria-label="Mostrar no gráfico" style="accent-color:${sel.includes(x.id) ? cor(x.id) : 'var(--ink)'}"></td><td style="white-space:nowrap"><b>${esc(x.p.regiao || '—')}</b><br><span class="gmut">${esc(x.p.nome || '')}</span></td>
+  ${L.map(x => `<tr data-er="${x.id}" style="cursor:pointer"><td><input type="checkbox" ${sel.includes(x.id) ? 'checked' : ''} aria-label="Mostrar no gráfico" style="accent-color:${sel.includes(x.id) ? cor(x.id) : 'var(--ink)'}"></td><td style="white-space:nowrap"><b>${esc(x.p.regiao || '—')}</b><br><span class="gmut">${esc(x.p.nome || '')}</span>${trocas(x.id).map(t => `<br><span class="pill" style="font-size:11px" title="${esc((t.de.razao_social || '') + ' → ' + (t.para.razao_social || ''))}">troca em ${MES3[+meses[t.i].mes.slice(5, 7) - 1]}: ${esc(rotTroca(t))}</span>`).join('')}</td>
     <td class="n" style="font-weight:600;white-space:nowrap;color:${x.d > 0.5 ? 'var(--brand-deep)' : x.d < -0.5 ? '#3E8E5E' : 'inherit'}">${x.d == null ? '—' : (x.d > 0 ? '+' : '') + BRL(x.d)}</td><td class="n" style="border-right:1px solid var(--rule);color:${x.d > 0.5 ? 'var(--brand-deep)' : x.d < -0.5 ? '#3E8E5E' : 'inherit'}">${pct(x.pc)}</td>${meses.map((m, i) => cel(x, i)).join('')}</tr>`).join('')}
   </tbody><tfoot><tr><td></td><td><b>Total (${L.length})</b></td><td class="n"><b>${(() => { const t = L.reduce((a, x) => a + (x.d || 0), 0); return (t > 0 ? '+' : '') + BRL(t); })()}</b></td><td style="border-right:1px solid var(--rule)"></td>${meses.map((m, i) => `<td class="n"><b>${BRL(L.reduce((a, x) => a + (x.v[i] || 0), 0))}</b></td>`).join('')}</tr></tfoot></table></div>
-  <p class="nota" style="margin:0">Cor da célula: variação sobre o mês anterior da mesma praça (vermelho subiu, verde caiu; mais forte = maior variação, até 30%). Variação = ${mFim} − ${baseK === 'ant' ? rotBase : 'primeiro mês com fechamento no ano'}. Clique na linha para incluir ou tirar a praça do gráfico; clique no título da coluna para ordenar.</p>`;
+  <p class="nota" style="margin:0">Cor da célula: variação sobre o mês anterior da mesma praça (vermelho subiu, verde caiu; mais forte = maior variação, até 30%). Variação = ${mFim} − ${baseK === 'ant' ? rotBase : 'primeiro mês com fechamento no ano'}. Barra preta à esquerda da célula e círculo no gráfico: troca de parceiro naquele mês. Passe o mouse para ver o parceiro e a razão social de cada mês. Clique na linha para incluir ou tirar a praça do gráfico; clique no título da coluna para ordenar.</p>`;
   // gráfico de linhas
   const g = box.querySelector('#evgraf');
   const series = sel.map(id => R[id]);
@@ -3704,11 +3714,12 @@ function evolucaoPracas(box, D, c) {
       ${meses.map((x, i) => `<text x="${xs(i)}" y="${H - 8}" text-anchor="middle" font-size="12" fill="${i === iC ? 'var(--brand-deep)' : 'var(--muted)'}" font-weight="${i === iC ? 600 : 400}" font-family="Poppins">${MES3[+x.mes.slice(5, 7) - 1]}</text>`).join('')}
       <line id="evcur" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--on-dark)" stroke-dasharray="3 3" visibility="hidden"/>
       ${series.map(s => `<path d="${path(s)}" fill="none" stroke="${cor(s.id)}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>${PV[s.id].map((v, i) => v == null ? '' : `<circle cx="${xs(i)}" cy="${y(v)}" r="${i === iC ? 4.5 : 3}" fill="${cor(s.id)}" stroke="var(--surface)" stroke-width="1.5"/>`).join('')}`).join('')}
+      ${series.flatMap(s => trocas(s.id).filter(t => PV[s.id][t.i] != null).map(t => `<g><circle cx="${xs(t.i)}" cy="${y(PV[s.id][t.i])}" r="8" fill="none" stroke="${cor(s.id)}" stroke-width="2"/><text x="${xs(t.i)}" y="${y(PV[s.id][t.i]) - 13}" text-anchor="middle" font-size="11" font-weight="600" fill="${cor(s.id)}" font-family="Poppins" stroke="var(--surface)" stroke-width="4" paint-order="stroke">troca: ${esc(rotTroca(t))}</text></g>`)).join('')}
       ${meses.map((x, i) => { const w = (W - Lm - Rm) / Math.max(1, meses.length - 1); return `<rect data-ei="${i}" x="${xs(i) - w / 2}" y="${T}" width="${w}" height="${H - T - B}" fill="transparent"/>`; }).join('')}
     </svg></div><div id="evtip" hidden style="position:absolute;pointer-events:none;background:var(--panel);color:var(--on-panel);font-size:13px;padding:8px 10px;border-radius:6px;white-space:nowrap;z-index:2"></div>`;
     const tip = g.querySelector('#evtip'), cur = g.querySelector('#evcur');
     g.querySelectorAll('rect[data-ei]').forEach(r => { r.onmousemove = e => { const i = +r.dataset.ei; cur.setAttribute('x1', xs(i)); cur.setAttribute('x2', xs(i)); cur.setAttribute('visibility', 'visible');
-        tip.innerHTML = `<b>${nomeMes(meses[i].mes)}</b>` + series.slice().sort((a, b) => (b.v[i] ?? -1) - (a.v[i] ?? -1)).map(s => { const v = s.v[i], a = i > 0 ? s.v[i - 1] : null; const q = PV[s.id][i]; return `<br><i class="gdot" style="background:${cor(s.id)};box-shadow:0 0 0 1.5px #fff"></i>${esc(s.p.regiao || '—')}: ${v == null ? '—' : BRL(v)}${v != null && a ? ` <span style="color:var(--on-dark)">${pct(v / a - 1)} no mês</span>` : ''}${idx && q != null ? ` <span style="color:var(--on-dark)">· ${q > 0 ? '+' : ''}${q.toFixed(1).replace('.', ',')}% no ano</span>` : ''}`; }).join('');
+        tip.innerHTML = `<b>${nomeMes(meses[i].mes)}</b>` + series.slice().sort((a, b) => (b.v[i] ?? -1) - (a.v[i] ?? -1)).map(s => { const v = s.v[i], a = i > 0 ? s.v[i - 1] : null; const q = PV[s.id][i]; return `<br><i class="gdot" style="background:${cor(s.id)};box-shadow:0 0 0 1.5px #fff"></i>${esc(s.p.regiao || '—')}: ${v == null ? '—' : BRL(v)}${v != null && a ? ` <span style="color:var(--on-dark)">${pct(v / a - 1)} no mês</span>` : ''}${idx && q != null ? ` <span style="color:var(--on-dark)">· ${q > 0 ? '+' : ''}${q.toFixed(1).replace('.', ',')}% no ano</span>` : ''}${nmDe(s.id, i) ? `<br><span style="color:var(--on-dark);padding-left:16px">${nmTxt(nmDe(s.id, i))}</span>` : ''}${trocas(s.id).some(t => t.i === i) ? `<br><span style="color:#F0C2CC;padding-left:16px">↺ troca de parceiro neste mês (antes: ${nmTxt(trocas(s.id).find(t => t.i === i).de)})</span>` : ''}`; }).join('');
         tip.hidden = false; const b = g.getBoundingClientRect(); tip.style.left = Math.max(0, Math.min(e.clientX - b.left + 14, b.width - tip.offsetWidth - 4)) + 'px'; tip.style.top = Math.max(0, e.clientY - b.top - tip.offsetHeight - 10) + 'px'; };
       r.onmouseleave = () => { tip.hidden = true; cur.setAttribute('visibility', 'hidden'); }; });
   }
@@ -3722,7 +3733,7 @@ function evolucaoPracas(box, D, c) {
   box.querySelectorAll('[data-er]').forEach(tr => tr.onclick = () => { const id = tr.dataset.er; D.evSel = sel.includes(id) ? sel.filter(x => x !== id) : sel.concat(id).slice(-EV_CORES.length); re(); });
   const fi = box.querySelector('#evfiltro'); fi.oninput = () => { D.evFiltro = fi.value; const pos = fi.selectionStart; re(); const f2 = box.querySelector('#evfiltro'); f2.focus(); f2.setSelectionRange(pos, pos); };
   box.querySelector('#evx').onclick = () => baixarXlsx(`Evolucao_por_praca_${ano}_ate_${c.mes.slice(5, 7)}.xlsx`, { titulo: `Evolução por praça · ${MET[met]}`, sub: `${ano} até ${nomeMes(c.mes)} · variação sobre ${rotBase}`,
-    abas: [{ nome: 'Evolução por praça', linhas: L.map(x => Object.assign({ 'Praça': x.p.regiao, 'Parceiro': x.p.nome }, Object.fromEntries(meses.map((m, i) => [MES3[+m.mes.slice(5, 7) - 1], x.v[i] == null ? null : +x.v[i].toFixed(2)])), { 'Variação R$': x.d == null ? null : +x.d.toFixed(2), 'Variação %': x.pc == null ? null : +(x.pc * 100).toFixed(1) })) }] });
+    abas: [{ nome: 'Evolução por praça', linhas: L.map(x => Object.assign({ 'Praça': x.p.regiao, 'Parceiro': x.p.nome, 'Trocas de parceiro': trocas(x.id).map(t => `${MES3[+meses[t.i].mes.slice(5, 7) - 1]}: ${t.de.nome} (${t.de.razao_social}) → ${t.para.nome} (${t.para.razao_social})`).join('; ') }, Object.fromEntries(meses.map((m, i) => [MES3[+m.mes.slice(5, 7) - 1], x.v[i] == null ? null : +x.v[i].toFixed(2)])), { 'Variação R$': x.d == null ? null : +x.d.toFixed(2), 'Variação %': x.pc == null ? null : +(x.pc * 100).toFixed(1) })) }] });
 }
 
 // Acumulado do ano e projeção: realizado dos meses fechados + previsto (calendarizado) dos que faltam
