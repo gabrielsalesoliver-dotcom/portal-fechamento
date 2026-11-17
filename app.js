@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.17-0930';
+const VERSAO = '2026.11.17-0800';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4098,7 +4098,7 @@ const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLO
   [/\bGSM\b/, QUINZ], [/REDESPACHO|TRANSFER/, 'Redespacho / transferência']];
 // clientes de malote que vieram lançados como extra: ficam fora do custo de spot (aparecem à parte)
 // atendimentos de malote além do contrato (2ª visita de ponto mensal, Crefisa, "Atendimento extra"): composição própria
-const NAO_SPOT = new Set(['Grupo Dass', 'Carmen Steffens', 'Vivara', 'Coopercargo', 'Embracon', QUINZ, 'Ajustes de malote e operacionais']);
+const NAO_SPOT = new Set(['Grupo Dass', 'Carmen Steffens', 'Vivara', 'Coopercargo', 'Embracon', 'Lider', QUINZ, 'Ajustes de malote e operacionais']);
 // linhas "GSM" das planilhas: só Anjos (SC) e Cta (Curitiba) são entregas extras de spot (sem cliente informado); o resto é ajuste de malote, taxa ou acerto
 const GSM_SPOT = /^(anjos|cta)$/i;
 const GEN_SPOT = /^(OUTRO|OUTROS|SEM CLIENTE|SERVICO FORA DO UMOV|EXTRAS DO MES)?$/;
