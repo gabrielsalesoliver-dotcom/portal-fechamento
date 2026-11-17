@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.17-0826';
+const VERSAO = '2026.11.17-1135';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3254,7 +3254,7 @@ function projecaoCEO(box, D, proj, valorOp) {
   const kpi = (r, v, s) => `<div style="flex:1;min-width:170px;border:1px solid var(--rule);border-radius:10px;padding:12px 14px;background:var(--surface)"><span style="font-size:12px;color:var(--muted)">${r}</span><b style="display:block;font-size:22px">${v}</b><span style="font-size:12px;color:var(--muted)">${s}</span></div>`;
   const tab = (ls) => `<div class="tabela"><table><thead><tr><th>Mês</th><th>Origem</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Descontos</th><th class="n">Total</th></tr></thead><tbody>
     ${ls.map(x => `<tr><td><b>${nomeMes(x.mes)}</b>${x.du ? `<br><span class="nota">${x.du} dias úteis</span>` : ''}</td><td><span class="pill ${x.origem === 'Realizado' ? 'escuro' : ''}">${x.origem}</span></td><td class="n">${x.fixo == null ? '—' : BRL(x.fixo)}</td><td class="n">${x.fixo == null ? BRL(x.varv) + '<br><span class="nota">malote total</span>' : BRL(x.varv)}</td><td class="n">${BRL(x.kits)}</td><td class="n">${BRL(x.desc)}</td><td class="n"><b>${BRL(x.total)}</b></td></tr>`).join('')}
-    </tbody><tfoot><tr><td colspan="6"><b>Total</b></td><td class="n"><b>${BRL(sum(ls, 'total'))}</b></td></tr></tfoot></table></div>`;
+    </tbody><tfoot><tr><td colspan="2"><b>Total</b></td><td class="n"><b>${BRL(sum(ls, 'fixo'))}</b></td><td class="n"><b>${BRL(sum(ls, 'varv'))}</b><br><span class="nota">malote total ${BRL(sum(ls, 'fixo') + sum(ls, 'varv'))}</span></td><td class="n"><b>${BRL(sum(ls, 'kits'))}</b><br><span class="nota">${sum(ls, 'total') ? pctS(sum(ls, 'kits') / sum(ls, 'total')) : '—'} do total</span></td><td class="n"><b>${BRL(sum(ls, 'desc'))}</b></td><td class="n"><b>${BRL(sum(ls, 'total'))}</b></td></tr></tfoot></table></div>`;
   box.innerHTML = `<div class="linha" style="gap:10px;flex-wrap:wrap">
       ${kpi(`${ano} fechado (realizado + projeção)`, BRL(tot26), `${realAno.length} meses realizados · ${restAno.length} projetados`)}
       ${kpi(`Restante de ${ano}`, BRL(sum(restAno, 'total')), restAno.map(x => MES3[+x.mes.slice(5, 7) - 1]).join(', ') || '—')}
