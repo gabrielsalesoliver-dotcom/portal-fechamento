@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.17-0805';
+const VERSAO = '2026.11.17-0820';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4089,7 +4089,7 @@ function reclassificarSpot(fech, linhas, parcs) {
 const ATX = 'Atendimentos extras';
 const QUINZ = 'Quinzena de malote';
 const CLI_SPOT = [[/SEM CLIENTE NA FATURA/, 'Sem cliente na fatura'], [/MAO COLORIDA/, 'Mão Colorida'], [/MOGK/, 'Mogk Máquinas'], [/LAV SERVICO/, 'LAV Serviço e Comunicação'], [/DUFRY/, 'Dufry'], [/PRINTMANN/, 'Printmann'], [/TRACK ?&? ?(AND |E )?FIELD|TRACKFIELD|\bTRACK\b/, 'Track&Field'], [/VIVARA/, 'Vivara'], [/MASSEI|LEADEC|\bJSL\b|OUTBACK|SODEXO|\bYPE\b|QUIMICA AMPARO/, 'Massei'], [/UNIDAS|BONECO|PEN ?DRIVE/, 'Unidas'], [/LOCALIZA/, 'Localiza'], [/AMALFIS|TELECOMUNICA|CLARO/, 'Amalfis'],
-  [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG|\bMSL COMERCIO|L N DA SILVA|\bS\.? ?V\.? ?C\.? ?LASER/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA|^ATENDIMENTOS? EXTRA|^ATENDIMENTOS?\b/, 'Atendimentos extras'], [/SHIMADA/, 'Shimada'],
+  [/\bMAC\b|ELEGANCIA/, 'MAC'], [/SEPHORA/, 'Sephora'], [/COMBAG|\bMSL COMERCIO|L N DA SILVA|ECO ?BAG|\bS\.? ?V\.? ?C\.? ?LASER/, 'Combag'], [/SMART ?FIT/, 'Smart Fit'], [/CREFISA|^ATENDIMENTOS? EXTRA|^ATENDIMENTOS?\b/, 'Atendimentos extras'], [/SHIMADA/, 'Shimada'],
   [/AVELINO/, 'Avelino'], [/\bCIEE\b/, 'CIEE'], [/DAYCOVAL/, 'Daycoval'], [/ASSAI/, 'Assaí'], [/\bDASS\b/, 'Grupo Dass'],
   [/PEPPERONE/, 'Pepperone'], [/IFOOD/, 'iFood'], [/S\.? ?V\.? ?C\.? LASER/, 'SVC Laser'], [/\bZIO\b/, 'Zio Brindes'], [/\bARG\b/, 'ARG'],
   [/PRO VERDE/, 'Pro Verde'], [/ROAR/, 'Roar'], [/PERSONAL BRINDES/, '153 Personal'], [/IDEIA E COSTURA/, 'Ideia e Costura'],
