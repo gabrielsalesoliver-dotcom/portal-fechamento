@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.16-1710';
+const VERSAO = '2026.11.17-0930';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2621,7 +2621,7 @@ async function formNFAdi(file, c, a) {
     } catch (e) { $('#na-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF do adiantamento'; } };
 }
 
-async function formNF(file, c, sugerido, anexos = []) {
+async function formNF(file, c, sugerido, anexos = [], pre = null) {
   const box = $('#nfform');
   if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie a NF em PDF (ou foto JPG/PNG).</div>'; return; }
   box.innerHTML = '<div class="carregando" style="padding:10px 0" id="nf-lendo">Lendo a NF…</div>';
@@ -2635,6 +2635,7 @@ async function formNF(file, c, sugerido, anexos = []) {
   }
   const hoje = new Date().toISOString().slice(0, 10);
   const cad = digitos(S.parc.cnpj);
+  if (pre && !lido.numero && pre.numero) lido.numero = pre.numero;
   const ck = { numero: !!lido.numero, data: !!lido.data, cnpj: !!lido.cnpj_parceiro_no_pdf, tomador: !!lido.tomador_gsm, valor: lido.valor_confere === true };
   const ok = ck.numero && ck.cnpj && ck.tomador && ck.valor; // a data de emissão é livre (há parceiro que emite depois ou com vencimento à frente)
   const linha = (rot, okk, val, msgRuim, okTxt = 'Confere') => `<tr><td>${rot}</td><td><b>${val || '—'}</b></td><td>${okk ? `<span class="pill escuro">${okTxt}</span>` : `<span class="pill alerta">${msgRuim}</span>`}</td></tr>`;
@@ -2705,21 +2706,28 @@ async function formNFMulti(files, c, alvo) {
     let t = ''; try { if (/\.pdf$/i.test(f.name)) t = String(await textoPDF(f) || ''); } catch (er) { t = ''; }
     const tt = t.replace(/\s+/g, ' ');
     const boleto = /boleto/i.test(f.name) || (/Local\s+(de\s+)?Pagamento/i.test(tt) && /Valor\s+(do\s+)?Documento/i.test(tt) && !/FATURA\s+N[ºo°]?\s*:/i.test(tt));
+    const dacte = !boleto && (/dacte|\bct-?e\b/i.test(f.name) || /Documento\s+Auxiliar\s+do\s+Conhecimento\s+de\s+Transporte/i.test(tt));
     const l = lerNF(t, { cnpjParceiro: S.parc.cnpj });
     let valor = l.valor;
     const mFat = tt.match(new RegExp('Valor\\s+a\\s+pagar[^\\d]{0,80}?' + R.source, 'i')) || tt.match(new RegExp('VALOR\\s+TOTAL\\s+' + R.source, 'i'));
     if (!boleto && mFat) valor = moedaN(mFat[1]); else if (boleto && l.valores.length) valor = Math.max(...l.valores);
     const numFat = (tt.match(/FATURA\s*N\S{0,2}\s*:?\s*(\d[\d.\-\/]*)/i) || tt.match(/N\S{0,2}\s*do\s*Documento\s*:?\s*(\d[\d.\-\/]*)/i) || [])[1] || (!l.numero && (f.name.match(/(\d{4,}(?:-\d)?)/) || [])[1]) || '';
-    lidos.push({ f, boleto, texto: !!l.texto, numero: (numFat || l.numero || '').replace(/^0+(?=\d)/, ''), data: l.data || '', cnpj: l.cnpj || digitos(S.parc.cnpj), valor, tomador: !!l.tomador_gsm, cnpjOk: !!l.cnpj_parceiro_no_pdf });
+    lidos.push({ f, boleto, dacte, texto: !!l.texto, numero: (numFat || l.numero || '').replace(/^0+(?=\d)/, ''), data: l.data || '', cnpj: l.cnpj || digitos(S.parc.cnpj), valor, tomador: !!l.tomador_gsm, cnpjOk: !!l.cnpj_parceiro_no_pdf });
   }
-  const docs = lidos.filter(x => !x.boleto); const bols = lidos.filter(x => x.boleto);
-  if (docs.length <= 1) { const d = docs[0] || lidos[0]; formNF(d.f, c, alvo, files.filter(x => x !== d.f)); return; }
+  // DACTE/CT-e e cópias com o mesmo número são comprovantes da fatura, não outro pagamento
+  let docs = lidos.filter(x => !x.boleto && !x.dacte).sort((x, y) => (/fatura|nf/i.test(y.f.name) ? 1 : 0) - (/fatura|nf/i.test(x.f.name) ? 1 : 0));
+  const bols = lidos.filter(x => x.boleto); const apoio = lidos.filter(x => x.dacte);
+  const vistos = new Set(); docs = docs.filter(d => { const k = digitos(d.numero || ''); if (k && vistos.has(k)) { apoio.push(d); return false; } if (k) vistos.add(k); return true; });
+  if (!docs.length && apoio.length) docs.push(apoio.shift());
+  if (docs.length <= 1) { const d = docs[0] || lidos[0]; formNF(d.f, c, alvo, files.filter(x => x !== d.f), { numero: d.numero }); return; }
   // pareia boleto ↔ documento pelo valor
   const usados = new Set(); bols.forEach(b => { const k = docs.findIndex((x, j) => !usados.has(j) && x.valor != null && b.valor != null && Math.abs(x.valor - b.valor) < 0.01); b.par = k; if (k >= 0) usados.add(k); });
+  const nBol = bols.length;
+  apoio.forEach(x => { const k = docs.findIndex(d => digitos(d.numero || '') && digitos(d.numero || '') === digitos(x.numero || '')); x.par = k >= 0 ? k : 0; x.apoio = true; bols.push(x); });
   const desenha = () => {
     const soma = docs.reduce((a, d) => a + (Number(d.valor) || 0), 0); const okSoma = Math.abs(soma - alvo) < 0.01;
     box.innerHTML = `<div class="confirma"><b>${docs.length} documentos para enviar · cada um vira uma linha de pagamento</b>
-      <span class="nota">O portal separou ${docs.length} NF/fatura(s) e ${bols.length} boleto(s). Cada boleto fica anexado ao documento de mesmo valor. Confira número, emissão e valor de cada um.</span>
+      <span class="nota">O portal separou ${docs.length} NF/fatura(s), ${nBol} boleto(s)${apoio.length ? ` e ${apoio.length} comprovante(s) (DACTE/CT-e)` : ''}. Cada boleto fica anexado ao documento de mesmo valor. Confira número, emissão e valor de cada um.</span>
       <div class="tabela"><table><thead><tr><th>Arquivo</th><th>Número</th><th>Emissão</th><th>CNPJ emitente</th><th class="n">Valor (R$)</th><th>Boleto</th></tr></thead><tbody>
       ${docs.map((d, i) => `<tr><td>${esc(d.f.name)}${!d.tomador && d.texto ? ' <span class="pill alerta">GSM não aparece como tomador</span>' : ''}</td>
         <td><input class="peq" data-m="numero" data-i="${i}" value="${esc(d.numero)}" style="width:110px"></td>
@@ -2728,7 +2736,7 @@ async function formNFMulti(files, c, alvo) {
         <td class="n"><input class="peq" data-m="valor" data-i="${i}" value="${d.valor != null ? Number(d.valor).toFixed(2).replace('.', ',') : ''}" style="width:110px;text-align:right"></td>
         <td>${bols.filter(b => b.par === i).map(b => `${esc(b.f.name)} <span class="nota">(${BRL2(b.valor)})</span>`).join('<br>') || '<span class="nota">—</span>'}</td></tr>`).join('')}
       </tbody><tfoot><tr><td colspan="4"><b>Soma</b> <span class="nota">· valor a emitir ${BRL2(alvo)}</span></td><td class="n"><b>${BRL2(soma)}</b></td><td>${okSoma ? '<span class="pill escuro">Confere</span>' : `<span class="pill alerta">Diferença ${BRL2(soma - alvo)}</span>`}</td></tr></tfoot></table></div>
-      ${bols.some(b => b.par < 0) ? `<div class="msg alerta">Boleto(s) sem documento de mesmo valor: ${bols.filter(b => b.par < 0).map(b => esc(b.f.name)).join(', ')}. Vão anexados ao primeiro documento.</div>` : ''}
+      ${bols.some(b => b.par < 0 && !b.apoio) ? `<div class="msg alerta">Boleto(s) sem documento de mesmo valor: ${bols.filter(b => b.par < 0).map(b => esc(b.f.name)).join(', ')}. Vão anexados ao primeiro documento.</div>` : ''}
       ${okSoma ? '' : '<div class="msg alerta">A soma dos documentos não bate com o valor a emitir. Corrija a leitura se errou; se enviar assim, a GSM vê o aviso.</div>'}
       <div class="linha"><button class="btn marca" id="nfm-env">Enviar ${docs.length} documentos</button><button class="btn sec" id="nfm-um">Enviar como uma NF só</button><button class="btn sec" id="nfm-canc">Cancelar</button></div><div id="nfm-msg"></div></div>`;
     box.querySelectorAll('input[data-m]').forEach(inp => inp.onchange = () => { const d = docs[+inp.dataset.i]; const k = inp.dataset.m;
@@ -2747,7 +2755,7 @@ async function formNFMulti(files, c, alvo) {
           const reg = await q(sb.rpc('registrar_nf', { p_comp: c.id, p_parceiro: S.previa ? S.parc.id : null, p_arquivo: path, p_numero: d.numero, p_cnpj: d.cnpj, p_valor: Number(d.valor), p_data: d.data || null,
             p_checagens: { texto: d.texto, ocr: false, cnpj_no_pdf: d.cnpjOk, tomador_gsm: d.tomador, numero_lido: d.numero || null, valor_lido: d.valor ?? null, multi: true, documentos: docs.length } }));
           const meus = bols.filter(x => x.par === i || (i === 0 && x.par < 0)); const lista = [];
-          for (const x of meus) { const p = pasta + `${Date.now()}_${safeName(x.f.name)}`; const u = await sb.storage.from('envios').upload(p, x.f); if (u.error) throw new Error(`Falha ao guardar ${x.f.name}: ${u.error.message}`); lista.push({ path: p, nome: x.f.name, tipo: 'Boleto' }); }
+          for (const x of meus) { const p = pasta + `${Date.now()}_${safeName(x.f.name)}`; const u = await sb.storage.from('envios').upload(p, x.f); if (u.error) throw new Error(`Falha ao guardar ${x.f.name}: ${u.error.message}`); lista.push({ path: p, nome: x.f.name, tipo: x.apoio ? 'DACTE' : 'Boleto' }); }
           if (lista.length) { const nid = reg?.id || (await q(sb.from('notas_fiscais').select('id').eq('arquivo_path', path).limit(1)))[0]?.id; if (nid) await q(sb.rpc('anexar_nf', { p_nf: nid, p_anexos: lista })); }
           d.enviado = true; feitos.push(d.numero);
         }
