@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-0900';
+const VERSAO = '2026.11.18-0945';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3784,51 +3784,75 @@ function blocoAno(box, D, c) {
 function ponte(box, D, c, ant) {
   const cur = D.fech.filter(f => f.competencia_id === c.id); const prv = ant ? D.fech.filter(f => f.competencia_id === ant.id) : [];
   if (!ant || !cur.length || !prv.length) { box.innerHTML = `<p class="nota">${!cur.length ? 'Este mês ainda não tem fechamento.' : 'Não há mês anterior para comparar.'}</p>`; return; }
-  const n = v => Number(v) || 0; const tot = r => valorOp(r, 'tudo');
+  const n = v => Number(v) || 0; const tot = r => valorOp(r, 'tudo'); const bruto = r => tot(r) - n(r.descontos);
+  const outr = r => tot(r) - n(r.malote) - n(r.kits) - n(r.atend_extra) - n(r.descontos);
   const pA = Object.fromEntries(prv.map(r => [r.parceiro_id, r])); const pC = Object.fromEntries(cur.map(r => [r.parceiro_id, r]));
   const cont = cur.filter(r => pA[r.parceiro_id]);
-  const comp = { malote: 0, prev: 0, val: 0, kits: 0, atx: 0, desc: 0, outros: 0 };
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p])); const nomeP = id => pm[id]?.regiao || '—';
   const prevDe = id => Object.fromEntries(D.prev.filter(f => f.competencia_id === id && f.previsto != null).map(f => [f.parceiro_id, n(f.previsto)]));
   const ppA = prevDe(ant.id), ppC = prevDe(c.id);
-  cont.forEach(r => { const a = pA[r.parceiro_id]; const id = r.parceiro_id;
-    comp.malote += n(r.malote) - n(a.malote); comp.kits += n(r.kits) - n(a.kits); comp.atx += n(r.atend_extra) - n(a.atend_extra); comp.desc += n(r.descontos) - n(a.descontos);
-    comp.outros += (tot(r) - n(r.malote) - n(r.kits) - n(r.atend_extra) - n(r.descontos)) - (tot(a) - n(a.malote) - n(a.kits) - n(a.atend_extra) - n(a.descontos)); });
-  const novos = cur.filter(r => !pA[r.parceiro_id]); const sairam = prv.filter(r => !pC[r.parceiro_id]);
+  const mA = MES3[+ant.mes.slice(5, 7) - 1], mC = MES3[+c.mes.slice(5, 7) - 1];
+  // contribuição de cada parceiro em cada passo (para a dica ao passar o mouse)
+  const P = { prev: [], val: [], kits: [], atx: [], outros: [], desc: [], novos: [], sairam: [] };
+  cont.forEach(r => { const a = pA[r.parceiro_id], id = r.parceiro_id; const dMal = n(r.malote) - n(a.malote);
+    // validação: quanto o malote pago ficou abaixo do previsto (economia) mudou de um mês para o outro
+    const val = ppA[id] != null && ppC[id] != null && fechado(r) && fechado(a) ? -((ppC[id] - n(r.malote)) - (ppA[id] - n(a.malote))) : 0;
+    P.val.push([id, val]); P.prev.push([id, dMal - val]); P.kits.push([id, n(r.kits) - n(a.kits)]); P.atx.push([id, n(r.atend_extra) - n(a.atend_extra)]); P.outros.push([id, outr(r) - outr(a)]); });
+  cur.forEach(r => P.desc.push([r.parceiro_id, n(r.descontos)]));
+  cur.filter(r => !pA[r.parceiro_id]).forEach(r => P.novos.push([r.parceiro_id, bruto(r)]));
+  prv.filter(r => !pC[r.parceiro_id]).forEach(r => P.sairam.push([r.parceiro_id, -bruto(r)]));
+  const S_ = k => P[k].reduce((a, [, v]) => a + v, 0);
   const vA = prv.reduce((a, r) => a + tot(r), 0), vC = cur.reduce((a, r) => a + tot(r), 0);
-  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const dA = prv.reduce((a, r) => a + n(r.descontos), 0), vAb = vA - dA;
   const gA = ganhosMes(D, ant.id), gC = ganhosMes(D, c.id);
-  // malote separado em economia da validação (a mesma da Visão geral) e o resto (carteira, volume, preço)
-  comp.val = -(gC.val - gA.val); comp.prev = comp.malote - comp.val; comp.malote = 0;
-  const ECO = new Set(['Validação do malote', 'Descontos']);
-  const passos = [['Malote: carteira e volume', comp.prev], ['Validação do malote', comp.val], ['Kits/Spot', comp.kits], [ATX, comp.atx], ['Descontos', comp.desc], ['Outros ajustes', comp.outros], [`Parceiros novos (${novos.length})`, novos.reduce((a, r) => a + tot(r), 0)], [`Parceiros que saíram (${sairam.length})`, -sairam.reduce((a, r) => a + tot(r), 0)]].filter(x => Math.abs(x[1]) >= 0.5);
-  const barras = [{ rot: MES3[+ant.mes.slice(5, 7) - 1], ini: 0, fim: vA, tipo: 'total' }]; let acc = vA;
-  passos.forEach(([r, v]) => { barras.push({ rot: r, ini: acc, fim: acc + v, tipo: ECO.has(r) && v < 0 ? 'eco' : v >= 0 ? 'sobe' : 'desce', v }); acc += v; });
-  barras.push({ rot: MES3[+c.mes.slice(5, 7) - 1], ini: 0, fim: vC, tipo: 'total' });
-  const lo = Math.min(...barras.filter(b => b.tipo !== 'total').map(b => Math.min(b.ini, b.fim)), vA, vC) * 0.97;
+  const DEF = { prev: ['Malote: carteira e volume', 'Variação do malote sem o efeito da validação: pontos que entraram ou saíram, frequência, preço.'],
+    val: ['Validação do malote', 'Mudança da economia por pagar só o realizado (previsto − malote pago), parceiros que fecharam nos dois meses.'],
+    kits: ['Kits/Spot', 'Variação de kits e spots.'], atx: [ATX, 'Visitas além do contrato.'], outros: ['Outros ajustes', 'Serviços fora do Umov, ajustes e adiantamentos já pagos.'],
+    desc: [`Descontos de ${mC}`, `Todos os descontos aplicados em ${mC} (repasses, penalidades, ajustes e antecipações).`],
+    novos: [`Parceiros novos (${P.novos.length})`, `Parceiros com fechamento em ${mC} e não em ${mA} (sem descontos).`], sairam: [`Sem fechamento em ${mC} (${P.sairam.length})`, `Parceiros que fecharam em ${mA} e ainda não têm fechamento em ${mC} (sem descontos).`] };
+  // vermelho (aumenta) de um lado, verde (reduz) do outro; descontos sempre por último
+  const passos = Object.keys(DEF).filter(k => k !== 'desc').map(k => ({ k, v: S_(k) })).filter(x => Math.abs(x.v) >= 0.5)
+    .sort((a, b) => (b.v > 0) - (a.v > 0) || Math.abs(b.v) - Math.abs(a.v));
+  if (Math.abs(S_('desc')) >= 0.5) passos.push({ k: 'desc', v: S_('desc') });
+  const barras = [{ rot: `${mA} sem descontos`, ini: 0, fim: vAb, tipo: 'total', k: 'iniA' }]; let acc = vAb;
+  passos.forEach(x => { barras.push({ rot: DEF[x.k][0], ini: acc, fim: acc + x.v, tipo: x.v >= 0 ? 'sobe' : 'eco', v: x.v, k: x.k }); acc += x.v; });
+  barras.push({ rot: mC, ini: 0, fim: vC, tipo: 'total', k: 'fimC' });
+  const lo = Math.min(...barras.filter(b => b.tipo !== 'total').map(b => Math.min(b.ini, b.fim)), vAb, vC) * 0.97;
   const hi = Math.max(...barras.map(b => Math.max(b.ini, b.fim))) * 1.01;
-  const W = 900, H = 280, L = 70, R = 12, T = 24, B = 54; const bw = (W - L - R) / barras.length; const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  const cor = { total: 'var(--ink)', sobe: 'var(--brand)', desce: 'var(--muted)', eco: 'var(--eco)' };
+  const W = 900, H = 290, L = 70, R = 12, T = 24, B = 58; const bw = (W - L - R) / barras.length; const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const cor = { total: 'var(--ink)', sobe: 'var(--brand)', eco: 'var(--eco)' };
+  const sinal = v => (v > 0 ? '+' : v < 0 ? '−' : '') + BRL(Math.abs(v));
   const dG = gC.total - gA.total;
   box.innerHTML = `<div class="kpis" style="margin:0 0 6px">
-    <div class="kpi eco"><small>Economia gerada em ${MES3[+ant.mes.slice(5, 7) - 1]}</small><b>${BRL(gA.total)}</b><span>validação ${kE(gA.val)} · descontos ${kE(gA.desc)} · save ${kE(gA.save)}</span></div>
-    <div class="kpi eco"><small>Economia gerada em ${MES3[+c.mes.slice(5, 7) - 1]}</small><b>${BRL(gC.total)}</b><span>validação ${kE(gC.val)} · descontos ${kE(gC.desc)} · save ${kE(gC.save)}</span></div>
+    <div class="kpi eco"><small>Economia gerada em ${mA}</small><b>${BRL(gA.total)}</b><span>validação ${kE(gA.val)} · descontos ${kE(gA.desc)} · save ${kE(gA.save)}</span></div>
+    <div class="kpi eco"><small>Economia gerada em ${mC}</small><b>${BRL(gC.total)}</b><span>validação ${kE(gC.val)} · descontos ${kE(gC.desc)} · save ${kE(gC.save)}</span></div>
     <div class="kpi ${dG >= 0 ? 'eco' : 'alerta'}"><small>Diferença na economia</small><b>${(dG > 0 ? '+' : '') + BRL(dG)}</b><span>${dG >= 0 ? 'a GSM economizou mais que no mês anterior' : 'a GSM economizou menos que no mês anterior'}</span></div></div>
-  <p class="sub" style="margin:0">Variação total do custo: <b>${(vC - vA > 0 ? '+' : '') + BRL(vC - vA)}</b> (${pct(vC / vA - 1)}). Vermelho aumenta o custo; cinza reduz; <b style="color:var(--eco)">verde é economia</b> (mais validação do malote ou mais descontos). O malote está separado em validação (a variação da economia por pagar só o realizado, a mesma da Visão geral) e carteira e volume (o resto: pontos que entraram ou saíram, frequência e preço). O eixo começa em ${BRLk(lo)} para mostrar as diferenças.</p>
-  <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:620px;height:auto;display:block" role="img" aria-label="Ponte de variação">
+  <p class="sub" style="margin:0">Variação do custo: <b>${sinal(vC - vA)}</b> (${pct(vC / vA - 1)}), de ${BRL(vA)} em ${mA} para ${BRL(vC)} em ${mC}. A cascata parte de ${mA} <b>sem descontos</b> (${BRL(vAb)}) para mostrar <b style="color:var(--eco)">todos os descontos de ${mC} (${BRL(S_('desc'))})</b>. <b style="color:var(--brand-deep)">Vermelho aumenta</b> o custo, <b style="color:var(--eco)">verde reduz</b>. Passe o mouse em cada barra para ver os parceiros.</p>
+  <div style="position:relative" id="pwrap"><div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:680px;height:auto;display:block" role="img" aria-label="Ponte de variação">
     ${[lo, (lo + hi) / 2, hi].map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="Poppins">${BRLk(t)}</text>`).join('')}
-    ${barras.map((b, i) => { const x = L + i * bw + bw * 0.18, w = bw * 0.64; const top = y(Math.max(b.ini, b.fim)), bot = b.tipo === 'total' ? y(lo) : y(Math.min(b.ini, b.fim));
+    ${barras.map((b, i) => { const x = L + i * bw + bw * 0.16, w = bw * 0.68; const top = y(Math.max(b.ini, b.fim)), bot = b.tipo === 'total' ? y(lo) : y(Math.min(b.ini, b.fim));
       const lbl = b.tipo === 'total' ? BRLk(b.fim) : (b.v > 0 ? '+' + BRLk(b.v) : '−' + BRLk(-b.v));
-      return `<rect x="${x}" y="${top}" width="${w}" height="${Math.max(2, bot - top)}" rx="3" fill="${cor[b.tipo]}"><title>${esc(b.rot)}: ${b.tipo === 'total' ? BRL(b.fim) : BRL(b.v)}</title></rect>
+      return `<g data-pi="${i}" style="cursor:pointer"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B + 40}" fill="transparent"/><rect x="${x}" y="${top}" width="${w}" height="${Math.max(2, bot - top)}" rx="3" fill="${cor[b.tipo]}"/>
         ${i < barras.length - 1 ? `<line x1="${x + w}" x2="${x + bw}" y1="${y(b.fim)}" y2="${y(b.fim)}" stroke="var(--on-dark)" stroke-dasharray="3 3"/>` : ''}
         <text x="${x + w / 2}" y="${top - 6}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)" font-family="Poppins">${lbl}</text>
-        <foreignObject x="${L + i * bw}" y="${H - B + 6}" width="${bw}" height="${B - 6}"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12px Poppins,sans-serif;color:var(--muted);text-align:center;line-height:1.2">${esc(b.rot)}</div></foreignObject>`; }).join('')}
-  </svg></div>
+        <foreignObject x="${L + i * bw}" y="${H - B + 6}" width="${bw}" height="${B - 6}"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12px Poppins,sans-serif;color:var(--muted);text-align:center;line-height:1.2">${esc(b.rot)}</div></foreignObject></g>`; }).join('')}
+  </svg></div><div id="ptip" hidden style="position:absolute;pointer-events:none;background:var(--panel);color:var(--on-panel);font-size:13px;padding:10px 12px;border-radius:8px;z-index:3;max-width:360px;box-shadow:0 4px 18px rgba(0,0,0,.25)"></div></div>
   ${(() => { const dif = cont.map(r => ({ p: pm[r.parceiro_id] || {}, d: tot(r) - tot(pA[r.parceiro_id]) })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 8);
-    return `<div class="tabela"><table><thead><tr><th>Maiores variações por parceiro</th><th class="n">${MES3[+ant.mes.slice(5, 7) - 1]}</th><th class="n">${MES3[+c.mes.slice(5, 7) - 1]}</th><th class="n">Diferença</th></tr></thead><tbody>
-    ${dif.map(x => `<tr><td>${esc(x.p.regiao || '—')}</td><td class="n">${BRL(tot(pA[x.p.id]))}</td><td class="n">${BRL(tot(pC[x.p.id]))}</td><td class="n" style="color:${x.d > 0 ? 'var(--brand-deep)' : 'var(--ink)'}">${(x.d > 0 ? '+' : '') + BRL(x.d)}</td></tr>`).join('')}
-    ${novos.map(r => `<tr><td>${esc((pm[r.parceiro_id] || {}).regiao || '—')} <span class="pill">novo</span></td><td class="n">—</td><td class="n">${BRL(tot(r))}</td><td class="n">+${BRL(tot(r))}</td></tr>`).join('')}
-    ${sairam.map(r => `<tr><td>${esc((pm[r.parceiro_id] || {}).regiao || '—')} <span class="pill">saiu</span></td><td class="n">${BRL(tot(r))}</td><td class="n">—</td><td class="n">−${BRL(tot(r))}</td></tr>`).join('')}
+    return `<div class="tabela"><table><thead><tr><th>Maiores variações por parceiro</th><th class="n">${mA}</th><th class="n">${mC}</th><th class="n">Diferença</th></tr></thead><tbody>
+    ${dif.map(x => `<tr><td>${esc(x.p.regiao || '—')}</td><td class="n">${BRL(tot(pA[x.p.id]))}</td><td class="n">${BRL(tot(pC[x.p.id]))}</td><td class="n" style="color:${x.d > 0 ? 'var(--brand-deep)' : 'var(--eco)'}">${(x.d > 0 ? '+' : '') + BRL(x.d)}</td></tr>`).join('')}
+    ${P.novos.map(([id, v]) => `<tr><td>${esc(nomeP(id))} <span class="pill">novo</span></td><td class="n">—</td><td class="n">${BRL(tot(pC[id]))}</td><td class="n" style="color:var(--brand-deep)">+${BRL(tot(pC[id]))}</td></tr>`).join('')}
+    ${P.sairam.map(([id]) => `<tr><td>${esc(nomeP(id))} <span class="pill">sem fechamento em ${mC}</span></td><td class="n">${BRL(tot(pA[id]))}</td><td class="n">—</td><td class="n" style="color:var(--eco)">−${BRL(tot(pA[id]))}</td></tr>`).join('')}
     </tbody></table></div>`; })()}`;
+  const tip = box.querySelector('#ptip'), wrap = box.querySelector('#pwrap');
+  const conteudo = b => {
+    if (b.k === 'iniA') return `<b>${mA}</b><br>Custo do mês: ${BRL(vA)}<br>Descontos de ${mA}: ${BRL(dA)}<br>Sem descontos: <b>${BRL(vAb)}</b>`;
+    if (b.k === 'fimC') return `<b>${mC}</b><br>Custo do mês: <b>${BRL(vC)}</b><br>Descontos de ${mC}: ${BRL(S_('desc'))}<br>${sinal(vC - vA)} sobre ${mA} (${pct(vC / vA - 1)})`;
+    const ls = P[b.k].filter(([, v]) => Math.abs(v) >= 0.5).sort((x, z) => Math.abs(z[1]) - Math.abs(x[1])); const sobe = ls.filter(([, v]) => v > 0).reduce((a, [, v]) => a + v, 0), desce = ls.filter(([, v]) => v < 0).reduce((a, [, v]) => a + v, 0);
+    return `<b>${esc(DEF[b.k][0])}: ${sinal(b.v)}</b><br><span style="color:var(--on-dark)">${esc(DEF[b.k][1])}</span>${ls.length > 1 && sobe && desce ? `<br><span style="color:#F0C2CC">aumentos ${sinal(sobe)}</span> · <span style="color:#8FE0B0">reduções ${sinal(desce)}</span>` : ''}
+      <div style="margin-top:6px;display:grid;grid-template-columns:1fr auto;gap:2px 14px">${ls.slice(0, 10).map(([id, v]) => `<span>${esc(nomeP(id))}</span><span style="text-align:right;color:${v > 0 ? '#F0C2CC' : '#8FE0B0'}">${sinal(v)}</span>`).join('')}</div>${ls.length > 10 ? `<span style="color:var(--on-dark)">e mais ${ls.length - 10} parceiro(s)</span>` : ''}`; };
+  box.querySelectorAll('[data-pi]').forEach(g => { g.onmousemove = e => { tip.innerHTML = conteudo(barras[+g.dataset.pi]); tip.hidden = false; const r = wrap.getBoundingClientRect();
+      tip.style.left = Math.max(0, Math.min(e.clientX - r.left + 14, r.width - tip.offsetWidth - 4)) + 'px'; tip.style.top = Math.max(0, e.clientY - r.top - tip.offsetHeight - 12) + 'px'; };
+    g.onmouseleave = () => { tip.hidden = true; }; });
 }
 
 // Custo por atendimento e execução do calendarizado (meses com Umov no portal)
