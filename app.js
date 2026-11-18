@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1700';
+const VERSAO = '2026.11.18-1815';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4627,7 +4627,7 @@ function desenharOperacao(el) {
   const fP = (R.filtros?.parceiros || []).sort((a, b) => a.nome.localeCompare(b.nome)), fC = (R.filtros?.clientes || []).sort();
   const opTxt = (cat) => { const m = ko['malote_' + cat] || 0, kt = ko['kit_' + cat] || 0; return kt ? `${fmtN(m)} malote · ${fmtN(kt)} kits` : ''; };
   el.innerHTML = `
-  <div class="topo"><div><h1>Operação ao vivo</h1><p>Atendimentos do Umov lidos pelo robô de hora em hora. Atualizado em <b>${fmtDH(R.atualizado)}</b>.${R.sem_detalhe ? ` <span class="pill alerta">${fmtN(R.sem_detalhe)} atendimentos do período ainda sendo carregados</span>` : ''}</p></div>
+  <div class="topo"><div><h1>Operação ao vivo</h1><p>Atendimentos do Umov lidos pelo robô a cada 2 horas. Atualizado em <b>${fmtDH(R.atualizado)}</b>.${R.sem_detalhe ? ` <span class="pill alerta">${fmtN(R.sem_detalhe)} atendimentos do período ainda sendo carregados</span>` : ''}</p></div>
     <div class="linha" style="flex-wrap:wrap;gap:8px">
       <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${per.map(([kk, n]) => `<button type="button" data-oper="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.per === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
