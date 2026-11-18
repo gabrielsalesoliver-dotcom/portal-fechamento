@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1420';
+const VERSAO = '2026.11.18-1450';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4603,9 +4603,10 @@ async function vOperacao(el) {
   el = el || $('#main'); const O = S.oper || (S.oper = { per: 'hoje', parc: '', cli: '', lista: 'abertos', sort: ['aberto', -1], busca: '', bcli: '' });
   if (O.per !== 'custom') [O.de, O.ate] = periodoOp(O.per);
   el.innerHTML = '<div class="carregando">Carregando os atendimentos do Umov…</div>';
-  let R; try { R = await q(sb.rpc('umov_painel', { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null, p_cliente: O.cli || null })); }
+  const args = { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null, p_cliente: O.cli || null };
+  let R, PR; try { [R, PR] = await Promise.all([q(sb.rpc('umov_painel', args)), q(sb.rpc('umov_prev_real', args)).catch(e => ({ erro: e.message }))]); }
   catch (e) { el.innerHTML = `<div class="msg alerta">Não foi possível carregar: ${esc(e.message)}</div>`; return; }
-  O.R = R; desenharOperacao(el);
+  O.R = R; O.PR = PR; desenharOperacao(el);
 }
 function desenharOperacao(el) {
   const O = S.oper, R = O.R || {}; const k = R.kpi || {}, ko = R.kpi_op || {};
@@ -4634,6 +4635,7 @@ function desenharOperacao(el) {
     <div class="kpi ${k.atrasado ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${fmtN(k.atrasado || 0)}</b><span>dias anteriores sem baixa</span></div>
     <div class="kpi neutro"><small>Cancelados</small><b>${fmtN(k.cancelado || 0)}</b><span>no período</span></div>
   </div>
+  <section class="bloco"><h2>Previsto x Realizado · Malote</h2><p class="sub"><b>Previsto</b>: carteira de pontos cadastrada hoje no portal (frequência de cada ponto nos dias úteis do período; quinzenal e mensal rateados pelos dias úteis do mês). <b>Realizado</b>: atendimentos retornados de campo no Umov, lidos pelo robô. Kits ficam fora.</p><div id="op-pr"></div></section>
   ${umDia ? '' : `<section class="bloco"><h2>Dia a dia</h2><div id="op-graf" style="position:relative"></div></section>`}
   <section class="bloco"><h2>Por parceiro</h2><p class="sub">Clique no parceiro para filtrar a tela. Ordene pelas colunas.</p><div id="op-parcs"></div></section>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:22px">
@@ -4653,7 +4655,7 @@ function desenharOperacao(el) {
   el.querySelector('#op-bcli').oninput = e => { O.bcli = e.target.value; clientesOp(el); };
   el.querySelector('#op-xls').onclick = () => exportarOp().catch(e => alertaTopo(e.message));
   if (!umDia) graficoOp(el.querySelector('#op-graf'), R.dia || []);
-  parceirosOp(el); clientesOp(el); listaOp(el);
+  parceirosOp(el); clientesOp(el); listaOp(el); prevRealOp(el);
   const oc = R.ocorrencias || []; const mx = Math.max(1, ...oc.map(o => o.n));
   el.querySelector('#op-oc').innerHTML = oc.length ? oc.map(o => `<div style="display:grid;grid-template-columns:minmax(120px,190px) 1fr 54px;gap:8px;align-items:center;margin:5px 0;font-size:14px">
       <span title="${o.parceiros} parceiro(s)">${esc(o.status)}</span><span style="background:var(--rule-soft);border-radius:4px;height:14px"><span style="display:block;height:14px;border-radius:4px;background:var(--alert);width:${100 * o.n / mx}%"></span></span><b class="num" style="text-align:right">${fmtN(o.n)}</b></div>`).join('') : '<p class="nota">Nenhuma ocorrência no período.</p>';
@@ -4713,6 +4715,9 @@ function graficoOp(box, dias) {
 async function exportarOp() {
   const O = S.oper, R = O.R; const per = O.de === O.ate ? fmtD(O.de) : `${fmtD(O.de)} a ${fmtD(O.ate)}`;
   const buf = await planilhaPadrao({ titulo: 'Operação ao vivo · Umov', sub: per, abas: [
+    { nome: 'Previsto x Realizado', linhas: ((O.PR || {}).parceiros || []).map(p => ({ Parceiro: p.nome, Pontos: p.pontos, Previsto: Math.round(p.prev), Realizado: p.real, 'Atingido %': p.prev ? Math.round(100 * p.real / p.prev) : null, Ocorrencias: p.oc, 'Pontos sem atendimento': p.sem_atend, 'Fora da carteira': p.fora })) },
+    { nome: 'Pontos fora do previsto', linhas: ((O.PR || {}).pontos || []).map(r => ({ Ponto: r.cod_int, Cliente: r.cliente, Loja: r.loja, Cidade: r.cidade, UF: r.uf, Frequencia: r.frequencia, Parceiro: r.parceiro, Previsto: r.prev, Realizado: r.real, Ocorrencias: r.oc, 'Sem baixa': r.ab })) },
+    { nome: 'Fora da carteira', linhas: ((O.PR || {}).fora_lista || []).map(r => ({ Ponto: r.cod_int, Local: r.local, Cliente: r.cliente, Cidade: r.cidade, UF: r.uf, Parceiro: r.parceiro, Atendimentos: r.real })) },
     { nome: 'Parceiros', linhas: (R.parceiros || []).map(p => ({ Parceiro: p.nome, Programados: p.realizado + p.ocorrencia + p.aberto, Realizados: p.realizado, Ocorrencias: p.ocorrencia, 'Falta baixa': p.aberto_hoje, Atrasados: p.atrasado, Kits: p.kits })) },
     { nome: 'Clientes', linhas: (R.clientes || []).map(c => ({ Cliente: c.nome, Programados: c.realizado + c.ocorrencia + c.aberto, Realizados: c.realizado, Ocorrencias: c.ocorrencia, 'Falta baixa': c.aberto, Atrasados: c.atrasado })) },
     { nome: 'Falta baixa', linhas: (R.abertos || []).map(r => ({ Data: r.data, Situacao: r.situacao, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade, UF: r.uf, Parceiro: r.parceiro, Agente: r.agente })) },
@@ -4800,4 +4805,82 @@ function desenharTorre() {
   box.querySelectorAll('[data-tra]').forEach(b => b.onclick = async () => { const on = b.dataset.on === '1';
     if (!on && !confirm('Pausar este robô? Ele para de rodar até ser ativado de novo.')) return; b.disabled = true;
     try { await q(sb.rpc('robo_ativar', { p_jobid: +b.dataset.tra, p_ativo: on })); vTorre(); atualizarBadges(true); } catch (e) { b.disabled = false; alertaTopo(e.message); } });
+}
+
+// Previsto (carteira do portal) x Realizado (Umov)
+function prevRealOp(el) {
+  const O = S.oper, P = O.PR || {}, box = el.querySelector('#op-pr'); if (!box) return;
+  if (P.erro) { box.innerHTML = `<div class="msg alerta">${esc(P.erro)}</div>`; return; }
+  const t = P.tot || {}; const n1 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+  const pc = (a, b) => b ? Math.round(100 * a / b) + '%' : '—';
+  const hoje = P.hoje; const dias = P.dia || []; const ateOntem = dias.filter(d => d.d < hoje);
+  const pO = ateOntem.reduce((a, d) => a + d.prev, 0), rO = ateOntem.reduce((a, d) => a + d.real, 0);
+  const temHoje = dias.some(d => d.d === hoje);
+  O.prSort = O.prSort || ['prev', -1]; O.prLista = O.prLista || 'sem'; O.prBusca = O.prBusca || '';
+  box.innerHTML = `<div class="kpis" style="margin-top:6px">
+      <div class="kpi neutro"><small>Previsto · carteira</small><b>${n1(t.prev)}</b><span>${fmtN(t.pontos)} pontos ativos</span></div>
+      <div class="kpi eco"><small>Realizado · Umov</small><b>${fmtN(t.real)}</b><span>${fmtN(t.oc)} com ocorrência · ${fmtN(t.ab)} sem baixa</span></div>
+      <div class="kpi ${t.prev && t.real / t.prev < .9 ? 'alerta' : 'eco'}"><small>Atingido</small><b>${pc(t.real, t.prev)}</b><span>${temHoje && ateOntem.length ? `até ontem: ${pc(rO, pO)} (hoje em andamento)` : temHoje ? 'hoje ainda em andamento' : 'do previsto'}</span></div>
+      <div class="kpi ${t.sem_atend ? 'alerta' : 'neutro'}"><small>Pontos sem atendimento</small><b>${fmtN(t.sem_atend)}</b><span>previsto ≥ 1 e nada no Umov</span></div>
+      <div class="kpi ${t.fora ? 'alerta' : 'neutro'}"><small>Fora da carteira</small><b>${fmtN(t.fora)}</b><span>atendimentos em ${fmtN(t.fora_pontos)} ponto(s) não cadastrados</span></div></div>
+    ${dias.length > 1 ? '<div id="op-prg" style="position:relative;margin-top:8px"></div>' : ''}
+    <h3 style="margin:18px 0 6px">Por parceiro</h3><div id="op-prp"></div>
+    <div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:18px"><h3 style="margin:0">Pontos</h3>
+      <div class="linha" style="gap:8px"><div style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['sem', 'Sem atendimento'], ['abaixo', 'Abaixo do previsto'], ['acima', 'Acima do previsto'], ['fora', 'Fora da carteira']].map(([k, n]) => `<button type="button" data-prl="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.prLista === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+      <input type="search" id="op-prb" placeholder="Buscar ponto, cliente, cidade" value="${esc(O.prBusca)}" style="min-height:40px;min-width:220px"></div></div><div id="op-prl" style="margin-top:10px"></div>`;
+  if (dias.length > 1) graficoPR(box.querySelector('#op-prg'), dias, hoje);
+  box.querySelectorAll('[data-prl]').forEach(b => b.onclick = () => { O.prLista = b.dataset.prl; prevRealOp(el); });
+  box.querySelector('#op-prb').oninput = e => { O.prBusca = e.target.value; listaPR(el); };
+  parcPR(el); listaPR(el);
+}
+function parcPR(el) {
+  const O = S.oper, P = O.PR || {}; const [sk, sd] = O.prSort; const n1 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+  const L = (P.parceiros || []).map(p => ({ ...p, nome: p.nome || '—', pr: p.prev ? p.real / p.prev : null, dif: p.real - p.prev }))
+    .sort((a, b) => (typeof a[sk] === 'string' ? a[sk].localeCompare(b[sk]) : (a[sk] ?? -1e9) - (b[sk] ?? -1e9)) * sd);
+  const col = [['nome', 'Parceiro'], ['pontos', 'Pontos', 1], ['prev', 'Previsto', 1], ['real', 'Realizado', 1], ['pr', '% atingido', 1], ['dif', 'Diferença', 1], ['oc', 'Ocorrências', 1], ['sem_atend', 'Pontos sem atend.', 1], ['fora', 'Fora da carteira', 1]];
+  const box = el.querySelector('#op-prp'); const sum = k => L.reduce((a, p) => a + (Number(p[k]) || 0), 0);
+  box.innerHTML = L.length ? `<div class="tabela" style="max-height:620px;overflow:auto"><table><thead><tr>${col.map(([k, n, num]) => `<th class="${num ? 'n' : ''}" data-prs="${k}" style="cursor:pointer;white-space:nowrap">${n}${sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>
+    ${L.map(p => `<tr data-prp="${p.id || ''}" style="cursor:pointer"><td>${esc(p.nome)}</td><td class="n">${fmtN(p.pontos)}</td><td class="n">${n1(p.prev)}</td><td class="n eco">${fmtN(p.real)}</td>
+      <td class="n"><b style="color:${p.pr == null ? 'inherit' : p.pr < .9 ? 'var(--alert)' : 'var(--eco)'}">${p.pr == null ? '—' : Math.round(p.pr * 100) + '%'}</b></td>
+      <td class="n" style="color:${p.dif < -0.5 ? 'var(--alert)' : 'inherit'}">${p.dif > 0 ? '+' : ''}${n1(p.dif)}</td><td class="n">${fmtN(p.oc)}</td>
+      <td class="n">${p.sem_atend ? `<span class="pill alerta">${fmtN(p.sem_atend)}</span>` : '0'}</td><td class="n">${p.fora ? fmtN(p.fora) : '0'}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td><b>Total (${L.length})</b></td><td class="n"><b>${fmtN(sum('pontos'))}</b></td><td class="n"><b>${n1(sum('prev'))}</b></td><td class="n"><b>${fmtN(sum('real'))}</b></td><td class="n"><b>${sum('prev') ? Math.round(100 * sum('real') / sum('prev')) + '%' : '—'}</b></td><td class="n"><b>${n1(sum('real') - sum('prev'))}</b></td><td class="n"><b>${fmtN(sum('oc'))}</b></td><td class="n"><b>${fmtN(sum('sem_atend'))}</b></td><td class="n"><b>${fmtN(sum('fora'))}</b></td></tr></tfoot></table></div>` : '<p class="nota">Nenhum ponto na carteira para o filtro.</p>';
+  box.querySelectorAll('[data-prs]').forEach(th => th.onclick = () => { const k = th.dataset.prs; O.prSort = [k, O.prSort[0] === k ? -O.prSort[1] : (k === 'nome' ? 1 : -1)]; parcPR(el); });
+  box.querySelectorAll('[data-prp]').forEach(tr => tr.onclick = () => { if (!tr.dataset.prp) return; O.parc = tr.dataset.prp; vOperacao(el); });
+}
+function listaPR(el) {
+  const O = S.oper, P = O.PR || {}; const f = norm(O.prBusca || ''); const k = O.prLista; const n1 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  const box = el.querySelector('#op-prl'); if (!box) return;
+  if (k === 'fora') {
+    const L = (P.fora_lista || []).filter(r => !f || norm([r.cod_int, r.local, r.cliente, r.cidade, r.parceiro].join(' ')).includes(f));
+    box.innerHTML = L.length ? `<div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th>Ponto</th><th>Cliente</th><th>Cidade</th><th>Parceiro / agente</th><th class="n">Atendimentos</th></tr></thead><tbody>
+      ${L.map(r => `<tr><td>${esc(r.cod_int || '—')}<br><span class="nota">${esc(r.local || '')}</span></td><td>${esc(r.cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td><td>${esc(r.parceiro || '—')}</td><td class="n"><b>${fmtN(r.real)}</b></td></tr>`).join('')}</tbody></table></div>
+      <p class="nota">Atendidos no Umov, mas o ponto não está na carteira do portal: cadastrar o ponto ou conferir se o atendimento é devido.</p>` : '<p class="nota">Nenhum atendimento fora da carteira.</p>';
+    return; }
+  const sel = { sem: r => r.prev >= 1 && r.real === 0, abaixo: r => r.real > 0 && r.real < Math.floor(r.prev), acima: r => r.real > Math.ceil(r.prev) }[k];
+  const L = (P.pontos || []).filter(sel).filter(r => !f || norm([r.cod_int, r.cliente, r.loja, r.cidade, r.uf, r.parceiro].join(' ')).includes(f));
+  box.innerHTML = L.length ? `<div class="tabela" style="max-height:520px;overflow:auto"><table><thead><tr><th>Ponto</th><th>Cliente</th><th>Cidade</th><th>Frequência</th><th>Parceiro</th><th class="n">Previsto</th><th class="n">Realizado</th><th class="n">Ocorr.</th><th class="n">Sem baixa</th></tr></thead><tbody>
+    ${L.slice(0, 600).map(r => `<tr><td>${esc(r.cod_int)}<br><span class="nota">${esc(r.loja || '')}</span></td><td>${esc(r.cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td><td>${esc(r.frequencia || '—')}</td><td>${esc(r.parceiro || '—')}</td>
+      <td class="n">${n1(r.prev)}</td><td class="n"><b>${fmtN(r.real)}</b></td><td class="n">${fmtN(r.oc)}</td><td class="n">${fmtN(r.ab)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="nota">${L.length > 600 ? `Mostrando 600 de ${fmtN(L.length)}; use a busca ou o filtro de parceiro.` : `${fmtN(L.length)} ponto(s).`} Quinzenal e mensal aparecem com previsto fracionado no meio do mês (rateio pelos dias úteis).</p>`
+    : `<p class="nota">${{ sem: 'Todos os pontos previstos tiveram atendimento.', abaixo: 'Nenhum ponto abaixo do previsto.', acima: 'Nenhum ponto acima do previsto.' }[k]}</p>`;
+}
+function graficoPR(box, dias, hoje) {
+  const W = Math.max(640, box.clientWidth || 900), H = 220, pl = 44, pr = 10, pt = 12, pb = 30; const mx = Math.max(1, ...dias.map(d => Math.max(d.prev, d.real + d.ab)));
+  const bw = (W - pl - pr) / dias.length; const y = v => pt + (H - pt - pb) * (1 - v / mx); const ticks = [0, .5, 1].map(t => Math.round(mx * t));
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Previsto x realizado por dia">
+    ${ticks.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtN(t)}</text>`).join('')}
+    ${dias.map((d, i) => { const x = pl + i * bw; const w = bw * .36;
+      return `<g data-prd="${i}"><rect x="${x + bw * .12}" y="${y(d.prev)}" width="${w}" height="${y(0) - y(d.prev)}" fill="var(--rule)"/>
+        <rect x="${x + bw * .12 + w}" y="${y(d.real)}" width="${w}" height="${y(0) - y(d.real)}" fill="var(--eco)"/>
+        ${d.ab ? `<rect x="${x + bw * .12 + w}" y="${y(d.real + d.ab)}" width="${w}" height="${y(d.real) - y(d.real + d.ab)}" fill="var(--brand)" opacity=".75"/>` : ''}
+        <rect x="${x}" y="${pt}" width="${bw}" height="${H - pt - pb}" fill="transparent"/>
+        ${dias.length <= 31 ? `<text x="${x + bw / 2}" y="${H - pb + 14}" text-anchor="middle" font-size="11" fill="var(--muted)" ${d.d === hoje ? 'font-weight="700"' : ''}>${d.d.slice(8, 10)}</text>` : ''}</g>`; }).join('')}
+  </svg><div class="linha" style="gap:14px;font-size:13px;color:var(--muted)"><span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--rule);margin-right:5px"></i>Previsto (carteira)</span><span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--eco);margin-right:5px"></i>Realizado (Umov)</span><span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--brand);opacity:.75;margin-right:5px"></i>Ainda sem baixa</span></div>
+  <div class="prtip" style="position:absolute;display:none;pointer-events:none;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.12)"></div>`;
+  const tip = box.querySelector('.prtip');
+  box.querySelectorAll('[data-prd]').forEach(g => { g.onmousemove = ev => { const d = dias[+g.dataset.prd]; const r = box.getBoundingClientRect();
+      tip.innerHTML = `<b>${fmtD(d.d)}</b>${d.d === hoje ? ' (hoje, em andamento)' : ''}<br>Previsto: ${(+d.prev).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}<br><span class="eco">Realizado: ${fmtN(d.real)}${d.prev ? ` (${Math.round(100 * d.real / d.prev)}%)` : ''}</span>${d.ab ? `<br><span style="color:var(--brand)">Sem baixa: ${fmtN(d.ab)}</span>` : ''}`;
+      tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 220) + 'px'; tip.style.top = (ev.clientY - r.top - 10) + 'px'; };
+    g.onmouseleave = () => tip.style.display = 'none'; });
 }
