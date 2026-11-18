@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.17-1745';
+const VERSAO = '2026.11.18-0715';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -73,7 +73,8 @@ async function sairPorInatividade() { try { await sb.auth.signOut(); } catch (e)
 async function iniciar() {
   const { data } = await sb.auth.getSession();
   S.user = data.session?.user || null;
-  if (!S.user) return telaLogin();
+  // link de convite: ...?acesso=primeiro abre direto na aba Primeiro acesso
+  if (!S.user) return telaLogin(/^(primeiro|convite)$/i.test(new URLSearchParams(location.search).get('acesso') || '') ? 'primeiro' : 'entrar');
   try {
     S.perfil = await q(sb.from('perfis').select('*').eq('id', S.user.id).maybeSingle());
   } catch (e) { S.perfil = null; }
