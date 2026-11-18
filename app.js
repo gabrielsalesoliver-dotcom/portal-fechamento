@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1450';
+const VERSAO = '2026.11.18-1535';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -218,8 +218,10 @@ const ETAPAS_PEND = {
 };
 // Movimentações registradas à mão pela GSM (ex.: base extraída e mandada ao parceiro por e-mail)
 const MOV_ST = [['Base extraída pela GSM', 'gsm'], ['Enviado para conferência do parceiro', 'parceiro'], ['Cobrado novamente', 'parceiro'],
-  ['Parceiro respondeu: em análise da GSM', 'gsm'], ['Parceiro pediu ajuste: GSM corrigindo', 'gsm'], ['Parceiro aprovou a base', 'gsm'], ['Lançado pela GSM no portal', 'gsm']];
-const grupoMov = st => (MOV_ST.find(x => x[0] === st) || [null, 'parceiro'])[1];
+  ['Parceiro respondeu: em análise da GSM', 'gsm'], ['Parceiro pediu ajuste: GSM corrigindo', 'gsm'], ['Parceiro aprovou a base', 'gsm'], ['Lançado pela GSM no portal', 'gsm'], ['Não fecha neste mês (acumula para o próximo)', 'ok']];
+// "não fecha neste mês" / "faturamento acumulado": o parceiro sai das pendências do mês
+const RX_NAO_FECHA = /n[ãa]o\s+fecha|acumulad|sem\s+fechamento\s+no\s+m[êe]s/i;
+const grupoMov = st => RX_NAO_FECHA.test(st || '') ? 'ok' : (MOV_ST.find(x => x[0] === st) || [null, 'parceiro'])[1];
 async function carregarMovs(compId) { return todas(() => sb.from('movimentacoes_parceiro').select('id,parceiro_id,status,observacao,criado_em').eq('competencia_id', compId).order('criado_em', { ascending: false })).catch(() => []); }
 function popMovimentacao(c, p, movs, aoSalvar) {
   const box = abrirPop(`Movimentação · ${p.regiao}`, `${esc(p.nome || '')} · ${nomeMes(c.mes)}. Registre o que foi feito com este parceiro fora do portal (ex.: base enviada por e-mail).`);
@@ -294,7 +296,7 @@ async function vPendencias() {
     else { k = 'analise'; desde = e.enviado_em; }
     const mv = mvU[p.id]; const porMov = k === 'sem_envio' && mv;
     if (porMov) desde = mv.criado_em;
-    return { p, k, desde, d: dias(desde), valor: f ? (f.a_pagar ?? f.valor_aprovado) : null, atr: atrasado(k), mv, g: porMov ? grupoMov(mv.status) : ETAPAS_PEND[k][1], t: porMov ? mv.status : ETAPAS_PEND[k][0] }; });
+    return { p, k, desde, d: dias(desde), valor: f ? (f.a_pagar ?? f.valor_aprovado) : null, atr: porMov && grupoMov(mv.status) === 'ok' ? false : atrasado(k), mv, g: porMov ? grupoMov(mv.status) : ETAPAS_PEND[k][1], t: porMov ? mv.status : ETAPAS_PEND[k][0] }; });
   S.pendGrupo = S.pendGrupo || 'parceiro'; S.pendDia = S.pendDia || 'todos';
   const diaDe = p => p.dia_pagamento || 'Sem dia cadastrado';
   const ordemDia = d => { const dt = dataPagamento(d, c.mes); return dt || '9999'; };
@@ -518,7 +520,7 @@ async function atualizarBadges(forcar = false) {
         else if (r && r.situacao === 'a_conferir') bd.notas++;
         else bd.pendencias++; // falta a NF ou NF recusada
         return; }
-      if (!e && mvU[p.id] && grupoMov(mvU[p.id].status) === 'gsm') return; // sem envio, mas a bola está com a GSM (movimentação manual)
+      if (!e && mvU[p.id] && ['gsm', 'ok'].includes(grupoMov(mvU[p.id].status))) return; // sem envio, mas a bola está com a GSM (movimentação manual)
       if (!e || e.status === 'recusado' || divs.some(d => d.envio_id === e.id)) bd.pendencias++; else bd.conferencia++; });
     bd.adiantamentos = adis.filter(a => a.status === 'solicitado').length + fech.filter(f => f.antec_status === 'solicitada').length;
     S.badges = { ...bd, torre: (S.badges || {}).torre || 0 }; S.badgesMes = nomeMes(c.mes); desenharBadges();
@@ -3029,7 +3031,7 @@ async function vConferencia() {
     </div>
     <section class="bloco"><div class="linha">${filtros.map(([k, n, q]) => `<button class="btn ${S.confFiltro === k ? '' : 'sec'} peq" data-f="${k}">${n} (${q})</button>`).join('')}</div>
     <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Envio</th><th>Situação</th><th class="n">Informado</th><th class="n">Malote: parceiro x Umov</th><th class="n">Em aberto</th><th></th></tr></thead><tbody>
-    ${vis.map(({ p, e, pd, f }) => { const t = e?.totais || {}; const mv = mvU[p.id]; const [rot, cls] = e ? ST_ENV[e.status] || [e.status, ''] : mv ? [mv.status, grupoMov(mv.status) === 'gsm' ? 'marca' : 'alerta'] : ['Sem envio', ''];
+    ${vis.map(({ p, e, pd, f }) => { const t = e?.totais || {}; const mv = mvU[p.id]; const [rot, cls] = e ? ST_ENV[e.status] || [e.status, ''] : mv ? [mv.status, grupoMov(mv.status) === 'gsm' ? 'marca' : grupoMov(mv.status) === 'ok' ? '' : 'alerta'] : ['Sem envio', ''];
       return `<tr><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.codigo)} · ${esc(p.nome)}</span></td>
       <td style="font-size:13px">${e ? `Envio ${e.versao}<br>${fmtDH(e.enviado_em)}` : '—'}</td>
       <td><span class="pill ${cls}">${esc(rot)}</span>${!e && mv ? `<br><span class="nota">${fmtD(mv.criado_em.slice(0, 10))}${mv.observacao ? ' · ' + esc(mv.observacao.slice(0, 50)) : ''}</span>` : ''}${f?.valor_aprovado != null && e?.status === 'aprovado' ? `<br><span class="nota">${BRL2(f.valor_aprovado)}</span>` : ''}</td>
