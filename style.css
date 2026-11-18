@@ -1,7 +1,7 @@
 :root{
   --ink:#121112; --brand:#DB2242; --brand-deep:#A3182F; --muted:#6E6E72; --rule:#DDDCDA; --rule-soft:#E9E7E3;
   --paper:#F6F5F2; --field:#FBFAF8; --wash:#FBEAEE; --alert:#A87422; --alert-bg:#F7EEDC; --alert-line:#DFC48C;
-  --num-light:#F0C2CC; --on-dark:#B8B6B4; --panel-line:#3A3639; --ok-bg:#ECEBE8;
+  --num-light:#F0C2CC; --on-dark:#B8B6B4; --panel-line:#3A3639; --ok-bg:#ECEBE8; --eco:#1E7A47; --eco-bg:#E5F2EA;
   --surface:#FFFFFF; --panel:#121112; --on-panel:#FFFFFF; --panel-hover:#1C1B1C; --btn:#121112; --on-btn:#FFFFFF; --btn-hover:#2A282A;
   --alert-ink:#5C3F10; --alert-ink2:#6B4A12; --alert-num:#8A5A12; --hl-row:#FBF3E6; --off:#77757A; --off2:#5E5C60;
   color-scheme:light;
@@ -10,7 +10,7 @@
 :root[data-theme="dark"]{
   --ink:#ECEAE7; --brand:#E8435F; --brand-deep:#F27A8F; --muted:#A4A1A6; --rule:#3A373B; --rule-soft:#2D2B2E;
   --paper:#151416; --field:#1F1E21; --wash:#3A1C24; --alert:#D9A24A; --alert-bg:#352A17; --alert-line:#6E5628;
-  --num-light:#F0C2CC; --on-dark:#B8B6B4; --panel-line:#3A3639; --ok-bg:#242326;
+  --num-light:#F0C2CC; --on-dark:#B8B6B4; --panel-line:#3A3639; --ok-bg:#242326; --eco:#5DC58B; --eco-bg:#16291F;
   --surface:#1B1A1D; --panel:#0C0B0C; --on-panel:#FFFFFF; --panel-hover:#211F22; --btn:#ECEAE7; --on-btn:#121112; --btn-hover:#FFFFFF;
   --alert-ink:#F1D29B; --alert-ink2:#F1D29B; --alert-num:#E7B865; --hl-row:#2E2617; --off:#6E6B70; --off2:#57545A;
   color-scheme:dark;
@@ -89,6 +89,9 @@ main{flex:1 1 640px;min-width:0;padding:28px 32px 56px;display:flex;flex-directi
 .kpi span{font-size:13px;font-weight:600}
 .kpi.alerta{border-top-color:var(--alert)} .kpi.alerta span{color:var(--alert)}
 .kpi.neutro{border-top-color:var(--rule)}
+/* Economia gerada pela GSM: sempre em verde */
+.kpi.eco{border-top-color:var(--eco)} .kpi.eco b{color:var(--eco)}
+.eco{color:var(--eco)}
 .soltar{border:2px dashed var(--on-dark);border-radius:10px;background:var(--field);padding:22px;display:flex;flex-direction:column;gap:6px;cursor:pointer}
 .soltar.sobre{border-color:var(--brand);background:var(--wash)}
 .soltar strong{font-size:15px}
@@ -192,3 +195,10 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .pop-caixa{background:var(--surface);color:var(--ink);border:1px solid var(--rule);border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.3);width:min(1100px,100%);max-height:calc(100vh - 80px);overflow:auto;padding:20px 22px}
 .pop-topo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px;position:sticky;top:-20px;background:var(--surface);padding:6px 0;z-index:1}
 @media print{.pop-fundo{display:none}}
+
+/* Economia em verde */
+.gres{border-left-color:var(--eco)}
+.gres-main>b{color:var(--eco)}
+.gres-itens>div:not(.gres-pot){border-top-color:var(--eco)}
+.gres-itens>div:not(.gres-pot) b{color:var(--eco)}
+.gres-main .gres-ano b{color:var(--eco)}
