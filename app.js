@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1610';
+const VERSAO = '2026.11.18-1625';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4745,10 +4745,13 @@ function proximaCron(expr, de = new Date()) {
     if (casa(mi, t.getUTCMinutes()) && casa(ho, t.getUTCHours()) && casa(dm, t.getUTCDate()) && casa(me, t.getUTCMonth() + 1) && casa(ds, t.getUTCDay())) return new Date(t);
   return null;
 }
+// execução cancelada por nós (ex.: para aplicar uma mudança) não é falha do robô
+const RX_INTERROMPIDO = /due to user request|^job canceled/i;
 function statusRobo(r, agora = new Date()) {
   const u = r.ultima || {};
   if (!r.active) return ['pausado', 'Pausado', 'var(--off)'];
   if (u.status === 'running' || u.status === 'starting') return ['rodando', 'Rodando agora', 'var(--off2)'];
+  if (u.status === 'failed' && RX_INTERROMPIDO.test(u.msg || '')) return ['interrompido', 'Interrompido manualmente', 'var(--alert)'];
   if (u.status === 'failed') return ['falha', 'Falhou na última execução', 'var(--brand)'];
   if (r.ultimo_ok && (agora - new Date(r.ultimo_ok)) / 60000 > r.tolerancia_min) return ['atrasado', 'Sem rodar no prazo', 'var(--alert)'];
   if (!u.status) return ['aguardando', 'Aguardando a 1ª execução', 'var(--muted)'];
@@ -4792,12 +4795,12 @@ function desenharTorre() {
         <div><small class="nota">Última execução</small><br><b>${u.inicio ? haTxt(u.inicio) : '—'}</b><br><span class="nota">${u.inicio ? fmtDH(u.inicio) : ''}</span></div>
         <div><small class="nota">Duração</small><br><b>${u.status === 'running' ? 'rodando há ' + durTxt((Date.now() - new Date(u.inicio)) / 1000) : durTxt(dur)}</b><br><span class="nota">média ${durTxt(r.duracao_media_s)}</span></div>
         <div><small class="nota">Próxima execução</small><br><b>${r.active ? emTxt(prox) : 'pausado'}</b><br><span class="nota">${prox ? fmtDH(prox.toISOString()) : ''}</span></div>
-        <div><small class="nota">Últimas 24 h</small><br><b class="eco">${r.ok_24h} ok</b> · <b style="${r.falhas_24h ? 'color:var(--brand)' : ''}">${r.falhas_24h} falha(s)</b><br><span class="nota">último sucesso ${haTxt(r.ultimo_ok)}</span></div>
+        <div><small class="nota">Últimas 24 h</small><br><b class="eco">${r.ok_24h} ok</b> · <b style="${r.falhas_24h ? 'color:var(--brand)' : ''}">${r.falhas_24h} falha(s)</b>${r.interrompidos_24h ? ` · ${r.interrompidos_24h} interrompida(s)` : ''}<br><span class="nota">último sucesso ${haTxt(r.ultimo_ok)}</span></div>
       </div>
-      ${H.length ? `<div style="display:flex;gap:3px;margin-top:12px;align-items:center" aria-label="Últimas execuções">${H.map(h => `<span title="${esc(fmtDH(h.inicio) + ' · ' + (h.status === 'succeeded' ? 'ok' : h.status === 'failed' ? 'falhou' : h.status) + (h.status === 'failed' && h.msg ? ' · ' + h.msg : ''))}" style="width:14px;height:22px;border-radius:3px;background:${h.status === 'succeeded' ? 'var(--eco)' : h.status === 'failed' ? 'var(--brand)' : 'var(--alert)'}"></span>`).join('')}<span class="nota" style="margin-left:6px">últimas ${H.length} execuções (mais recente à direita)</span></div>` : ''}
-      ${u.status === 'failed' ? `<div class="msg erro" style="margin-top:12px"><b>Erro da última execução:</b> ${esc(u.msg || 'sem mensagem')}</div>` : ''}
+      ${H.length ? `<div style="display:flex;gap:3px;margin-top:12px;align-items:center" aria-label="Últimas execuções">${H.map(h => `<span title="${esc(fmtDH(h.inicio) + ' · ' + (h.status === 'succeeded' ? 'ok' : h.status === 'failed' ? 'falhou' : h.status) + (h.status === 'failed' && h.msg ? ' · ' + h.msg : ''))}" style="width:14px;height:22px;border-radius:3px;background:${h.status === 'succeeded' ? 'var(--eco)' : h.status === 'failed' && !RX_INTERROMPIDO.test(h.msg || '') ? 'var(--brand)' : 'var(--alert)'}"></span>`).join('')}<span class="nota" style="margin-left:6px">últimas ${H.length} execuções (mais recente à direita)</span></div>` : ''}
+      ${u.status === 'failed' ? (RX_INTERROMPIDO.test(u.msg || '') ? `<div class="msg alerta" style="margin-top:12px"><b>Última execução interrompida manualmente</b> (cancelada para aplicar uma mudança). Não é falha do robô; a próxima execução retoma de onde parou.</div>` : `<div class="msg erro" style="margin-top:12px"><b>Erro da última execução:</b> ${esc(u.msg || 'sem mensagem')}</div>`) : ''}
       ${S.abertoRobo[r.jobid] ? `<div class="tabela" style="margin-top:12px"><table><thead><tr><th>Início</th><th>Fim</th><th class="n">Duração</th><th>Resultado</th><th>Mensagem</th></tr></thead><tbody>${(r.historico || []).map(h => `<tr><td style="white-space:nowrap">${fmtDH(h.inicio)}</td><td style="white-space:nowrap">${h.fim ? fmtDH(h.fim) : '—'}</td><td class="n">${h.fim ? durTxt((new Date(h.fim) - new Date(h.inicio)) / 1000) : '—'}</td>
-        <td><span class="pill ${h.status === 'failed' ? 'marca' : h.status === 'succeeded' ? '' : 'alerta'}">${h.status === 'succeeded' ? 'OK' : h.status === 'failed' ? 'Falhou' : 'Rodando'}</span></td><td style="font-size:13px;max-width:460px;word-break:break-word">${esc(h.msg || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <td>${(() => { const it = h.status === 'failed' && RX_INTERROMPIDO.test(h.msg || ''); return `<span class="pill ${it ? 'alerta' : h.status === 'failed' ? 'marca' : h.status === 'succeeded' ? '' : 'alerta'}">${h.status === 'succeeded' ? 'OK' : it ? 'Interrompido' : h.status === 'failed' ? 'Falhou' : 'Rodando'}</span>`; })()}</td><td style="font-size:13px;max-width:460px;word-break:break-word">${esc(h.msg || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </section>`; }).join('')}</div>
   <section class="bloco"><h2>Umov · o que o robô já trouxe</h2>
     <div class="kpis" style="margin-top:8px">
