@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1135';
+const VERSAO = '2026.11.18-1330';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -203,10 +203,10 @@ const MENU = [
   ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
-  ['Acompanhamento', [['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
+  ['Acompanhamento', [['operacao', 'Operação ao vivo (Umov)'], ['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
   ['Configurações', [['acessos', 'Acessos e convites'], ['backup', 'Cópia de segurança']]],
 ];
-const VIEWS = { painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), pendencias: () => vPendencias(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
+const VIEWS = { operacao: () => vOperacao($('#main')), painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), pendencias: () => vPendencias(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 // ================= Pendências e cobrança =================
@@ -3248,6 +3248,7 @@ function desenharDiretoria(el) {
   <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Quadro de pagamentos · ${nomeMes(c.mes)}</h2><div id="dquadro"></div></section><section class="bloco"><h2>Agenda de pagamentos · todas as competências</h2><div id="dagenda"></div></section><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
   <div data-sec="docs" style="display:flex;flex-direction:column;gap:22px"><div id="ddocs"></div></div>
+  <div data-sec="operacao" style="display:flex;flex-direction:column;gap:22px"><div id="doper"></div></div>
   <div data-sec="carteira" style="display:flex;flex-direction:column;gap:22px"><div id="dcart"><div class="carregando">Carregando…</div></div></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
@@ -3284,6 +3285,7 @@ function desenharDiretoria(el) {
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
   if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
   if (D.aba === 'carteira') carteiraDir($('#dcart'), D);
+  if (D.aba === 'operacao') vOperacao($('#doper'));
   if (D.aba === 'docs') documentosFin($('#ddocs'), D, c, { soAprovados: true });
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
@@ -3627,7 +3629,7 @@ function graficoPrev(box, tbox, pts, atualId) {
 }
 
 const SO_FIN = ['atendimentos', 'eficiencia']; // abas operacionais: financeiro e GSM
-const ABAS_DIR = [['geral', 'Visão geral'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['carteira', 'Movimentação de pontos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+const ABAS_DIR = [['geral', 'Visão geral'], ['operacao', 'Operação ao vivo'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['carteira', 'Movimentação de pontos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
 const kE = v => Math.abs(v) < 1000 ? BRL(v) : BRLk(v);
@@ -4589,3 +4591,131 @@ async function previaHistorico(file) {
 
 sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') telaLogin(); });
 iniciar().catch(e => { app.innerHTML = `<div class="carregando">Erro ao iniciar: ${esc(e.message)}</div>`; });
+
+// ================= Operação ao vivo (robô Umov no Supabase, de hora em hora) =================
+const OP_CAT = { realizado: ['Realizado', 'var(--eco)'], ocorrencia: ['Com ocorrência', 'var(--alert)'], aberto: ['Falta baixa', 'var(--brand)'], cancelado: ['Cancelado', 'var(--off)'] };
+const isoDia = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function periodoOp(k) { const h = new Date(); const d = n => { const x = new Date(h); x.setDate(x.getDate() + n); return isoDia(x); };
+  if (k === 'hoje') return [d(0), d(0)]; if (k === 'ontem') return [d(-1), d(-1)]; if (k === '7d') return [d(-6), d(0)];
+  return [isoDia(new Date(h.getFullYear(), h.getMonth(), 1)), d(0)]; }
+async function vOperacao(el) {
+  el = el || $('#main'); const O = S.oper || (S.oper = { per: 'hoje', parc: '', cli: '', lista: 'abertos', sort: ['aberto', -1], busca: '', bcli: '' });
+  if (O.per !== 'custom') [O.de, O.ate] = periodoOp(O.per);
+  el.innerHTML = '<div class="carregando">Carregando os atendimentos do Umov…</div>';
+  let R; try { R = await q(sb.rpc('umov_painel', { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null, p_cliente: O.cli || null })); }
+  catch (e) { el.innerHTML = `<div class="msg alerta">Não foi possível carregar: ${esc(e.message)}</div>`; return; }
+  O.R = R; desenharOperacao(el);
+}
+function desenharOperacao(el) {
+  const O = S.oper, R = O.R || {}; const k = R.kpi || {}, ko = R.kpi_op || {};
+  const ab = (k.atrasado || 0) + (k.em_campo || 0) + (k.pendente || 0); const prog = (k.realizado || 0) + (k.ocorrencia || 0) + ab;
+  const pc = (a, b) => b ? Math.round(1000 * a / b) / 10 + '%' : '—';
+  const umDia = O.de === O.ate; const hoje = isoDia(new Date());
+  const per = [['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', '7 dias'], ['mes', 'Mês atual']];
+  const fP = (R.filtros?.parceiros || []).sort((a, b) => a.nome.localeCompare(b.nome)), fC = (R.filtros?.clientes || []).sort();
+  const opTxt = (cat) => { const m = ko['malote_' + cat] || 0, kt = ko['kit_' + cat] || 0; return kt ? `${fmtN(m)} malote · ${fmtN(kt)} kits` : ''; };
+  el.innerHTML = `
+  <div class="topo"><div><h1>Operação ao vivo</h1><p>Atendimentos do Umov lidos pelo robô de hora em hora. Atualizado em <b>${fmtDH(R.atualizado)}</b>.${R.sem_detalhe ? ` <span class="pill alerta">${fmtN(R.sem_detalhe)} atendimentos do período ainda sendo carregados</span>` : ''}</p></div>
+    <div class="linha" style="flex-wrap:wrap;gap:8px">
+      <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
+        ${per.map(([kk, n]) => `<button type="button" data-oper="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.per === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+      <input type="date" id="op-de" value="${O.de}" style="min-height:44px"> <input type="date" id="op-ate" value="${O.ate}" style="min-height:44px">
+      <button class="btn sec peq" id="op-xls" style="min-height:44px">Excel</button></div></div>
+  <div class="linha" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <select id="op-parc" style="min-height:44px;max-width:340px"><option value="">Todos os parceiros</option>${fP.map(p => `<option value="${p.id}" ${O.parc === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
+    <select id="op-cli" style="min-height:44px;max-width:300px"><option value="">Todos os clientes</option>${fC.map(c => `<option ${O.cli === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+    ${O.parc || O.cli ? '<button class="btn sec peq" id="op-limpa" style="min-height:44px">Limpar filtros</button>' : ''}</div>
+  <div class="kpis">
+    <div class="kpi neutro"><small>Programados</small><b>${fmtN(prog)}</b><span>${opTxt('realizado') ? fmtN((ko.malote_realizado || 0) + (ko.malote_ocorrencia || 0) + ['atrasado', 'em_campo', 'pendente'].reduce((a, c) => a + (ko['malote_' + c] || 0), 0)) + ' malote' : 'sem os cancelados'}</span></div>
+    <div class="kpi eco"><small>Realizados</small><b>${fmtN(k.realizado || 0)}</b><span>${pc(k.realizado || 0, prog)} dos programados</span></div>
+    <div class="kpi ${k.ocorrencia ? 'alerta' : 'neutro'}"><small>Com ocorrência</small><b>${fmtN(k.ocorrencia || 0)}</b><span>${pc(k.ocorrencia || 0, prog)} · retornou sem atender</span></div>
+    <div class="kpi"><small>Falta baixa</small><b>${fmtN((k.em_campo || 0) + (k.pendente || 0))}</b><span>${fmtN(k.em_campo || 0)} em campo · ${fmtN(k.pendente || 0)} não enviados</span></div>
+    <div class="kpi ${k.atrasado ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${fmtN(k.atrasado || 0)}</b><span>dias anteriores sem baixa</span></div>
+    <div class="kpi neutro"><small>Cancelados</small><b>${fmtN(k.cancelado || 0)}</b><span>no período</span></div>
+  </div>
+  ${umDia ? '' : `<section class="bloco"><h2>Dia a dia</h2><div id="op-graf" style="position:relative"></div></section>`}
+  <section class="bloco"><h2>Por parceiro</h2><p class="sub">Clique no parceiro para filtrar a tela. Ordene pelas colunas.</p><div id="op-parcs"></div></section>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:22px">
+    <section class="bloco"><h2>Ocorrências</h2><p class="sub">Retornadas de campo sem a entrega/coleta. Entram no fechamento como visita.</p><div id="op-oc"></div></section>
+    <section class="bloco"><h2>Por cliente</h2><input type="search" id="op-bcli" placeholder="Buscar cliente" value="${esc(O.bcli)}" style="width:100%;min-height:40px;margin-bottom:8px"><div id="op-clis"></div></section></div>
+  <section class="bloco"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Atendimentos</h2>
+    <div class="linha" style="gap:8px"><div class="alterna" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['abertos', 'Falta baixa e atrasados'], ['ocorr', 'Ocorrências']].map(([kk, n]) => `<button type="button" data-oplis="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.lista === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+    <input type="search" id="op-busca" placeholder="Buscar ponto, cidade, agente" value="${esc(O.busca)}" style="min-height:40px;min-width:220px"></div></div><div id="op-lista" style="margin-top:10px"></div></section>`;
+  const recarregar = () => vOperacao(el);
+  el.querySelectorAll('[data-oper]').forEach(b => b.onclick = () => { O.per = b.dataset.oper; recarregar(); });
+  ['op-de', 'op-ate'].forEach(id => el.querySelector('#' + id).onchange = () => { const de = el.querySelector('#op-de').value, ate = el.querySelector('#op-ate').value; if (!de || !ate) return; O.per = 'custom'; O.de = de <= ate ? de : ate; O.ate = de <= ate ? ate : de; recarregar(); });
+  el.querySelector('#op-parc').onchange = e => { O.parc = e.target.value; recarregar(); };
+  el.querySelector('#op-cli').onchange = e => { O.cli = e.target.value; recarregar(); };
+  const lp = el.querySelector('#op-limpa'); if (lp) lp.onclick = () => { O.parc = ''; O.cli = ''; recarregar(); };
+  el.querySelectorAll('[data-oplis]').forEach(b => b.onclick = () => { O.lista = b.dataset.oplis; desenharOperacao(el); });
+  el.querySelector('#op-busca').oninput = e => { O.busca = e.target.value; listaOp(el); };
+  el.querySelector('#op-bcli').oninput = e => { O.bcli = e.target.value; clientesOp(el); };
+  el.querySelector('#op-xls').onclick = () => exportarOp().catch(e => alertaTopo(e.message));
+  if (!umDia) graficoOp(el.querySelector('#op-graf'), R.dia || []);
+  parceirosOp(el); clientesOp(el); listaOp(el);
+  const oc = R.ocorrencias || []; const mx = Math.max(1, ...oc.map(o => o.n));
+  el.querySelector('#op-oc').innerHTML = oc.length ? oc.map(o => `<div style="display:grid;grid-template-columns:minmax(120px,190px) 1fr 54px;gap:8px;align-items:center;margin:5px 0;font-size:14px">
+      <span title="${o.parceiros} parceiro(s)">${esc(o.status)}</span><span style="background:var(--rule-soft);border-radius:4px;height:14px"><span style="display:block;height:14px;border-radius:4px;background:var(--alert);width:${100 * o.n / mx}%"></span></span><b class="num" style="text-align:right">${fmtN(o.n)}</b></div>`).join('') : '<p class="nota">Nenhuma ocorrência no período.</p>';
+}
+function parceirosOp(el) {
+  const O = S.oper; const [sk, sd] = O.sort;
+  const L = (O.R.parceiros || []).map(p => { const prog = p.realizado + p.ocorrencia + p.aberto; return { ...p, prog, pr: prog ? p.realizado / prog : null }; })
+    .sort((a, b) => (typeof a[sk] === 'string' ? (a[sk] || '').localeCompare(b[sk] || '') : (a[sk] ?? -1) - (b[sk] ?? -1)) * sd);
+  const col = [['nome', 'Parceiro'], ['prog', 'Programados', 1], ['realizado', 'Realizados', 1], ['pr', '% realizado', 1], ['ocorrencia', 'Ocorrências', 1], ['aberto_hoje', 'Falta baixa', 1], ['atrasado', 'Atrasados', 1], ['kits', 'Kits', 1], ['ultima_baixa', 'Última baixa', 1]];
+  const box = el.querySelector('#op-parcs');
+  box.innerHTML = L.length ? `<div class="tabela"><table><thead><tr>${col.map(([kk, n, num]) => `<th class="${num ? 'n' : ''}" data-opsort="${kk}" style="cursor:pointer;white-space:nowrap">${n}${sk === kk ? (sd > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>
+    ${L.map(p => `<tr ${p.id ? `data-opp="${p.id}" style="cursor:pointer"` : ''}><td>${p.id ? '' : '<span class="pill alerta">sem parceiro</span> '}${esc(p.nome)}</td><td class="n">${fmtN(p.prog)}</td><td class="n eco">${fmtN(p.realizado)}</td>
+      <td class="n"><b class="${p.pr != null && p.pr < .9 ? '' : 'eco'}" style="${p.pr != null && p.pr < .9 ? 'color:var(--alert)' : ''}">${p.pr == null ? '—' : Math.round(p.pr * 100) + '%'}</b></td>
+      <td class="n" style="${p.ocorrencia ? 'color:var(--alert)' : ''}">${fmtN(p.ocorrencia)}</td><td class="n">${fmtN(p.aberto_hoje)}</td><td class="n">${p.atrasado ? `<span class="pill marca">${fmtN(p.atrasado)}</span>` : '0'}</td><td class="n">${fmtN(p.kits)}</td><td class="n" style="white-space:nowrap">${p.ultima_baixa ? fmtDH(p.ultima_baixa) : '—'}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td><b>Total (${L.length})</b></td>${['prog', 'realizado'].map(kk => `<td class="n"><b>${fmtN(L.reduce((a, p) => a + p[kk], 0))}</b></td>`).join('')}<td class="n"><b>${(() => { const a = L.reduce((s, p) => s + p.realizado, 0), b = L.reduce((s, p) => s + p.prog, 0); return b ? Math.round(100 * a / b) + '%' : '—'; })()}</b></td>${['ocorrencia', 'aberto_hoje', 'atrasado', 'kits'].map(kk => `<td class="n"><b>${fmtN(L.reduce((a, p) => a + p[kk], 0))}</b></td>`).join('')}<td></td></tr></tfoot></table></div>` : '<p class="nota">Nenhum atendimento no período.</p>';
+  box.querySelectorAll('[data-opsort]').forEach(th => th.onclick = () => { const kk = th.dataset.opsort; O.sort = [kk, O.sort[0] === kk ? -O.sort[1] : (kk === 'nome' ? 1 : -1)]; parceirosOp(el); });
+  box.querySelectorAll('[data-opp]').forEach(tr => tr.onclick = () => { O.parc = tr.dataset.opp; vOperacao(el); });
+}
+function clientesOp(el) {
+  const O = S.oper; const f = norm(O.bcli || ''); const L = (O.R.clientes || []).filter(c => !f || norm(c.nome).includes(f));
+  const box = el.querySelector('#op-clis');
+  box.innerHTML = L.length ? `<div class="tabela" style="max-height:420px;overflow:auto"><table><thead><tr><th>Cliente</th><th class="n">Programados</th><th class="n">% realizado</th><th class="n">Ocorr.</th><th class="n">Falta baixa</th></tr></thead><tbody>
+    ${L.map(c => { const prog = c.realizado + c.ocorrencia + c.aberto; return `<tr data-opc="${esc(c.nome)}" style="cursor:pointer"><td>${esc(c.nome)}</td><td class="n">${fmtN(prog)}</td><td class="n">${prog ? Math.round(100 * c.realizado / prog) + '%' : '—'}</td><td class="n">${fmtN(c.ocorrencia)}</td><td class="n">${fmtN(c.aberto)}${c.atrasado ? ` <span class="pill marca" title="atrasados">${c.atrasado}</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="nota">Nenhum cliente encontrado.</p>';
+  box.querySelectorAll('[data-opc]').forEach(tr => tr.onclick = () => { O.cli = tr.dataset.opc === '—' ? '' : tr.dataset.opc; vOperacao(el); });
+}
+function listaOp(el) {
+  const O = S.oper; const ab = O.lista === 'abertos'; const f = norm(O.busca || '');
+  const base = (ab ? O.R.abertos : O.R.lista_ocorr) || [];
+  const L = base.filter(r => !f || norm([r.cod_int, r.local_desc, r.grupo_cliente, r.cidade, r.uf, r.agente, r.parceiro, r.status_gsm].join(' ')).includes(f));
+  const SIT = { atrasado: ['Atrasado', 'marca'], em_campo: ['Em campo', ''], pendente: ['Não enviado', 'alerta'] };
+  el.querySelector('#op-lista').innerHTML = L.length ? `<div class="tabela" style="max-height:560px;overflow:auto"><table><thead><tr><th>Data</th><th>${ab ? 'Situação' : 'Ocorrência'}</th><th>Ponto</th><th>Cliente</th><th>Cidade</th><th>Parceiro / agente</th></tr></thead><tbody>
+    ${L.slice(0, 600).map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}${r.hora ? ' ' + esc(r.hora.slice(0, 5)) : ''}</td>
+      <td>${ab ? `<span class="pill ${SIT[r.cat]?.[1] || ''}">${SIT[r.cat]?.[0] || esc(r.situacao)}</span>${r.op === 'kit' ? ' <span class="pill">Kit</span>' : ''}` : `<span class="pill alerta">${esc(r.status_gsm)}</span>${r.obs ? `<br><span class="nota">${esc(r.obs)}</span>` : ''}`}</td>
+      <td>${esc(r.cod_int || '')}<br><span class="nota">${esc(r.local_desc || '')}</span></td><td>${esc(r.grupo_cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td><td>${esc(r.parceiro)}<br><span class="nota">${esc(r.agente || '')}</span></td></tr>`).join('')}</tbody></table></div>
+    <p class="nota">${L.length > 600 ? `Mostrando 600 de ${fmtN(L.length)}. Use a busca ou o Excel para ver todos.` : `${fmtN(L.length)} atendimento(s).`}${base.length >= 1500 ? ' A lista traz no máximo 1.500 por vez: filtre por parceiro ou período.' : ''}</p>` : `<p class="nota">${ab ? 'Nada pendente de baixa no período.' : 'Nenhuma ocorrência no período.'}</p>`;
+}
+function graficoOp(box, dias) {
+  if (!box) return; if (!dias.length) { box.innerHTML = '<p class="nota">Sem dados no período.</p>'; return; }
+  const W = Math.max(640, box.clientWidth || 900), H = 240, pl = 44, pr = 10, pt = 14, pb = 34; const mx = Math.max(1, ...dias.map(d => d.realizado + d.ocorrencia + d.aberto));
+  const bw = (W - pl - pr) / dias.length; const y = v => pt + (H - pt - pb) * (1 - v / mx);
+  const ticks = [0, .25, .5, .75, 1].map(t => Math.round(mx * t));
+  const seg = [['realizado', 'var(--eco)'], ['ocorrencia', 'var(--alert)'], ['aberto', 'var(--brand)']];
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Atendimentos por dia">
+    ${ticks.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--rule-soft)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtN(t)}</text>`).join('')}
+    ${dias.map((d, i) => { let acc = 0; const x = pl + i * bw + bw * .15, w = bw * .7; const dt = new Date(d.data + 'T12:00'); const fds = dt.getDay() === 0 || dt.getDay() === 6;
+      return `<g data-opd="${i}">${seg.map(([kk, cor]) => { const v = d[kk]; if (!v) return ''; const y1 = y(acc + v), y0 = y(acc); acc += v; return `<rect x="${x}" y="${y1}" width="${w}" height="${Math.max(0, y0 - y1)}" fill="${cor}"/>`; }).join('')}
+        <rect x="${pl + i * bw}" y="${pt}" width="${bw}" height="${H - pt - pb}" fill="transparent"/>
+        ${dias.length <= 31 ? `<text x="${x + w / 2}" y="${H - pb + 14}" text-anchor="middle" font-size="11" fill="${fds ? 'var(--off)' : 'var(--muted)'}">${d.data.slice(8, 10)}</text>` : ''}</g>`; }).join('')}
+  </svg><div class="linha" style="gap:14px;font-size:13px;color:var(--muted)">${seg.map(([kk, cor]) => `<span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${cor};margin-right:5px"></i>${OP_CAT[kk === 'aberto' ? 'aberto' : kk][0]}</span>`).join('')}</div>
+  <div id="op-tip" style="position:absolute;display:none;pointer-events:none;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.12)"></div>`;
+  const tip = box.querySelector('#op-tip');
+  box.querySelectorAll('[data-opd]').forEach(g => { g.onmousemove = ev => { const d = dias[+g.dataset.opd]; const prog = d.realizado + d.ocorrencia + d.aberto; const r = box.getBoundingClientRect();
+      tip.innerHTML = `<b>${fmtD(d.data)}</b><br>Programados: ${fmtN(prog)}<br><span class="eco">Realizados: ${fmtN(d.realizado)} (${prog ? Math.round(100 * d.realizado / prog) : 0}%)</span><br><span style="color:var(--alert)">Ocorrências: ${fmtN(d.ocorrencia)}</span><br><span style="color:var(--brand)">Falta baixa: ${fmtN(d.aberto)}</span>${d.cancelado ? `<br>Cancelados: ${fmtN(d.cancelado)}` : ''}`;
+      tip.style.display = 'block'; const tx = ev.clientX - r.left + 14; tip.style.left = Math.min(tx, r.width - 200) + 'px'; tip.style.top = (ev.clientY - r.top - 10) + 'px'; };
+    g.onmouseleave = () => tip.style.display = 'none'; });
+}
+async function exportarOp() {
+  const O = S.oper, R = O.R; const per = O.de === O.ate ? fmtD(O.de) : `${fmtD(O.de)} a ${fmtD(O.ate)}`;
+  const buf = await planilhaPadrao({ titulo: 'Operação ao vivo · Umov', sub: per, abas: [
+    { nome: 'Parceiros', linhas: (R.parceiros || []).map(p => ({ Parceiro: p.nome, Programados: p.realizado + p.ocorrencia + p.aberto, Realizados: p.realizado, Ocorrencias: p.ocorrencia, 'Falta baixa': p.aberto_hoje, Atrasados: p.atrasado, Kits: p.kits })) },
+    { nome: 'Clientes', linhas: (R.clientes || []).map(c => ({ Cliente: c.nome, Programados: c.realizado + c.ocorrencia + c.aberto, Realizados: c.realizado, Ocorrencias: c.ocorrencia, 'Falta baixa': c.aberto, Atrasados: c.atrasado })) },
+    { nome: 'Falta baixa', linhas: (R.abertos || []).map(r => ({ Data: r.data, Situacao: r.situacao, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade, UF: r.uf, Parceiro: r.parceiro, Agente: r.agente })) },
+    { nome: 'Ocorrencias', linhas: (R.lista_ocorr || []).map(r => ({ Data: r.data, Ocorrencia: r.status_gsm, Observacao: r.obs, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade, UF: r.uf, Parceiro: r.parceiro, Agente: r.agente })) },
+    { nome: 'Por dia', linhas: (R.dia || []).map(d => ({ Data: d.data, Programados: d.realizado + d.ocorrencia + d.aberto, Realizados: d.realizado, Ocorrencias: d.ocorrencia, 'Falta baixa': d.aberto, Cancelados: d.cancelado })) }] });
+  baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Operacao_Umov_${O.de}_${O.ate}.xlsx`);
+}
