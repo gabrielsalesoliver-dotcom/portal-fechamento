@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1100';
+const VERSAO = '2026.11.18-1135';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2352,13 +2352,13 @@ const tipoArq = (path, tipo) => tipo || (/fatura/i.test(path || '') ? 'Fatura' :
 const chipArq = (path, rot) => `<a href="#" data-arq="${esc(path)}" class="pill" style="text-decoration:none;color:var(--ink);border:1px solid var(--rule);background:var(--surface);margin:2px 4px 2px 0;display:inline-block" title="Abrir o arquivo">${esc(rot)} ↗</a>`;
 function ligarArquivos(box) { box.querySelectorAll('[data-arq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const w = window.open('', '_blank');
   const { data, error } = await sb.storage.from('envios').createSignedUrl(a.dataset.arq, 600); if (error || !data) { if (w) w.close(); return alertaTopo('Não foi possível abrir o arquivo.'); } if (w) w.location = data.signedUrl; else location.href = data.signedUrl; }); }
-async function documentosFin(box, D, c) {
+async function documentosFin(box, D, c, opt = {}) {
   const modo = D.docModo || 'comp';
   const topo = `<section class="bloco" style="padding:12px 16px"><div class="linha" style="justify-content:space-between;align-items:center">
     <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">${[['comp', `Pasta de ${nomeMes(c.mes)}`], ['busca', 'Buscar em todas as NFs']].map(([k, t]) => `<button type="button" data-dm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${modo === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
-    <span class="nota">Todos os documentos de pagamento (NF, fatura, boleto, DACTE) guardados no portal, por competência. A validação do financeiro é só controle: não bloqueia o pagamento.</span></div></section><div id="docc"><div class="carregando">Carregando…</div></div>`;
+    <span class="nota">Todos os documentos de pagamento (NF, fatura, boleto, DACTE) guardados no portal, por competência${opt.soAprovados ? ', dos parceiros já aprovados pela GSM' : ''}. A validação do financeiro é só controle: não bloqueia o pagamento.</span></div></section><div id="docc"><div class="carregando">Carregando…</div></div>`;
   box.innerHTML = topo;
-  box.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => { D.docModo = b.dataset.dm; documentosFin(box, D, c); });
+  box.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => { D.docModo = b.dataset.dm; documentosFin(box, D, c, opt); });
   const cx = box.querySelector('#docc');
   if (modo === 'busca') {
     cx.innerHTML = `<section class="bloco"><div class="linha"><input class="peq" id="docq" placeholder="Número da NF, CNPJ, praça, razão social ou valor (ex.: 24.710,00)" value="${esc(D.docBusca || '')}" style="flex:1 1 360px"><button class="btn peq" id="docqb">Buscar</button></div><div id="docr" style="margin-top:12px"></div></section>`;
@@ -2381,6 +2381,8 @@ async function documentosFin(box, D, c) {
       q(sb.from('lotes_financeiro').select('id,rotulo,data_pagamento,status').eq('competencia_id', c.id))]);
   } catch (e) { cx.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
   const pm = Object.fromEntries(parcs.map(p => [p.id, p])), rm = Object.fromEntries(res.map(r => [r.parceiro_id, r])), vm = Object.fromEntries(val.map(v => [v.parceiro_id, v])), lm = Object.fromEntries(lotes.map(l => [l.id, l]));
+  // financeiro: só os parceiros já aprovados (o mês pode estar aberto, mas o que ele paga já está aprovado)
+  if (opt.soAprovados) { const ok = new Set(fech.filter(f => f.valor_aprovado != null).map(f => f.parceiro_id)); fech = fech.filter(f => ok.has(f.parceiro_id)); nfs = nfs.filter(n => ok.has(n.parceiro_id)); }
   const ids = [...new Set(fech.map(f => f.parceiro_id).concat(nfs.map(n => n.parceiro_id)))];
   const n_ = v => Number(v) || 0;
   let L = ids.map(id => { const p = pm[id] || {}; const f = fech.find(x => x.parceiro_id === id); const ns = nfs.filter(x => x.parceiro_id === id);
@@ -2417,7 +2419,7 @@ async function documentosFin(box, D, c) {
       </tbody></table></div></section>`; }).join('') || '<p class="nota">Nenhum parceiro neste filtro.</p>'}
     <p class="nota">Clique no documento para abrir (o link vale 10 minutos). "GSM" é a conferência da NF pela equipe de fechamento (valor e CNPJ). A pasta guarda todas as competências: use "Buscar em todas as NFs" para achar uma NF antiga por número, CNPJ, praça ou valor.</p>`;
   ligarArquivos(cx);
-  const re = () => documentosFin(box, D, c);
+  const re = () => documentosFin(box, D, c, opt);
   cx.querySelectorAll('[data-dd]').forEach(b => b.onclick = () => { D.docDia = b.dataset.dd; re(); });
   cx.querySelectorAll('[data-ds]').forEach(b => b.onclick = () => { D.docSit = b.dataset.ds; re(); });
   const fi = cx.querySelector('#docf'); fi.oninput = () => { D.docFiltro = fi.value; clearTimeout(D.docT); D.docT = setTimeout(async () => { await re(); const f2 = box.querySelector('#docf'); if (f2) { f2.focus(); f2.setSelectionRange(f2.value.length, f2.value.length); } }, 350); };
@@ -2914,9 +2916,13 @@ async function formNFMulti(files, c, alvo) {
 
 async function vNotas() {
   const m = $('#main');
-  m.innerHTML = `<div class="topo"><div><h1>Notas fiscais</h1><p>NFs dos parceiros com valor aprovado. A NF sai pelo valor líquido (aprovado − adiantamento) e pode ser dividida em várias, desde que a soma bata. Confira cada uma; quando a soma conferida bater, o parceiro passa para "NF conferida".</p></div>${seletorComp(false)}</div><div id="nfs" class="carregando">Carregando…</div>`;
+  m.innerHTML = `<div class="topo"><div><h1>Notas fiscais</h1><p>NFs dos parceiros com valor aprovado. A NF sai pelo valor líquido (aprovado − adiantamento) e pode ser dividida em várias, desde que a soma bata. Confira cada uma; quando a soma conferida bater, o parceiro passa para "NF conferida".</p></div>${seletorComp(false)}</div>
+  <div class="alterna" role="group" style="display:inline-flex;align-self:flex-start;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface);margin-bottom:6px">${[['conf', 'Conferência da GSM'], ['docs', 'Pasta de documentos e financeiro']].map(([k, t]) => `<button type="button" data-nm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${(S.nfModo || 'conf') === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
+  <div id="nfs" class="carregando">Carregando…</div>`;
   ligarSeletor(vNotas);
+  m.querySelectorAll('[data-nm]').forEach(b => b.onclick = () => { S.nfModo = b.dataset.nm; vNotas(); });
   const c = comp();
+  if (S.nfModo === 'docs') { const bx = $('#nfs'); bx.className = ''; S.docSt = S.docSt || {}; return documentosFin(bx, S.docSt, c, {}); }
   const [res0, nfs, parcs, fpag] = await Promise.all([
     todas(() => sb.from('nf_resumo').select('*').eq('competencia_id', c.id)),
     todas(() => sb.from('notas_fiscais').select('*').eq('competencia_id', c.id).eq('tipo', 'fechamento').order('enviado_em')),
@@ -3228,7 +3234,7 @@ function desenharDiretoria(el) {
     ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi eco"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
-  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento'], ['docs', 'Documentos (NFs)']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']].concat(S.perfil?.papel === 'financeiro' ? [['docs', 'Notas fiscais']] : []) : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
   <div data-sec="geral" style="display:flex;flex-direction:column;gap:22px"><div id="dgeral"></div></div>
   <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
@@ -3278,7 +3284,7 @@ function desenharDiretoria(el) {
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
   if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
   if (D.aba === 'carteira') carteiraDir($('#dcart'), D);
-  if (D.aba === 'docs') documentosFin($('#ddocs'), D, c);
+  if (D.aba === 'docs') documentosFin($('#ddocs'), D, c, { soAprovados: true });
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
