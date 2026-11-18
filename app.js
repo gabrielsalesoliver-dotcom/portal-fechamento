@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1020';
+const VERSAO = '2026.11.18-1030';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2360,23 +2360,18 @@ function paginasDe(txt, total) {
   const out = new Set(); t.split(/[,;\s]+/).forEach(parte => { const m = parte.match(/^(\d+)(?:-(\d+))?$/); if (!m) return; const a = +m[1], b = m[2] ? +m[2] : a; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) if (i >= 1 && i <= total) out.add(i - 1); });
   return [...out].sort((a, b) => a - b);
 }
-async function compiladoNFs(box, compId) {
-  box.innerHTML = '<div class="carregando">Carregando as NFs do mês…</div>';
+async function compiladoNFs(box, lote) {
+  box.innerHTML = '<div class="carregando">Carregando as NFs do lote…</div>';
   try {
     const PDFLib = await carregarPdfLib();
-    const [comp] = await q(sb.from('competencias').select('id,mes').eq('id', compId));
-    const [nfs, parcs] = await Promise.all([
-      todas(() => sb.from('notas_fiscais').select('id,parceiro_id,numero,valor,arquivo_path,anexos,tipo,status').eq('competencia_id', compId).in('status', ['recebida', 'conferida'])),
-      q(sb.rpc('parceiros_resumo'))]);
-    const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
+    const { linhas, comp } = await dadosLote(lote);
     const visto = new Set(); const docs = [];
-    nfs.filter(n => n.arquivo_path).sort((a, b) => { const pa = pm[a.parceiro_id] || {}, pb = pm[b.parceiro_id] || {}; return (dataPagamento(pa.dia_pagamento, comp.mes) || '9').localeCompare(dataPagamento(pb.dia_pagamento, comp.mes) || '9') || (pa.regiao || '').localeCompare(pb.regiao || '') || String(a.numero).localeCompare(String(b.numero)); })
-      .forEach(n => { const p = pm[n.parceiro_id] || {};
-        // fatura rateada entre regiões (Gritsch): o mesmo arquivo entra uma vez só
-        if (visto.has(n.arquivo_path)) return; visto.add(n.arquivo_path);
-        docs.push({ p, path: n.arquivo_path, rot: `${n.tipo === 'adiantamento' ? 'Adiantamento · ' : ''}NF ${n.numero || 's/nº'}`, tipo: 'nf', valor: n.valor });
-        (n.anexos || []).forEach(x => { if (!x.path || visto.has(x.path)) return; visto.add(x.path); docs.push({ p, path: x.path, rot: `${x.tipo || 'Anexo'} da NF ${n.numero || ''}`, tipo: /boleto/i.test(x.tipo || x.nome || '') ? 'boleto' : 'anexo' }); }); });
-    if (!docs.length) { box.innerHTML = '<p class="nota">Nenhuma NF recebida neste mês ainda.</p>'; return; }
+    (linhas || []).slice().sort((a, b) => (a.regiao || '').localeCompare(b.regiao || '')).forEach(l => (l.nfs || []).filter(n => n.arquivo_path).forEach(n => { const p = { id: l.id, regiao: l.regiao, nome: l.nome };
+      // fatura rateada entre regiões (Gritsch): o mesmo arquivo entra uma vez só
+      if (visto.has(n.arquivo_path)) return; visto.add(n.arquivo_path);
+      docs.push({ p, path: n.arquivo_path, rot: `${l.adiantamento ? 'Adiantamento · ' : ''}NF ${n.numero || 's/nº'}`, tipo: 'nf', valor: n.valor });
+      (n.anexos || []).forEach(x => { if (!x.path || visto.has(x.path)) return; visto.add(x.path); docs.push({ p, path: x.path, rot: `${x.tipo || 'Anexo'} da NF ${n.numero || ''}`, tipo: /boleto/i.test(x.tipo || x.nome || '') ? 'boleto' : 'anexo' }); }); }));
+    if (!docs.length) { box.innerHTML = '<p class="nota">Nenhuma NF em PDF neste lote ainda.</p>'; return; }
     let feitos = 0; const fila = docs.slice();
     const um = async d => { const { data, error } = await sb.storage.from('envios').download(d.path); box.innerHTML = `<div class="carregando">Lendo os arquivos… ${++feitos} de ${docs.length}</div>`;
       if (error || !data) { d.erro = 'não baixou'; return; }
@@ -2390,7 +2385,7 @@ async function compiladoNFs(box, compId) {
     const conta = () => docs.reduce((a, d) => a + (d.erro ? 0 : paginasDe(d.sel, d.pags).length), 0);
     box.innerHTML = `<div class="msg ${longos.length ? 'alerta' : 'ok'}" style="margin:0 0 10px">${docs.length} arquivo(s) de ${new Set(docs.map(d => d.p.id)).size} parceiros. <b>${longos.length} com mais de 2 páginas</b>${longos.length ? `: ${longos.map(d => `${esc(d.p.regiao || '—')} (${esc(d.rot)}, ${d.pags} pág.)`).join(' · ')}. Nesses, o compilado leva só a 1ª página; boletos vão inteiros.` : '.'} Ajuste a coluna "Imprimir" se precisar: "todas", "1", "1-2", "1,3" ou "0" para tirar.</div>
       <div class="tabela" style="max-height:480px;overflow:auto"><table><thead><tr><th>Parceiro</th><th>Documento</th><th class="n">Páginas</th><th>Imprimir</th></tr></thead><tbody>
-      ${docs.map((d, i) => `<tr style="${d.pags > 2 ? 'background:var(--hl-row)' : ''}"><td><b>${esc(d.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(d.p.dia_pagamento || '')}</span></td><td>${esc(d.rot)}${d.erro ? ` <span class="pill alerta">${d.erro}</span>` : ''}</td><td class="n">${d.pags ?? '—'}</td>
+      ${docs.map((d, i) => `<tr style="${d.pags > 2 ? 'background:var(--hl-row)' : ''}"><td><b>${esc(d.p.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(d.p.nome || '')}</span></td><td>${esc(d.rot)}${d.erro ? ` <span class="pill alerta">${d.erro}</span>` : ''}</td><td class="n">${d.pags ?? '—'}</td>
         <td><input class="peq" data-cpg="${i}" value="${esc(d.sel)}" style="width:90px" ${d.erro ? 'disabled' : ''}></td></tr>`).join('')}</tbody></table></div>
       <div class="linha" style="margin-top:10px;align-items:center"><button class="btn peq" id="cp-gerar">Gerar PDF para impressão</button><span class="nota" id="cp-tot">${conta()} página(s) no total</span></div>`;
     box.querySelectorAll('[data-cpg]').forEach(inp => inp.oninput = () => { docs[+inp.dataset.cpg].sel = inp.value; box.querySelector('#cp-tot').textContent = `${conta()} página(s) no total`; });
@@ -2400,7 +2395,7 @@ async function compiladoNFs(box, compId) {
           if (d.img) { const im = /\.png$/i.test(d.path) ? await out.embedPng(d.bytes) : await out.embedJpg(d.bytes); const W = 595.28, H = 841.89, k = Math.min((W - 40) / im.width, (H - 40) / im.height, 1);
             const page = out.addPage([W, H]); page.drawImage(im, { x: (W - im.width * k) / 2, y: (H - im.height * k) / 2, width: im.width * k, height: im.height * k }); continue; }
           const src = await PDFLib.PDFDocument.load(d.bytes, { ignoreEncryption: true }); (await out.copyPages(src, pg)).forEach(pp => out.addPage(pp)); }
-        baixarBlob(new Blob([await out.save()], { type: 'application/pdf' }), `NFs_${comp.mes.slice(0, 7)}_impressao.pdf`);
+        baixarBlob(new Blob([await out.save()], { type: 'application/pdf' }), `NFs_${String(lote.rotulo || 'lote').replace(/\s+/g, '')}_${lote.data_pagamento}_impressao.pdf`);
         b.textContent = 'Gerar PDF para impressão'; } catch (e) { b.textContent = 'Gerar PDF para impressão'; alertaTopo('Não foi possível montar o PDF: ' + e.message); }
       b.disabled = false; };
   } catch (e) { box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; }
@@ -2459,21 +2454,19 @@ async function listaLotes(box, compId, admin) {
   const lotes = (await q(sb.from('lotes_financeiro').select('*').eq('competencia_id', compId).order('data_pagamento'))).filter(l => l.status !== 'desfeito');
   const fech = lotes.length ? (await todas(() => sb.from('fechamento_parceiro').select('parceiro_id,lote_id,pago_em').in('lote_id', lotes.map(l => l.id))))
     .concat((await q(sb.from('adiantamentos').select('parceiro_id,lote_id,pago_em').in('lote_id', lotes.map(l => l.id)))).map(a => ({ ...a, adi: true }))) : [];
-  const comp_ = `<div class="bloco" style="border-top-color:var(--rule)"><div class="linha" style="justify-content:space-between;align-items:center"><div><b style="font-size:16px">Compilado para impressão</b><br><span class="nota">Todas as NFs e boletos do mês num PDF só. Arquivos com mais de 2 páginas (ex.: fatura Gritsch) entram só com a 1ª página.</span></div><button class="btn sec peq" data-compil>Montar compilado (PDF)</button></div><div data-compilbox></div></div>`;
-  const ligaComp = () => { const bc = box.querySelector('[data-compil]'); if (bc) bc.onclick = () => { bc.disabled = true; compiladoNFs(box.querySelector('[data-compilbox]'), compId).finally(() => { bc.disabled = false; }); }; };
-  if (!lotes.length) { box.innerHTML = `<p class="nota">Nenhum lote gerado neste mês.${admin ? '' : ' A GSM gera os lotes depois da aprovação dos parceiros.'}</p>` + comp_; ligaComp(); return; }
+  if (!lotes.length) { box.innerHTML = `<p class="nota">Nenhum lote gerado neste mês.${admin ? '' : ' A GSM gera os lotes depois da aprovação dos parceiros.'}</p>`; return; }
   const hoje = new Date().toISOString().slice(0, 10);
-  box.innerHTML = comp_ + lotes.map(l => { const fs = fech.filter(f => f.lote_id === l.id); const pagos = fs.filter(f => f.pago_em).length; const [r, k] = ST_LOTE[l.status] || [l.status, ''];
+  box.innerHTML = lotes.map(l => { const fs = fech.filter(f => f.lote_id === l.id); const pagos = fs.filter(f => f.pago_em).length; const [r, k] = ST_LOTE[l.status] || [l.status, ''];
     return `<div class="bloco" style="border-top-color:var(--rule)" data-lote="${l.id}">
       <div class="linha" style="justify-content:space-between"><div><b style="font-size:16px">${esc(l.rotulo || l.descricao)}</b> · ${fmtD(l.data_pagamento)} <span class="pill ${k}">${r}</span></div>
-        <div class="linha"><button class="btn peq" data-pac="${l.id}">Pacote completo (.zip)</button><button class="btn sec peq" data-capa="${l.id}">Capa (.xlsx)</button><button class="btn sec peq" data-pts="${l.id}">Pontos (.xlsx)</button><button class="btn sec peq" data-zip="${l.id}">NFs (.zip)</button>
+        <div class="linha"><button class="btn peq" data-pac="${l.id}">Pacote completo (.zip)</button><button class="btn sec peq" data-capa="${l.id}">Capa (.xlsx)</button><button class="btn sec peq" data-pts="${l.id}">Pontos (.xlsx)</button><button class="btn sec peq" data-compil="${l.id}" title="NFs e boletos do lote num PDF só, para imprimir (arquivos com mais de 2 páginas só com a 1ª)">Compilado p/ imprimir (PDF)</button><button class="btn sec peq" data-zip="${l.id}">NFs (.zip)</button>
         ${admin && l.status === 'gerado' ? `<button class="btn sec peq" data-env="${l.id}">Marcar enviado</button>` : ''}${admin && !pagos ? `<button class="btn sec peq" data-desf="${l.id}">Desfazer lote</button>` : ''}</div></div>
       <div class="kpis"><div class="kpi neutro"><small>A pagar neste lote</small><b>${BRL2(l.total)}</b><span>${fs.filter(f => !f.adi).length} fechamento(s)${fs.some(f => f.adi) ? ` · ${fs.filter(f => f.adi).length} adiantamento(s)` : ''}</span></div>
         <div class="kpi ${pagos < fs.length ? 'alerta' : ''}"><small>Pagos</small><b>${pagos} de ${fs.length}</b><span>${l.pago_em ? 'concluído em ' + fmtD(l.pago_em) : l.enviado_em ? 'enviado ' + fmtDH(l.enviado_em) : 'ainda não enviado'}</span></div></div>
       ${pagos < fs.length ? `<div class="linha"><label class="campo">Pago em<input type="date" class="peq" data-pd="${l.id}" value="${hoje}"></label><button class="btn peq" data-pagar="${l.id}" style="align-self:flex-end">Registrar pagamento do lote</button>
-        <span class="nota" style="align-self:flex-end">Parceiros ainda sem NF conferida ficam de fora e continuam pendentes.</span></div>` : ''}<div data-msg="${l.id}"></div></div>`; }).join('');
-  ligaComp();
+        <span class="nota" style="align-self:flex-end">Parceiros ainda sem NF conferida ficam de fora e continuam pendentes.</span></div>` : ''}<div data-compilbox="${l.id}"></div><div data-msg="${l.id}"></div></div>`; }).join('');
   const L = id => lotes.find(x => x.id === id);
+  box.querySelectorAll('[data-compil]').forEach(b => b.onclick = () => { b.disabled = true; compiladoNFs(box.querySelector(`[data-compilbox="${b.dataset.compil}"]`), L(b.dataset.compil)).finally(() => { b.disabled = false; }); });
   box.querySelectorAll('[data-capa]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarCapa(L(b.dataset.capa)); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
   box.querySelectorAll('[data-pac]').forEach(b => b.onclick = async () => { b.disabled = true; try { await baixarPacote(L(b.dataset.pac), b); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
   box.querySelectorAll('[data-pts]').forEach(b => b.onclick = async () => { b.disabled = true; try { const r = await pontosLote(L(b.dataset.pts)); baixarBlob(new Blob([r.buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), r.nome); } catch (e) { alertaTopo(e.message); } b.disabled = false; });
