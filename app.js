@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1535';
+const VERSAO = '2026.11.18-1610';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -489,7 +489,7 @@ function casca() {
 }
 
 // Contadores no menu (competência aberta mais recente): o que está esperando ação
-const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote', torre: 'robô(s) com falha ou atrasado' };
+const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote', torre: 'robô(s) com falha ou atrasado', operacao: 'atendimento(s) fora do previsto a revisar (7 dias)' };
 function desenharBadges() {
   const b = S.badges || {}; document.querySelectorAll('[data-badge]').forEach(el => { const n = b[el.dataset.badge] || 0;
     el.hidden = !n; el.textContent = n > 99 ? '99+' : n; el.title = n ? `${n} ${BADGE_TIT[el.dataset.badge] || ''}${S.badgesMes ? ' · ' + S.badgesMes : ''}` : ''; });
@@ -497,6 +497,8 @@ function desenharBadges() {
 async function atualizarBadges(forcar = false) {
   if (!forcar && S.badgesEm && Date.now() - S.badgesEm < 10000) return;
   S.badgesEm = Date.now();
+  (() => { const h = new Date(), a = new Date(h); a.setDate(a.getDate() - 6);
+    sb.rpc('umov_extras', { p_de: isoDia(a), p_ate: isoDia(h) }).then(({ data }) => { if (!data) return; S.badges = { ...(S.badges || {}), operacao: data.filter(r => !r.rev_situacao).length }; desenharBadges(); }); })();
   sb.rpc('torre_robos').then(({ data }) => { if (!data) return; S.badges = { ...(S.badges || {}), torre: (data.robos || []).filter(r => ['falha', 'atrasado'].includes(statusRobo(r)[0])).length }; desenharBadges(); });
   try {
     const c = (S.comps || []).filter(x => x.status === 'aberta').sort((a, b) => b.mes.localeCompare(a.mes))[0]; if (!c) return;
@@ -523,7 +525,7 @@ async function atualizarBadges(forcar = false) {
       if (!e && mvU[p.id] && ['gsm', 'ok'].includes(grupoMov(mvU[p.id].status))) return; // sem envio, mas a bola está com a GSM (movimentação manual)
       if (!e || e.status === 'recusado' || divs.some(d => d.envio_id === e.id)) bd.pendencias++; else bd.conferencia++; });
     bd.adiantamentos = adis.filter(a => a.status === 'solicitado').length + fech.filter(f => f.antec_status === 'solicitada').length;
-    S.badges = { ...bd, torre: (S.badges || {}).torre || 0 }; S.badgesMes = nomeMes(c.mes); desenharBadges();
+    S.badges = { ...bd, torre: (S.badges || {}).torre || 0, operacao: (S.badges || {}).operacao || 0 }; S.badgesMes = nomeMes(c.mes); desenharBadges();
   } catch (e) { /* contadores são só um aviso */ }
 }
 
@@ -3052,6 +3054,7 @@ async function detalheConferencia() {
   m.innerHTML = '<div class="carregando">Carregando…</div>';
   const envs = await q(sb.from('envios').select('*').eq('competencia_id', c.id).eq('parceiro_id', p.id).order('versao', { ascending: false }));
   const e = envs.find(x => x.status !== 'substituido') || envs[0];
+  avisoExtrasParceiro(m, c, p);
   const [divs, acoes, ajs, res, adisP] = await Promise.all([
     todas(() => sb.from('divergencias').select('*').eq('envio_id', e.id).order('operacao').order('ref_linha')),
     todas(() => sb.from('acoes_parceiro').select('*').eq('parceiro_id', p.id).order('criado_em')),
@@ -4606,9 +4609,10 @@ async function vOperacao(el) {
   if (O.per !== 'custom') [O.de, O.ate] = periodoOp(O.per);
   el.innerHTML = '<div class="carregando">Carregando os atendimentos do Umov…</div>';
   const args = { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null, p_cliente: O.cli || null };
-  let R, PR; try { [R, PR] = await Promise.all([q(sb.rpc('umov_painel', args)), q(sb.rpc('umov_prev_real', args)).catch(e => ({ erro: e.message }))]); }
+  let R, PR, EX; try { [R, PR, EX] = await Promise.all([q(sb.rpc('umov_painel', args)), q(sb.rpc('umov_prev_real', args)).catch(e => ({ erro: e.message })),
+    todas(() => sb.rpc('umov_extras', { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null })).catch(e => ({ erro: e.message }))]); }
   catch (e) { el.innerHTML = `<div class="msg alerta">Não foi possível carregar: ${esc(e.message)}</div>`; return; }
-  O.R = R; O.PR = PR; desenharOperacao(el);
+  O.R = R; O.PR = PR; O.EX = EX; desenharOperacao(el);
 }
 function desenharOperacao(el) {
   const O = S.oper, R = O.R || {}; const k = R.kpi || {}, ko = R.kpi_op || {};
@@ -4638,6 +4642,7 @@ function desenharOperacao(el) {
     <div class="kpi neutro"><small>Cancelados</small><b>${fmtN(k.cancelado || 0)}</b><span>no período</span></div>
   </div>
   <section class="bloco"><h2>Previsto x Realizado · Malote</h2><p class="sub"><b>Previsto</b>: carteira de pontos cadastrada hoje no portal (frequência de cada ponto nos dias úteis do período; quinzenal e mensal rateados pelos dias úteis do mês). <b>Realizado</b>: atendimentos retornados de campo no Umov, lidos pelo robô. Kits ficam fora.</p><div id="op-pr"></div></section>
+  <section class="bloco" id="op-exb"><h2>Atendimentos fora do previsto</h2><p class="sub">Atendimentos no Umov que a carteira do portal não prevê: fora dos dias da frequência, acima do quinzenal/mensal, repetidos no dia, em ponto inativo ou fora da carteira. Mostra quem incluiu no Umov e por onde (painel web = inclusão manual, normalmente o SAC). Marque cada um como OK ou Não autorizado.</p><div id="op-ex"><div class="carregando">Carregando…</div></div></section>
   ${umDia ? '' : `<section class="bloco"><h2>Dia a dia</h2><div id="op-graf" style="position:relative"></div></section>`}
   <section class="bloco"><h2>Por parceiro</h2><p class="sub">Clique no parceiro para filtrar a tela. Ordene pelas colunas.</p><div id="op-parcs"></div></section>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:22px">
@@ -4657,7 +4662,7 @@ function desenharOperacao(el) {
   el.querySelector('#op-bcli').oninput = e => { O.bcli = e.target.value; clientesOp(el); };
   el.querySelector('#op-xls').onclick = () => exportarOp().catch(e => alertaTopo(e.message));
   if (!umDia) graficoOp(el.querySelector('#op-graf'), R.dia || []);
-  parceirosOp(el); clientesOp(el); listaOp(el); prevRealOp(el);
+  parceirosOp(el); clientesOp(el); listaOp(el); prevRealOp(el); extrasOp(el);
   const oc = R.ocorrencias || []; const mx = Math.max(1, ...oc.map(o => o.n));
   el.querySelector('#op-oc').innerHTML = oc.length ? oc.map(o => `<div style="display:grid;grid-template-columns:minmax(120px,190px) 1fr 54px;gap:8px;align-items:center;margin:5px 0;font-size:14px">
       <span title="${o.parceiros} parceiro(s)">${esc(o.status)}</span><span style="background:var(--rule-soft);border-radius:4px;height:14px"><span style="display:block;height:14px;border-radius:4px;background:var(--alert);width:${100 * o.n / mx}%"></span></span><b class="num" style="text-align:right">${fmtN(o.n)}</b></div>`).join('') : '<p class="nota">Nenhuma ocorrência no período.</p>';
@@ -4885,4 +4890,68 @@ function graficoPR(box, dias, hoje) {
       tip.innerHTML = `<b>${fmtD(d.d)}</b>${d.d === hoje ? ' (hoje, em andamento)' : ''}<br>Previsto: ${(+d.prev).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}<br><span class="eco">Realizado: ${fmtN(d.real)}${d.prev ? ` (${Math.round(100 * d.real / d.prev)}%)` : ''}</span>${d.ab ? `<br><span style="color:var(--brand)">Sem baixa: ${fmtN(d.ab)}</span>` : ''}`;
       tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 220) + 'px'; tip.style.top = (ev.clientY - r.top - 10) + 'px'; };
     g.onmouseleave = () => tip.style.display = 'none'; });
+}
+
+// ===== Atendimentos fora do previsto (incluídos no Umov além da carteira) =====
+const CANAL_CLS = { 'Painel web do Umov': 'marca', 'App do motorista': '', 'Importação da programação': 'escuro' };
+function extrasOp(el) {
+  const O = S.oper, box = el.querySelector('#op-ex'); if (!box) return; const X = O.EX;
+  if (!X || X.erro) { box.innerHTML = `<div class="msg alerta">${esc(X?.erro || 'Sem dados.')}</div>`; return; }
+  O.exF = O.exF || 'rever'; O.exCanal = O.exCanal ?? ''; O.exBusca = O.exBusca || ''; O.exSel = O.exSel || new Set();
+  const rever = X.filter(r => !r.rev_situacao), web = X.filter(r => r.canal === 'Painel web do Umov'), nao = X.filter(r => r.rev_situacao === 'nao_autorizado');
+  const canais = [...new Set(X.map(r => r.canal))].sort(); const f = norm(O.exBusca);
+  const L = X.filter(r => O.exF === 'todos' || (O.exF === 'rever' ? !r.rev_situacao : O.exF === 'web' ? r.canal === 'Painel web do Umov' : r.rev_situacao))
+    .filter(r => !O.exCanal || r.canal === O.exCanal)
+    .filter(r => !f || norm([r.cod_int, r.local_desc, r.cliente, r.cidade, r.parceiro, r.inserido_por, r.inserido_login, r.motivo].join(' ')).includes(f));
+  const motivos = {}; X.forEach(r => { const k = r.motivo.replace(/\s*\(.*$/, ''); motivos[k] = (motivos[k] || 0) + 1; });
+  const quem = {}; X.filter(r => r.canal === 'Painel web do Umov').forEach(r => { const k = r.inserido_por || r.inserido_login || '—'; quem[k] = (quem[k] || 0) + 1; });
+  const btn = (k, n) => `<button type="button" data-exf="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.exF === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`;
+  box.innerHTML = `<div class="kpis" style="margin-top:6px">
+      <div class="kpi ${X.length ? 'alerta' : 'neutro'}"><small>Fora do previsto</small><b>${fmtN(X.length)}</b><span>no período</span></div>
+      <div class="kpi ${rever.length ? '' : 'neutro'}"><small>A revisar</small><b style="${rever.length ? 'color:var(--brand)' : ''}">${fmtN(rever.length)}</b><span>sem OK ou recusa</span></div>
+      <div class="kpi ${web.length ? 'alerta' : 'neutro'}"><small>Incluídos à mão (painel web)</small><b>${fmtN(web.length)}</b><span>${Object.keys(quem).length} pessoa(s)</span></div>
+      <div class="kpi neutro"><small>Não autorizados</small><b>${fmtN(nao.length)}</b><span>não pagar ao parceiro</span></div></div>
+    ${X.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin:8px 0 14px">
+      <div><h3 style="margin:0 0 6px">Por motivo</h3>${Object.entries(motivos).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="linha" style="justify-content:space-between;font-size:14px;border-bottom:1px solid var(--rule-soft);padding:4px 0"><span>${esc(k)}</span><b>${fmtN(n)}</b></div>`).join('')}</div>
+      <div><h3 style="margin:0 0 6px">Quem incluiu pelo painel web</h3>${Object.keys(quem).length ? Object.entries(quem).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="linha" style="justify-content:space-between;font-size:14px;border-bottom:1px solid var(--rule-soft);padding:4px 0"><span>${esc(k)}</span><b>${fmtN(n)}</b></div>`).join('') : '<p class="nota">Nenhuma inclusão manual no período.</p>'}</div></div>` : ''}
+    <div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${btn('rever', `A revisar (${rever.length})`)}${btn('web', 'Painel web')}${btn('revisados', 'Revisados')}${btn('todos', 'Todos')}</div>
+      <div class="linha" style="gap:8px"><select id="ex-canal" style="min-height:40px"><option value="">Todos os canais</option>${canais.map(k => `<option ${O.exCanal === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select>
+      <input type="search" id="ex-busca" placeholder="Buscar ponto, parceiro, quem incluiu" value="${esc(O.exBusca)}" style="min-height:40px;min-width:240px"></div></div>
+    <div class="linha" style="gap:8px;margin:10px 0" id="ex-acoes"><span class="nota" id="ex-nsel">${O.exSel.size ? O.exSel.size + ' selecionado(s)' : 'Selecione para marcar em lote'}</span>
+      <button class="btn sec peq" data-exrev="ok" ${O.exSel.size ? '' : 'disabled'}>Marcar OK</button><button class="btn sec peq" data-exrev="nao_autorizado" ${O.exSel.size ? '' : 'disabled'}>Não autorizado</button><button class="btn sec peq" data-exrev="" ${O.exSel.size ? '' : 'disabled'}>Desfazer</button></div>
+    ${L.length ? `<div class="tabela" style="max-height:620px;overflow:auto"><table><thead><tr><th><input type="checkbox" id="ex-all" aria-label="Selecionar todos"></th><th>Data</th><th>Ponto</th><th>Parceiro</th><th>Por que está fora</th><th>Quem incluiu</th><th>Situação no Umov</th><th>Revisão</th></tr></thead><tbody>
+      ${L.slice(0, 500).map(r => `<tr><td><input type="checkbox" data-exid="${r.id}" ${O.exSel.has(String(r.id)) ? 'checked' : ''}></td><td style="white-space:nowrap">${fmtD(r.data)}</td>
+        <td>${esc(r.cod_int || '—')}<br><span class="nota">${esc(r.local_desc || '')}${r.cidade ? ' · ' + esc(r.cidade) : ''}</span></td><td>${esc(r.parceiro)}<br><span class="nota">${esc(r.agente || '')}</span></td>
+        <td><span class="pill alerta">${esc(r.motivo)}</span>${r.frequencia ? `<br><span class="nota">frequência: ${esc(r.frequencia)}</span>` : ''}</td>
+        <td><b>${esc(r.inserido_por || '—')}</b>${r.inserido_login ? ` <span class="nota">(${esc(r.inserido_login)})</span>` : ''}<br><span class="pill ${CANAL_CLS[r.canal] ?? ''}">${esc(r.canal)}</span>${r.inserido_em ? ` <span class="nota">${fmtDH(r.inserido_em)}</span>` : ''}</td>
+        <td>${esc(r.situacao || '—')}${r.status_gsm ? `<br><span class="nota">${esc(r.status_gsm)}</span>` : ''}</td>
+        <td>${r.rev_situacao ? `<span class="pill ${r.rev_situacao === 'ok' ? '' : 'marca'}">${r.rev_situacao === 'ok' ? 'OK' : 'Não autorizado'}</span><br><span class="nota">${esc(r.rev_por || '')} ${fmtDH(r.rev_em)}${r.rev_obs ? ' · ' + esc(r.rev_obs) : ''}</span>` : '<span class="nota">a revisar</span>'}</td></tr>`).join('')}</tbody></table></div>
+      <p class="nota">${L.length > 500 ? `Mostrando 500 de ${fmtN(L.length)}; use a busca ou os filtros.` : `${fmtN(L.length)} atendimento(s).`} Quem incluiu e o canal aparecem conforme o robô relê cada atendimento no Umov.</p>`
+      : `<p class="nota">${O.exF === 'rever' ? 'Nada a revisar no período.' : 'Nenhum atendimento nesse filtro.'}</p>`}`;
+  box.querySelectorAll('[data-exf]').forEach(b => b.onclick = () => { O.exF = b.dataset.exf; O.exSel.clear(); extrasOp(el); });
+  box.querySelector('#ex-canal').onchange = e => { O.exCanal = e.target.value; extrasOp(el); };
+  const bx = box.querySelector('#ex-busca'); bx.oninput = e => { O.exBusca = e.target.value; extrasOp(el); const n = el.querySelector('#ex-busca'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+  const marcar = () => { const n = O.exSel.size; box.querySelector('#ex-nsel').textContent = n ? n + ' selecionado(s)' : 'Selecione para marcar em lote'; box.querySelectorAll('[data-exrev]').forEach(b => b.disabled = !n); };
+  box.querySelectorAll('[data-exid]').forEach(cb => cb.onchange = () => { cb.checked ? O.exSel.add(cb.dataset.exid) : O.exSel.delete(cb.dataset.exid); marcar(); });
+  const all = box.querySelector('#ex-all'); if (all) all.onchange = () => { box.querySelectorAll('[data-exid]').forEach(cb => { cb.checked = all.checked; all.checked ? O.exSel.add(cb.dataset.exid) : O.exSel.delete(cb.dataset.exid); }); marcar(); };
+  box.querySelectorAll('[data-exrev]').forEach(b => b.onclick = async () => { const sit = b.dataset.exrev || null; let obs = null;
+    if (sit === 'nao_autorizado') { obs = prompt('Motivo (opcional): por que não foi autorizado?') ; if (obs === null) return; }
+    b.disabled = true;
+    try { await q(sb.rpc('revisar_umov_extra', { p_ids: [...O.exSel].map(Number), p_situacao: sit, p_obs: obs }));
+      O.EX = await todas(() => sb.rpc('umov_extras', { p_de: O.de, p_ate: O.ate, p_parceiro: O.parc || null })); O.exSel.clear(); extrasOp(el); atualizarBadges(true); }
+    catch (e) { b.disabled = false; alertaTopo(e.message); } });
+}
+// Aviso na conferência do parceiro: atendimentos fora do previsto no mês
+async function avisoExtrasParceiro(m, c, p) {
+  try {
+    const fim = new Date(+c.mes.slice(0, 4), +c.mes.slice(5, 7), 0); const ate = isoDia(fim);
+    const X = await todas(() => sb.rpc('umov_extras', { p_de: c.mes.slice(0, 10), p_ate: ate, p_parceiro: p.id })); if (!X.length) return;
+    const web = X.filter(r => r.canal === 'Painel web do Umov'); const nao = X.filter(r => r.rev_situacao === 'nao_autorizado'); const rev = X.filter(r => !r.rev_situacao);
+    const quem = [...new Set(web.map(r => r.inserido_por || r.inserido_login).filter(Boolean))];
+    const d = document.createElement('div'); d.className = 'msg alerta'; d.style.marginBottom = '14px';
+    d.innerHTML = `<b>${fmtN(X.length)} atendimento(s) fora do previsto no Umov em ${nomeMes(c.mes)}.</b> ${web.length ? `${fmtN(web.length)} incluído(s) à mão pelo painel web${quem.length ? ' por ' + quem.slice(0, 4).map(esc).join(', ') + (quem.length > 4 ? '…' : '') : ''}. ` : ''}${nao.length ? `<b>${fmtN(nao.length)} marcado(s) como não autorizado.</b> ` : ''}${rev.length ? `${fmtN(rev.length)} ainda a revisar. ` : ''}<a href="#" id="av-ex">Ver na Operação ao vivo</a>`;
+    const topo = m.querySelector('.topo'); if (!topo || !document.body.contains(m)) return; topo.after(d);
+    d.querySelector('#av-ex').onclick = ev => { ev.preventDefault(); S.oper = { ...(S.oper || {}), per: 'custom', de: c.mes.slice(0, 10), ate, parc: p.id, cli: '', lista: 'abertos', sort: ['aberto', -1], busca: '', bcli: '', exF: 'todos' }; location.hash = '#operacao'; };
+  } catch (e) { /* aviso é só complemento */ }
 }
