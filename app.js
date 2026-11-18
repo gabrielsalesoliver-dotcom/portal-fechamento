@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1625';
+const VERSAO = '2026.11.18-1700';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -474,6 +474,8 @@ function casca() {
   app.innerHTML = `
   <div class="sistema">
     <aside class="menu">
+      <div class="m-barra"><img src="logo_escuro.png" alt="GSM Log"><b>${esc((MENU.flatMap(g => g[1]).find(x => x[0] === S.view) || [])[1] || '')}</b>
+        <button type="button" id="m-menu" aria-expanded="false" aria-label="Abrir o menu">☰ Menu <span class="badge" id="m-badge" hidden></span></button></div>
       <img src="logo_escuro.png" alt="GSM Log">
       <div class="tit"><small>Fechamento</small><strong>Administração</strong></div>
       <nav aria-label="Menu">
@@ -485,13 +487,15 @@ function casca() {
     <main id="main"></main>
   </div>`;
   $('#sair').onclick = sair;
+  $('#m-menu').onclick = () => { const sis = app.querySelector('.sistema'); const ab = sis.classList.toggle('menu-aberto'); $('#m-menu').setAttribute('aria-expanded', ab); $('#m-menu').firstChild.textContent = ab ? '✕ Fechar ' : '☰ Menu '; };
   desenharBadges(); atualizarBadges();
 }
 
 // Contadores no menu (competência aberta mais recente): o que está esperando ação
 const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote', torre: 'robô(s) com falha ou atrasado', operacao: 'atendimento(s) fora do previsto a revisar (7 dias)' };
 function desenharBadges() {
-  const b = S.badges || {}; document.querySelectorAll('[data-badge]').forEach(el => { const n = b[el.dataset.badge] || 0;
+  const b = S.badges || {}; const mb = document.getElementById('m-badge'); if (mb) { const t = Object.values(b).reduce((a, n) => a + (Number(n) || 0), 0); mb.hidden = !t; mb.textContent = t > 99 ? '99+' : t; }
+  document.querySelectorAll('[data-badge]').forEach(el => { const n = b[el.dataset.badge] || 0;
     el.hidden = !n; el.textContent = n > 99 ? '99+' : n; el.title = n ? `${n} ${BADGE_TIT[el.dataset.badge] || ''}${S.badgesMes ? ' · ' + S.badgesMes : ''}` : ''; });
 }
 async function atualizarBadges(forcar = false) {
@@ -1413,12 +1417,12 @@ function telaParceiro() {
   app.innerHTML = `
   <div style="min-height:100vh;display:flex;flex-direction:column">
     <header style="background:var(--panel);color:var(--on-panel);border-left:8px solid var(--brand)">
-      <div style="max-width:1100px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
+      <div class="cab" style="max-width:1100px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
         <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Portal do Parceiro</div><div style="font-size:18px;font-weight:600">${esc(p.nome)} · ${esc(p.regiao)}</div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO} · <a href="#" id="lnkpriv" style="color:inherit">Privacidade</a></small></span>
+        <div class="cab-user" style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span class="cab-email" style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO} · <a href="#" id="lnkpriv" style="color:inherit">Privacidade</a></small></span>
           ${temaBtn()}<button id="sair" style="font:inherit;font-size:13px;color:var(--on-panel);background:none;border:1px solid var(--panel-line);border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
@@ -3155,12 +3159,12 @@ async function iniciarConsulta() {
   app.innerHTML = `
   <div style="min-height:100vh;display:flex;flex-direction:column">
     <header style="background:var(--panel);color:var(--on-panel);border-left:8px solid var(--brand)">
-      <div style="max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
+      <div class="cab" style="max-width:1240px;margin:0 auto;padding:18px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
         <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
           <img src="logo_escuro.png" alt="GSM Log" style="height:34px;width:102px;object-fit:contain">
           <div><div class="eyebrow">Fechamento de última milha</div><div style="font-size:18px;font-weight:600">${S.perfil.papel === 'financeiro' ? 'Financeiro' : 'Diretoria'}</div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
+        <div class="cab-user" style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--on-dark)"><span class="cab-email" style="text-align:right">${esc(S.user.email)}<br><small style="opacity:.6">versão ${VERSAO}</small></span>
           ${temaBtn()}<button id="sair" style="font:inherit;font-size:13px;color:var(--on-panel);background:none;border:1px solid var(--panel-line);border-radius:6px;padding:8px 12px;cursor:pointer">Sair</button></div>
       </div>
     </header>
