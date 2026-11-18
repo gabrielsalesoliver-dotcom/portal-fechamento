@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1030';
+const VERSAO = '2026.11.18-1100';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2347,6 +2347,90 @@ async function baixarNFs(lote, btn) {
 }
 function baixarBlob(blob, nome) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
 
+// ---------- Documentos (NFs): pasta do financeiro por competência + busca em todas as NFs ----------
+const tipoArq = (path, tipo) => tipo || (/fatura/i.test(path || '') ? 'Fatura' : /boleto/i.test(path || '') ? 'Boleto' : /dacte|cte/i.test(path || '') ? 'DACTE' : 'NF');
+const chipArq = (path, rot) => `<a href="#" data-arq="${esc(path)}" class="pill" style="text-decoration:none;color:var(--ink);border:1px solid var(--rule);background:var(--surface);margin:2px 4px 2px 0;display:inline-block" title="Abrir o arquivo">${esc(rot)} ↗</a>`;
+function ligarArquivos(box) { box.querySelectorAll('[data-arq]').forEach(a => a.onclick = async ev => { ev.preventDefault(); const w = window.open('', '_blank');
+  const { data, error } = await sb.storage.from('envios').createSignedUrl(a.dataset.arq, 600); if (error || !data) { if (w) w.close(); return alertaTopo('Não foi possível abrir o arquivo.'); } if (w) w.location = data.signedUrl; else location.href = data.signedUrl; }); }
+async function documentosFin(box, D, c) {
+  const modo = D.docModo || 'comp';
+  const topo = `<section class="bloco" style="padding:12px 16px"><div class="linha" style="justify-content:space-between;align-items:center">
+    <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">${[['comp', `Pasta de ${nomeMes(c.mes)}`], ['busca', 'Buscar em todas as NFs']].map(([k, t]) => `<button type="button" data-dm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${modo === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${t}</button>`).join('')}</div>
+    <span class="nota">Todos os documentos de pagamento (NF, fatura, boleto, DACTE) guardados no portal, por competência. A validação do financeiro é só controle: não bloqueia o pagamento.</span></div></section><div id="docc"><div class="carregando">Carregando…</div></div>`;
+  box.innerHTML = topo;
+  box.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => { D.docModo = b.dataset.dm; documentosFin(box, D, c); });
+  const cx = box.querySelector('#docc');
+  if (modo === 'busca') {
+    cx.innerHTML = `<section class="bloco"><div class="linha"><input class="peq" id="docq" placeholder="Número da NF, CNPJ, praça, razão social ou valor (ex.: 24.710,00)" value="${esc(D.docBusca || '')}" style="flex:1 1 360px"><button class="btn peq" id="docqb">Buscar</button></div><div id="docr" style="margin-top:12px"></div></section>`;
+    const busca = async () => { const t = cx.querySelector('#docq').value.trim(); D.docBusca = t; const r = cx.querySelector('#docr'); if (t.length < 2) { r.innerHTML = '<p class="nota">Digite pelo menos 2 caracteres.</p>'; return; }
+      r.innerHTML = '<div class="carregando">Buscando…</div>';
+      try { const ls = await q(sb.rpc('buscar_nfs', { p_texto: t }));
+        r.innerHTML = ls.length ? `<div class="tabela" style="max-height:560px;overflow:auto"><table><thead><tr><th>Competência</th><th>Praça</th><th>Documento</th><th>CNPJ emitente</th><th class="n">Valor</th><th>Emissão</th><th>Arquivos</th></tr></thead><tbody>
+          ${ls.map(x => `<tr><td>${nomeMes(x.mes)}</td><td><b>${esc(x.regiao || '—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(x.razao_social || '')}</span></td><td>${x.tipo === 'adiantamento' ? 'Adiantamento · ' : ''}NF ${esc(x.numero || 's/nº')}<br><span class="pill ${x.status === 'conferida' ? 'escuro' : x.status === 'recusada' ? 'alerta' : ''}" style="font-size:11px">${esc(x.status)}</span></td><td class="num">${esc(fmtCNPJ(x.cnpj_emitente) || '—')}</td><td class="n">${BRL2(x.valor)}</td><td>${fmtD(x.data_emissao)}</td>
+            <td>${x.arquivo_path ? chipArq(x.arquivo_path, tipoArq(x.arquivo_path)) : ''}${(x.anexos || []).map(a => chipArq(a.path, tipoArq(a.path, a.tipo))).join('')}</td></tr>`).join('')}</tbody></table></div><p class="nota">${ls.length} documento(s)${ls.length === 300 ? ' (mostrando os 300 mais recentes; refine a busca)' : ''}.</p>` : '<p class="nota">Nada encontrado.</p>';
+        ligarArquivos(r); } catch (e) { r.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; } };
+    cx.querySelector('#docqb').onclick = busca; cx.querySelector('#docq').onkeydown = e => { if (e.key === 'Enter') busca(); }; if (D.docBusca) busca(); return;
+  }
+  let nfs, fech, res, val, parcs, lotes;
+  try { [nfs, fech, res, val, parcs, lotes] = await Promise.all([
+      todas(() => sb.from('notas_fiscais').select('parceiro_id,numero,valor,cnpj_emitente,data_emissao,tipo,status,arquivo_path,anexos,enviado_em').eq('competencia_id', c.id).neq('status', 'substituida')),
+      todas(() => sb.from('fechamento_parceiro').select('parceiro_id,valor_final,valor_aprovado,a_pagar,lote_id,pago_em').eq('competencia_id', c.id)),
+      todas(() => sb.from('nf_resumo').select('parceiro_id,situacao,valor_nfs,valor_esperado').eq('competencia_id', c.id)).catch(() => []),
+      todas(() => sb.from('validacao_financeiro').select('*').eq('competencia_id', c.id)),
+      q(sb.from('parceiros').select('id,regiao,nome,razao_social,cnpj,dia_pagamento,quinzenal')),
+      q(sb.from('lotes_financeiro').select('id,rotulo,data_pagamento,status').eq('competencia_id', c.id))]);
+  } catch (e) { cx.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+  const pm = Object.fromEntries(parcs.map(p => [p.id, p])), rm = Object.fromEntries(res.map(r => [r.parceiro_id, r])), vm = Object.fromEntries(val.map(v => [v.parceiro_id, v])), lm = Object.fromEntries(lotes.map(l => [l.id, l]));
+  const ids = [...new Set(fech.map(f => f.parceiro_id).concat(nfs.map(n => n.parceiro_id)))];
+  const n_ = v => Number(v) || 0;
+  let L = ids.map(id => { const p = pm[id] || {}; const f = fech.find(x => x.parceiro_id === id); const ns = nfs.filter(x => x.parceiro_id === id);
+    return { id, p, f, ns, r: rm[id], v: vm[id], dia: p.dia_pagamento || 'Sem dia cadastrado', dt: dataPagamento(p.dia_pagamento, c.mes) || '9999', aprov: f ? n_(f.valor_aprovado ?? f.valor_final) : null, vNF: ns.filter(x => x.status !== 'recusada').reduce((a, x) => a + n_(x.valor), 0) }; });
+  const sit = x => x.v?.situacao || (x.ns.length ? 'falta' : 'semnf');
+  const DIAS = [...new Set(L.map(x => x.dia))].sort((a, b) => (L.find(x => x.dia === a).dt).localeCompare(L.find(x => x.dia === b).dt));
+  const cont = k => L.filter(x => sit(x) === k).length;
+  const fDia = D.docDia || 'todos', fSit = D.docSit || 'todos', fT = norm(D.docFiltro || '');
+  const vis = L.filter(x => (fDia === 'todos' || x.dia === fDia) && (fSit === 'todos' || sit(x) === fSit) && (!fT || norm(`${x.p.regiao} ${x.p.nome} ${x.p.razao_social} ${x.p.cnpj} ${x.ns.map(n => n.numero).join(' ')}`).includes(fT)))
+    .sort((a, b) => a.dt.localeCompare(b.dt) || (a.p.regiao || '').localeCompare(b.p.regiao || ''));
+  const SIT = { validado: ['Validado', 'eco'], pendencia: ['Com pendência', 'alerta'], falta: ['Falta validar', ''], semnf: ['Sem NF', 'marca'] };
+  const GSM = { conferida: ['NF conferida', 'escuro'], a_conferir: ['GSM conferindo', ''], faltando: ['NF faltando', 'alerta'], aguardando: ['Aguardando NF', 'alerta'] };
+  const btn = (k, t, cur) => `<button class="btn ${cur === k ? '' : 'sec'} peq" ${t}>`;
+  cx.innerHTML = `<div class="kpis" style="margin-bottom:14px">
+      <div class="kpi neutro"><small>Parceiros na competência</small><b>${L.length}</b><span>${L.filter(x => x.ns.length).length} com NF no portal</span></div>
+      <div class="kpi eco"><small>Validados pelo financeiro</small><b>${cont('validado')} de ${L.filter(x => x.ns.length).length}</b><span>${L.filter(x => x.ns.length).length ? Math.round(100 * cont('validado') / L.filter(x => x.ns.length).length) : 0}% dos documentos</span></div>
+      <div class="kpi ${cont('pendencia') ? 'alerta' : 'neutro'}"><small>Com pendência</small><b>${cont('pendencia')}</b><span>anotadas pelo financeiro</span></div>
+      <div class="kpi neutro"><small>Falta validar</small><b>${cont('falta')}</b><span>${cont('semnf')} parceiro(s) ainda sem NF</span></div></div>
+    <section class="bloco" style="padding:12px 16px"><div class="linha" style="align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:14px">Pagamento:</b>
+      <button class="btn ${fDia === 'todos' ? '' : 'sec'} peq" data-dd="todos">Todos (${L.length})</button>${DIAS.map(d => `<button class="btn ${fDia === d ? '' : 'sec'} peq" data-dd="${esc(d)}">${esc(d)}${dataPagamento(d, c.mes) ? ' · ' + fmtD(dataPagamento(d, c.mes)) : ''} (${L.filter(x => x.dia === d).length})</button>`).join('')}</div>
+      <div class="linha" style="align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap"><b style="font-size:14px">Situação:</b>${[['todos', 'Todos']].concat(Object.entries(SIT).map(([k, [t]]) => [k, t])).map(([k, t]) => `<button class="btn ${fSit === k ? '' : 'sec'} peq" data-ds="${k}">${t} (${k === 'todos' ? L.length : cont(k)})</button>`).join('')}
+        <input class="peq" id="docf" placeholder="Filtrar praça, razão social, CNPJ ou nº da NF" value="${esc(D.docFiltro || '')}" style="flex:1 1 240px"><button class="btn sec peq" id="docx">Baixar Excel</button></div></section>
+    ${DIAS.filter(d => vis.some(x => x.dia === d)).map(d => { const ls = vis.filter(x => x.dia === d);
+      return `<section class="bloco"><div class="linha" style="justify-content:space-between;align-items:baseline"><h2 style="margin:0">Pagamento ${esc(d).replace(/^Dia /, "dia ")}${dataPagamento(d, c.mes) ? ' · ' + fmtD(dataPagamento(d, c.mes)) : ''}</h2><span class="nota">${ls.length} parceiro(s) · ${BRL2(ls.reduce((a, x) => a + (x.aprov || 0), 0))} aprovado · ${ls.filter(x => sit(x) === 'validado').length} validado(s)</span></div>
+      <div class="tabela"><table><thead><tr><th>Parceiro</th><th>Documentos</th><th class="n">Aprovado</th><th class="n">NF</th><th>GSM</th><th>Financeiro</th></tr></thead><tbody>
+      ${ls.map(x => { const st = sit(x); const [tS, cS] = SIT[st]; const g = x.r ? GSM[x.r.situacao] || [x.r.situacao, ''] : ['—', '']; const dif = x.aprov != null && x.ns.length && Math.abs(x.vNF - x.aprov) > 0.009;
+        return `<tr data-dp="${x.id}"><td><b>${esc(x.p.regiao || '—')}</b>${pillQ(x.p)}<br><span style="font-size:12px;color:var(--muted)">${esc(x.p.razao_social || x.p.nome || '')}<br><span class="num">${esc(fmtCNPJ(x.p.cnpj) || '')}</span></span></td>
+          <td style="min-width:220px">${x.ns.length ? x.ns.map(n => `<div style="margin-bottom:4px"><span style="font-size:12px;color:var(--muted)">${n.tipo === 'adiantamento' ? 'Adiantamento · ' : ''}NF ${esc(n.numero || 's/nº')}${n.status === 'recusada' ? ' <span class="pill alerta" style="font-size:11px">recusada</span>' : ''} · ${BRL2(n.valor)}${n.cnpj_emitente && x.p.cnpj && String(n.cnpj_emitente).replace(/\D/g, '') !== String(x.p.cnpj).replace(/\D/g, '') ? ' · <b style="color:var(--alert-ink2)">CNPJ diferente do cadastro</b>' : ''}</span><br>${n.arquivo_path ? chipArq(n.arquivo_path, tipoArq(n.arquivo_path)) : ''}${(n.anexos || []).map(a => chipArq(a.path, tipoArq(a.path, a.tipo))).join('')}</div>`).join('') : '<span class="nota">Nenhum documento enviado</span>'}</td>
+          <td class="n">${x.aprov != null ? BRL2(x.aprov) : '—'}${x.f?.pago_em ? `<br><span class="pill escuro" style="font-size:11px">Pago ${fmtD(x.f.pago_em)}</span>` : x.f?.lote_id && lm[x.f.lote_id] ? `<br><span class="pill" style="font-size:11px">${esc(lm[x.f.lote_id].rotulo || 'Lote')}</span>` : ''}</td>
+          <td class="n" style="${dif ? 'color:var(--alert-ink2);font-weight:600' : ''}">${x.ns.length ? BRL2(x.vNF) : '—'}${dif ? '<br><span style="font-size:11px">diferente do aprovado</span>' : ''}</td>
+          <td><span class="pill ${g[1]}" style="font-size:11px">${esc(g[0])}</span></td>
+          <td style="min-width:210px">${st === 'semnf' ? '<span class="nota">aguardando NF</span>' : `<span class="pill ${cS === 'eco' ? '' : cS}" style="font-size:11px;${cS === 'eco' ? 'background:var(--eco-bg);color:var(--eco)' : ''}">${tS}</span>${x.v ? `<br><span class="nota">${esc(x.v.por_nome || '')} · ${fmtDH(x.v.em)}</span>${x.v.obs ? `<br><span style="font-size:12px">${esc(x.v.obs)}</span>` : ''}` : ''}
+            <div class="linha" style="gap:6px;margin-top:6px">${st !== 'validado' ? `<button class="btn sec peq" data-dv="${x.id}">Validar</button>` : ''}${st !== 'pendencia' ? `<button class="btn sec peq" data-dpe="${x.id}">Pendência</button>` : ''}${x.v ? `<button class="btn sec peq" data-dz="${x.id}" title="Voltar para falta validar">Desfazer</button>` : ''}</div><div data-dob="${x.id}"></div>`}</td></tr>`; }).join('')}
+      </tbody></table></div></section>`; }).join('') || '<p class="nota">Nenhum parceiro neste filtro.</p>'}
+    <p class="nota">Clique no documento para abrir (o link vale 10 minutos). "GSM" é a conferência da NF pela equipe de fechamento (valor e CNPJ). A pasta guarda todas as competências: use "Buscar em todas as NFs" para achar uma NF antiga por número, CNPJ, praça ou valor.</p>`;
+  ligarArquivos(cx);
+  const re = () => documentosFin(box, D, c);
+  cx.querySelectorAll('[data-dd]').forEach(b => b.onclick = () => { D.docDia = b.dataset.dd; re(); });
+  cx.querySelectorAll('[data-ds]').forEach(b => b.onclick = () => { D.docSit = b.dataset.ds; re(); });
+  const fi = cx.querySelector('#docf'); fi.oninput = () => { D.docFiltro = fi.value; clearTimeout(D.docT); D.docT = setTimeout(async () => { await re(); const f2 = box.querySelector('#docf'); if (f2) { f2.focus(); f2.setSelectionRange(f2.value.length, f2.value.length); } }, 350); };
+  const salva = async (id, sitv, obs) => { try { await q(sb.rpc('validar_financeiro', { p_comp: c.id, p_parceiro: id, p_situacao: sitv, p_obs: obs || null })); re(); } catch (e) { alertaTopo(e.message); } };
+  cx.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => salva(b.dataset.dv, 'validado', null));
+  cx.querySelectorAll('[data-dz]').forEach(b => b.onclick = () => salva(b.dataset.dz, null, null));
+  cx.querySelectorAll('[data-dpe]').forEach(b => b.onclick = () => { const id = b.dataset.dpe; const alvo = cx.querySelector(`[data-dob="${id}"]`);
+    alvo.innerHTML = `<div class="linha" style="gap:6px;margin-top:6px"><input class="peq" placeholder="Qual a pendência? (ex.: boleto vencido)" style="flex:1 1 160px"><button class="btn peq">Salvar</button></div>`;
+    const inp = alvo.querySelector('input'); inp.focus(); const ok = () => { if (!inp.value.trim()) return alertaTopo('Descreva a pendência.'); salva(id, 'pendencia', inp.value); };
+    alvo.querySelector('button').onclick = ok; inp.onkeydown = e => { if (e.key === 'Enter') ok(); }; });
+  cx.querySelector('#docx').onclick = () => baixarXlsx(`Documentos_${c.mes.slice(0, 7)}.xlsx`, { titulo: 'Documentos de pagamento', sub: `Competência ${nomeMes(c.mes)}`, abas: [{ nome: 'Documentos', linhas: vis.map(x => ({ 'Pagamento': x.dia, 'Data': dataPagamento(x.p.dia_pagamento, c.mes) ? fmtD(dataPagamento(x.p.dia_pagamento, c.mes)) : '', 'Praça': x.p.regiao, 'Razão social': x.p.razao_social, 'CNPJ': fmtCNPJ(x.p.cnpj), 'NFs': x.ns.map(n => n.numero).join(', '), 'Valor aprovado': x.aprov, 'Valor NF': x.ns.length ? x.vNF : null, 'Conferência GSM': x.r ? (GSM[x.r.situacao] || [x.r.situacao])[0] : '', 'Financeiro': SIT[sit(x)][0], 'Validado por': x.v?.por_nome || '', 'Em': x.v ? fmtDH(x.v.em) : '', 'Observação': x.v?.obs || '', 'Pago em': x.f?.pago_em ? fmtD(x.f.pago_em) : '' })) }] });
+}
+
 // ---------- Compilado para impressão: todas as NFs do mês num PDF só, escolhendo as páginas ----------
 async function carregarPdfLib() {
   if (window.PDFLib) return window.PDFLib;
@@ -3144,7 +3228,7 @@ function desenharDiretoria(el) {
     ${kpiPrev(serieP.find(x => x.c.id === c.id))}
     <div class="kpi eco"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
-  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento'], ['docs', 'Documentos (NFs)']] : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
   <div data-sec="geral" style="display:flex;flex-direction:column;gap:22px"><div id="dgeral"></div></div>
   <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
@@ -3157,6 +3241,7 @@ function desenharDiretoria(el) {
   <div data-sec="mapa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Mapa de custos · ${nomeMes(c.mes)}</h2><p class="sub">Onde agir para reduzir custo. O custo de cada parceiro é dividido entre os estados pela quantidade de pontos que ele atende em cada um. Clique em um estado para ver os parceiros e a ação sugerida.</p><div id="dmapa"></div></section></div>
   <div data-sec="atendimentos" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Atendimentos · ${nomeMes(c.mes)}</h2><p class="sub">Malote: a mesma lista da aba Atendimentos da base de fechamento, cada ponto com o previsto, o realizado e os valores (o fixo do contrato não entra). Kits/Spot: cada kit do Umov com a situação e o valor.</p><div id="datend"></div></section></div>
   <div data-sec="lotes" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Quadro de pagamentos · ${nomeMes(c.mes)}</h2><div id="dquadro"></div></section><section class="bloco"><h2>Agenda de pagamentos · todas as competências</h2><div id="dagenda"></div></section><section class="bloco"><h2>Lotes de pagamento · ${nomeMes(c.mes)}</h2><p class="sub">Baixe a capa e as NFs de cada lote e registre o pagamento quando ele for feito.</p><div id="dlotes"></div></section></div>
+  <div data-sec="docs" style="display:flex;flex-direction:column;gap:22px"><div id="ddocs"></div></div>
   <div data-sec="carteira" style="display:flex;flex-direction:column;gap:22px"><div id="dcart"><div class="carregando">Carregando…</div></div></div>
   <div data-sec="caixa" style="display:flex;flex-direction:column;gap:22px"><section class="bloco"><h2>Caixa e pagamentos · ${nomeMes(c.mes)}</h2><div id="dpag"></div></section></div>
   <div data-sec="previsto" style="display:flex;flex-direction:column;gap:22px">
@@ -3193,6 +3278,7 @@ function desenharDiretoria(el) {
   if (D.aba === 'atendimentos') listaAtendimentos($('#datend'), D, c);
   if (D.aba === 'mapa') mapaCustos($('#dmapa'), D, c);
   if (D.aba === 'carteira') carteiraDir($('#dcart'), D);
+  if (D.aba === 'docs') documentosFin($('#ddocs'), D, c);
 
   grafico($('#graf'), serie.map(x => ({ rot: MES3[+x.c.mes.slice(5, 7) - 1], v: x.v, atual: x.c.id === c.id, id: x.c.id })));
   pagamentos($('#dpag'), D.adis.filter(a => a.competencia_id === c.id), doMes(c.id).map(r => ({ dia: (pmap[r.parceiro_id] || {}).dia_pagamento || '—', total: valorOp(r, 'tudo'), adi: Number(r.adiantado) || 0, antec: Number(r.antec_desconto) || 0, pago: r.pago_em, fechado: fechado(r) })));
