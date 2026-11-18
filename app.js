@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1330';
+const VERSAO = '2026.11.18-1420';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -204,9 +204,9 @@ const MENU = [
   ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
   ['Acompanhamento', [['operacao', 'Operação ao vivo (Umov)'], ['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
-  ['Configurações', [['acessos', 'Acessos e convites'], ['backup', 'Cópia de segurança']]],
+  ['Configurações', [['torre', 'Torre de controle (robôs)'], ['acessos', 'Acessos e convites'], ['backup', 'Cópia de segurança']]],
 ];
-const VIEWS = { operacao: () => vOperacao($('#main')), painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), pendencias: () => vPendencias(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
+const VIEWS = { torre: () => vTorre(), operacao: () => vOperacao($('#main')), painel: () => vPainel(), umov: () => vUmov(), carteira: () => vCarteira(), pontos: () => vPontos(), competencias: () => vCompetencias(), acessos: () => vAcessos(), diretoria: () => vDiretoria($('#main')), historico: () => vHistorico(), backup: () => vBackup(), conferencia: () => vConferencia(), verparceiro: () => vVerParceiro(), pendencias: () => vPendencias(), notas: () => vNotas(), cadastro: () => vCadastro(), adiantamentos: () => vAdiantamentos(), pacote: () => vPacote() };
 
 // Admin vê exatamente a tela do parceiro escolhido, só para consulta
 // ================= Pendências e cobrança =================
@@ -487,7 +487,7 @@ function casca() {
 }
 
 // Contadores no menu (competência aberta mais recente): o que está esperando ação
-const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote' };
+const BADGE_TIT = { pendencias: 'parceiros para cobrar', conferencia: 'envios aguardando a GSM', adiantamentos: 'pedidos aguardando decisão', notas: 'NF(s) a conferir', pacote: 'parceiros prontos para montar lote', torre: 'robô(s) com falha ou atrasado' };
 function desenharBadges() {
   const b = S.badges || {}; document.querySelectorAll('[data-badge]').forEach(el => { const n = b[el.dataset.badge] || 0;
     el.hidden = !n; el.textContent = n > 99 ? '99+' : n; el.title = n ? `${n} ${BADGE_TIT[el.dataset.badge] || ''}${S.badgesMes ? ' · ' + S.badgesMes : ''}` : ''; });
@@ -495,6 +495,7 @@ function desenharBadges() {
 async function atualizarBadges(forcar = false) {
   if (!forcar && S.badgesEm && Date.now() - S.badgesEm < 10000) return;
   S.badgesEm = Date.now();
+  sb.rpc('torre_robos').then(({ data }) => { if (!data) return; S.badges = { ...(S.badges || {}), torre: (data.robos || []).filter(r => ['falha', 'atrasado'].includes(statusRobo(r)[0])).length }; desenharBadges(); });
   try {
     const c = (S.comps || []).filter(x => x.status === 'aberta').sort((a, b) => b.mes.localeCompare(a.mes))[0]; if (!c) return;
     const [parcs, envs, divs, fech, nfr, adis, movs] = await Promise.all([
@@ -520,7 +521,7 @@ async function atualizarBadges(forcar = false) {
       if (!e && mvU[p.id] && grupoMov(mvU[p.id].status) === 'gsm') return; // sem envio, mas a bola está com a GSM (movimentação manual)
       if (!e || e.status === 'recusado' || divs.some(d => d.envio_id === e.id)) bd.pendencias++; else bd.conferencia++; });
     bd.adiantamentos = adis.filter(a => a.status === 'solicitado').length + fech.filter(f => f.antec_status === 'solicitada').length;
-    S.badges = bd; S.badgesMes = nomeMes(c.mes); desenharBadges();
+    S.badges = { ...bd, torre: (S.badges || {}).torre || 0 }; S.badgesMes = nomeMes(c.mes); desenharBadges();
   } catch (e) { /* contadores são só um aviso */ }
 }
 
@@ -4718,4 +4719,85 @@ async function exportarOp() {
     { nome: 'Ocorrencias', linhas: (R.lista_ocorr || []).map(r => ({ Data: r.data, Ocorrencia: r.status_gsm, Observacao: r.obs, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade, UF: r.uf, Parceiro: r.parceiro, Agente: r.agente })) },
     { nome: 'Por dia', linhas: (R.dia || []).map(d => ({ Data: d.data, Programados: d.realizado + d.ocorrencia + d.aberto, Realizados: d.realizado, Ocorrencias: d.ocorrencia, 'Falta baixa': d.aberto, Cancelados: d.cancelado })) }] });
   baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Operacao_Umov_${O.de}_${O.ate}.xlsx`);
+}
+
+// ================= Torre de controle: todos os robôs agendados no Supabase (pg_cron) =================
+// Próxima execução a partir da expressão cron (o pg_cron usa horário UTC)
+function proximaCron(expr, de = new Date()) {
+  const [mi, ho, dm, me, ds] = String(expr || '').trim().split(/\s+/); if (ds == null) return null;
+  const casa = (campo, v) => campo === '*' || campo.split(',').some(p => { const [faixa, passo] = p.split('/'); const st = +(passo || 1);
+    let a, b; if (faixa === '*') { a = 0; b = 99; } else if (faixa.includes('-')) [a, b] = faixa.split('-').map(Number); else { a = +faixa; b = passo ? 99 : a; }
+    return v >= a && v <= b && (v - a) % st === 0; });
+  const t = new Date(de); t.setUTCSeconds(0, 0); t.setUTCMinutes(t.getUTCMinutes() + 1);
+  for (let i = 0; i < 60 * 24 * 40; i++, t.setUTCMinutes(t.getUTCMinutes() + 1))
+    if (casa(mi, t.getUTCMinutes()) && casa(ho, t.getUTCHours()) && casa(dm, t.getUTCDate()) && casa(me, t.getUTCMonth() + 1) && casa(ds, t.getUTCDay())) return new Date(t);
+  return null;
+}
+function statusRobo(r, agora = new Date()) {
+  const u = r.ultima || {};
+  if (!r.active) return ['pausado', 'Pausado', 'var(--off)'];
+  if (u.status === 'running' || u.status === 'starting') return ['rodando', 'Rodando agora', 'var(--off2)'];
+  if (u.status === 'failed') return ['falha', 'Falhou na última execução', 'var(--brand)'];
+  if (r.ultimo_ok && (agora - new Date(r.ultimo_ok)) / 60000 > r.tolerancia_min) return ['atrasado', 'Sem rodar no prazo', 'var(--alert)'];
+  if (!u.status) return ['aguardando', 'Aguardando a 1ª execução', 'var(--muted)'];
+  return ['ok', 'Funcionando', 'var(--eco)'];
+}
+const durTxt = s => s == null ? '—' : s < 60 ? `${Math.round(s)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1).replace('.', ',')} h`;
+const haTxt = iso => { if (!iso) return '—'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'agora' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + ' min' : ''}` : `há ${Math.floor(m / 1440)} dia(s)`; };
+const emTxt = d => { if (!d) return '—'; const m = Math.round((d - Date.now()) / 60000); return m < 1 ? 'em instantes' : m < 60 ? `em ${m} min` : m < 1440 ? `em ${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + ' min' : ''}` : `em ${Math.floor(m / 1440)} dia(s)`; };
+async function vTorre() {
+  const m = $('#main'); clearInterval(S.torreTimer);
+  if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Todos os robôs agendados no Supabase: se estão rodando, quando rodaram, quanto demoraram e se alguma execução falhou. A tela se atualiza sozinha a cada minuto.</p></div>
+    <div class="linha"><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
+  $('#tr-atu').onclick = () => vTorre();
+  let T; try { T = await q(sb.rpc('torre_robos')); } catch (e) { $('#torre').innerHTML = `<div class="msg alerta">Não foi possível ler os robôs: ${esc(e.message)}</div>`; return; }
+  S.torre = T; desenharTorre();
+  S.torreTimer = setInterval(() => { if (S.view !== 'torre' || !document.body.contains($('#torre'))) { clearInterval(S.torreTimer); return; } vTorre(); }, 60000);
+}
+function desenharTorre() {
+  const T = S.torre, box = $('#torre'); if (!box) return; const R = T.robos || [];
+  const st = R.map(r => ({ r, s: statusRobo(r) })); const cont = k => st.filter(x => x.s[0] === k).length;
+  const prob = cont('falha') + cont('atrasado'); S.abertoRobo = S.abertoRobo || {};
+  const U = T.umov || {}; const ul = (U.logs || [])[0];
+  box.innerHTML = `
+  <div class="kpis">
+    <div class="kpi ${prob ? '' : 'eco'}"><small>Situação geral</small><b style="${prob ? 'color:var(--brand)' : ''}">${prob ? `${prob} com problema` : 'Tudo certo'}</b><span>verificado ${fmtDH(T.agora)}</span></div>
+    <div class="kpi eco"><small>Funcionando</small><b>${cont('ok') + cont('rodando')}</b><span>${cont('rodando') ? cont('rodando') + ' rodando agora' : 'de ' + R.filter(r => r.active).length + ' ativos'}</span></div>
+    <div class="kpi ${cont('falha') ? '' : 'neutro'}"><small>Com falha</small><b style="${cont('falha') ? 'color:var(--brand)' : ''}">${cont('falha')}</b><span>${R.reduce((a, r) => a + (+r.falhas_24h || 0), 0)} falha(s) nas últimas 24 h</span></div>
+    <div class="kpi ${cont('atrasado') ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${cont('atrasado')}</b><span>sem rodar no prazo</span></div>
+    <div class="kpi neutro"><small>Pausados</small><b>${cont('pausado')}</b><span>${cont('aguardando') ? cont('aguardando') + ' aguardando 1ª execução' : 'desligados'}</span></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:14px">${st.map(({ r, s }) => { const u = r.ultima || {}; const prox = r.active ? proximaCron(r.schedule) : null;
+    const dur = u.fim && u.inicio ? (new Date(u.fim) - new Date(u.inicio)) / 1000 : null; const H = (r.historico || []).slice().reverse();
+    return `<section class="bloco" style="border-left:5px solid ${s[2]};margin:0">
+      <div class="linha" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+        <div style="flex:1;min-width:260px"><div class="linha" style="gap:10px;flex-wrap:wrap"><h2 style="margin:0">${esc(r.titulo)}</h2>
+          <span class="pill" style="background:${s[2]};color:#fff;font-weight:600">${s[0] === 'rodando' ? '● ' : ''}${s[1]}</span></div>
+          <p class="sub" style="margin:6px 0 0">${esc(r.descricao || '')}</p><p class="nota" style="margin:4px 0 0">${esc(r.frequencia || r.schedule)} · <code>${esc(r.jobname)}</code></p></div>
+        <div class="linha" style="gap:8px"><button class="btn sec peq" data-trh="${r.jobid}">${S.abertoRobo[r.jobid] ? 'Fechar histórico' : 'Histórico'}</button>
+          <button class="btn sec peq" data-tra="${r.jobid}" data-on="${r.active ? 0 : 1}">${r.active ? 'Pausar' : 'Ativar'}</button></div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px;font-size:14px">
+        <div><small class="nota">Última execução</small><br><b>${u.inicio ? haTxt(u.inicio) : '—'}</b><br><span class="nota">${u.inicio ? fmtDH(u.inicio) : ''}</span></div>
+        <div><small class="nota">Duração</small><br><b>${u.status === 'running' ? 'rodando há ' + durTxt((Date.now() - new Date(u.inicio)) / 1000) : durTxt(dur)}</b><br><span class="nota">média ${durTxt(r.duracao_media_s)}</span></div>
+        <div><small class="nota">Próxima execução</small><br><b>${r.active ? emTxt(prox) : 'pausado'}</b><br><span class="nota">${prox ? fmtDH(prox.toISOString()) : ''}</span></div>
+        <div><small class="nota">Últimas 24 h</small><br><b class="eco">${r.ok_24h} ok</b> · <b style="${r.falhas_24h ? 'color:var(--brand)' : ''}">${r.falhas_24h} falha(s)</b><br><span class="nota">último sucesso ${haTxt(r.ultimo_ok)}</span></div>
+      </div>
+      ${H.length ? `<div style="display:flex;gap:3px;margin-top:12px;align-items:center" aria-label="Últimas execuções">${H.map(h => `<span title="${esc(fmtDH(h.inicio) + ' · ' + (h.status === 'succeeded' ? 'ok' : h.status === 'failed' ? 'falhou' : h.status) + (h.status === 'failed' && h.msg ? ' · ' + h.msg : ''))}" style="width:14px;height:22px;border-radius:3px;background:${h.status === 'succeeded' ? 'var(--eco)' : h.status === 'failed' ? 'var(--brand)' : 'var(--alert)'}"></span>`).join('')}<span class="nota" style="margin-left:6px">últimas ${H.length} execuções (mais recente à direita)</span></div>` : ''}
+      ${u.status === 'failed' ? `<div class="msg erro" style="margin-top:12px"><b>Erro da última execução:</b> ${esc(u.msg || 'sem mensagem')}</div>` : ''}
+      ${S.abertoRobo[r.jobid] ? `<div class="tabela" style="margin-top:12px"><table><thead><tr><th>Início</th><th>Fim</th><th class="n">Duração</th><th>Resultado</th><th>Mensagem</th></tr></thead><tbody>${(r.historico || []).map(h => `<tr><td style="white-space:nowrap">${fmtDH(h.inicio)}</td><td style="white-space:nowrap">${h.fim ? fmtDH(h.fim) : '—'}</td><td class="n">${h.fim ? durTxt((new Date(h.fim) - new Date(h.inicio)) / 1000) : '—'}</td>
+        <td><span class="pill ${h.status === 'failed' ? 'marca' : h.status === 'succeeded' ? '' : 'alerta'}">${h.status === 'succeeded' ? 'OK' : h.status === 'failed' ? 'Falhou' : 'Rodando'}</span></td><td style="font-size:13px;max-width:460px;word-break:break-word">${esc(h.msg || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    </section>`; }).join('')}</div>
+  <section class="bloco"><h2>Umov · o que o robô já trouxe</h2>
+    <div class="kpis" style="margin-top:8px">
+      <div class="kpi neutro"><small>Atendimentos lidos</small><b>${fmtN(U.total)}</b><span>${fmtN(U.dias)} dia(s) com detalhe</span></div>
+      <div class="kpi ${U.fila > 3000 ? 'alerta' : 'neutro'}"><small>Fila para detalhar</small><b>${fmtN(U.fila)}</b><span>${U.fila ? 'vão entrar nas próximas execuções' : 'em dia'}</span></div>
+      <div class="kpi ${U.sem_parceiro ? 'alerta' : 'neutro'}"><small>Sem parceiro</small><b>${fmtN(U.sem_parceiro)}</b><span>ponto fora da carteira e agente sem vínculo</span></div>
+      <div class="kpi neutro"><small>Última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${ul ? `${fmtN(ul.chamadas)} consultas ao Umov` : ''}</span></div></div>
+    ${(U.logs || []).length ? `<div class="tabela" style="margin-top:10px"><table><thead><tr><th>Execução</th><th>Datas lidas</th><th class="n">Duração</th><th class="n">Consultas</th><th class="n">Listados</th><th class="n">Detalhados</th><th>Erros</th></tr></thead><tbody>
+      ${U.logs.map(l => `<tr><td style="white-space:nowrap">${fmtDH(l.inicio)}</td><td>${esc(l.datas || '')}</td><td class="n">${l.fim ? durTxt((new Date(l.fim) - new Date(l.inicio)) / 1000) : '—'}</td><td class="n">${fmtN(l.chamadas)}</td><td class="n">${fmtN(l.listados)}</td><td class="n">${fmtN(l.detalhes)}</td><td style="font-size:13px">${l.erros ? `<span style="color:var(--brand)">${esc(l.erros)}</span>` : '<span class="eco">sem erros</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  </section>`;
+  box.querySelectorAll('[data-trh]').forEach(b => b.onclick = () => { S.abertoRobo[b.dataset.trh] = !S.abertoRobo[b.dataset.trh]; desenharTorre(); });
+  box.querySelectorAll('[data-tra]').forEach(b => b.onclick = async () => { const on = b.dataset.on === '1';
+    if (!on && !confirm('Pausar este robô? Ele para de rodar até ser ativado de novo.')) return; b.disabled = true;
+    try { await q(sb.rpc('robo_ativar', { p_jobid: +b.dataset.tra, p_ativo: on })); vTorre(); atualizarBadges(true); } catch (e) { b.disabled = false; alertaTopo(e.message); } });
 }
