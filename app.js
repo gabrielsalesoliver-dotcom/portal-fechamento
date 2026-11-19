@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-1115';
+const VERSAO = '2026.11.19-1200b';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -466,6 +466,7 @@ function rotear() {
   const v = (location.hash || '#pendencias').slice(1);
   S.previa = false; pararTv();
   if (v === 'tv') { S.view = 'tv'; return vTv(); }
+  if (v === 'tvdir') { S.view = 'tv'; return vTvDir(); }
   S.view = VIEWS[v] ? v : 'pendencias';
   casca();
   VIEWS[S.view]();
@@ -3187,6 +3188,11 @@ async function iniciarConsulta() {
 
 async function vDiretoria(el) {
   el.innerHTML = '<div class="carregando">Carregando…</div>';
+  const ok = await carregarDiretoria();
+  if (!ok) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
+  desenharDiretoria(el);
+}
+async function carregarDiretoria() {
   const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos, nomesMes, quinz] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.rpc('parceiros_resumo')),
@@ -3203,14 +3209,14 @@ async function vDiretoria(el) {
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
   const hojeMes = new Date().toISOString().slice(0, 7) + '-01';
   const comComDados = comps.filter(c => c.mes === hojeMes || fech.some(f => f.competencia_id === c.id) || prev.some(f => f.competencia_id === c.id && f.previsto != null));
-  if (!comComDados.length) { el.innerHTML = '<div class="msg alerta">Ainda não há fechamentos registrados.</div>'; return; }
+  if (!comComDados.length) return false;
   S.dir = S.dir || {};
   const D = S.dir;
   D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.nomesMes = nomesMes || []; D.quinz = quinz || []; D.aba = D.aba || 'geral';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const vig = comComDados.find(c => c.mes === hojeMes); if (vig) D.compId = vig.id; }
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
-  desenharDiretoria(el);
+  return true;
 }
 
 function desenharDiretoria(el) {
@@ -3242,7 +3248,7 @@ function desenharDiretoria(el) {
   el.innerHTML = `
   <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} ${D.aba === 'geral' ? 'Valores totais, já com descontos.' : `Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.`}</p></div>
     <div class="linha">
-      ${D.aba === 'geral' ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}
+      ${D.aba === 'geral' ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}<button class="btn marca peq" id="dtv" style="min-height:44px">Modo TV</button>
       <div class="alterna" role="group" aria-label="Operação" style="display:${D.aba === 'geral' ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
       </div>
@@ -3327,6 +3333,7 @@ function desenharDiretoria(el) {
   el.querySelectorAll('[data-op]').forEach(b => b.onclick = () => { D.op = b.dataset.op; desenharDiretoria(el); });
   $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
   const pr = $('#dprint'); if (pr) pr.onclick = () => window.print();
+  const dtv = $('#dtv'); if (dtv) dtv.onclick = () => { if (S.perfil.papel === 'admin') location.hash = '#tvdir'; else vTvDir(); };
   el.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; D.sort = [k, D.sort[0] === k ? -D.sort[1] : (k === 'regiao' || k === 'dia' || k === 'status' ? 1 : -1)]; desenharDiretoria(el); });
   $('#dfiltro').oninput = e => { D.filtro = e.target.value; clearTimeout(D.t); D.t = setTimeout(() => { desenharDiretoria(el); const i = $('#dfiltro'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 350); };
   $('#dcsv').onclick = () => {
@@ -4780,9 +4787,10 @@ const emTxt = d => { if (!d) return '—'; const m = Math.round((d - Date.now())
 async function vTorre() {
   const m = $('#main'); clearInterval(S.torreTimer);
   if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Todos os robôs agendados no Supabase: se estão rodando, quando rodaram, quanto demoraram e se alguma execução falhou. A tela se atualiza sozinha a cada minuto.</p></div>
-    <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Abrir modo TV</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
+    <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Modo TV · operação</button><button class="btn marca peq" id="tr-tvd" style="min-height:44px">Modo TV · diretoria</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
   $('#tr-atu').onclick = () => vTorre();
   $('#tr-tv').onclick = () => { location.hash = '#tv'; };
+  $('#tr-tvd').onclick = () => { location.hash = '#tvdir'; };
   let T; try { T = await q(sb.rpc('torre_robos')); } catch (e) { $('#torre').innerHTML = `<div class="msg alerta">Não foi possível ler os robôs: ${esc(e.message)}</div>`; return; }
   S.torre = T; desenharTorre();
   S.torreTimer = setInterval(() => { if (S.view !== 'torre' || !document.body.contains($('#torre'))) { clearInterval(S.torreTimer); return; } vTorre(); }, 60000);
@@ -5082,13 +5090,13 @@ function tvTabela() {
       <td><span class="tv-sit ${p.sit[0]}">${p.sit[1]}</span></td></tr>`).join('')}</tbody></table>
     ${pags > 1 ? `<div class="tv-pag">página ${pg + 1} de ${pags} · troca a cada 12 s</div>` : ''}`;
 }
-function tvBarras(box, D, nomes, corB) {
+function tvBarras(box, D, nomes, corB, fmt = t => t.toLocaleString('pt-BR')) {
   if (!box) return; if (!D.length) { box.innerHTML = '<div class="tv-vazio">Sem dados no período.</div>'; return; }
-  const W = Math.max(600, box.clientWidth || 800), H = Math.max(200, box.clientHeight || 260), pl = 40, pr = 8, pt = 22, pb = 26;
-  const mx = Math.max(1, ...D.map(d => Math.max(d.a, d.b))); const bw = (W - pl - pr) / D.length; const y = v => pt + (H - pt - pb) * (1 - v / mx);
-  const tk = [0, .5, 1].map(t => Math.round(mx * t));
+  const mx = Math.max(1, ...D.map(d => Math.max(d.a, d.b))); const tk = [0, .5, 1].map(t => Math.round(mx * t));
+  const W = Math.max(600, box.clientWidth || 800), H = Math.max(200, box.clientHeight || 260), pl = Math.max(40, 12 + 7 * Math.max(...tk.map(t => String(fmt(t)).length))), pr = 8, pt = 22, pb = 26;
+  const bw = (W - pl - pr) / D.length; const y = v => pt + (H - pt - pb) * (1 - v / mx);
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img">
-    ${tk.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--tv-linha)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--tv-muted)">${t.toLocaleString('pt-BR')}</text>`).join('')}
+    ${tk.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--tv-linha)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--tv-muted)">${fmt(t)}</text>`).join('')}
     ${D.map((d, i) => { const x = pl + i * bw; const w = Math.max(2, bw * .34);
       return `<rect x="${x + bw * .14}" y="${y(d.a)}" width="${w}" height="${Math.max(0, y(0) - y(d.a))}" fill="var(--tv-cinza)" rx="2"/>
         <rect x="${x + bw * .14 + w + 2}" y="${y(d.b)}" width="${w}" height="${Math.max(0, y(0) - y(d.b))}" fill="${corB(d)}" rx="2"/>
@@ -5296,4 +5304,109 @@ function massaMostrar(r, simular) {
   }
   const g = $('#ms-gravar'); if (g) g.onclick = async () => { if (!M.motivo || !M.motivo.trim()) { alertaTopo('Informe o motivo antes de gravar.'); return; }
     if (!confirm(`Confirmar: ${acao.toLowerCase()} com data efetiva ${fmtD(M.data)}?`)) return; g.disabled = true; await massaExecutar(false); carregarPend(); };
+}
+
+
+// ================= Modo TV · visão da diretoria e do financeiro =================
+async function vTvDir() {
+  pararTv();
+  app.innerHTML = `<div class="tv" id="tv">
+    <header class="tv-top">
+      <div class="tv-marca"><img src="logo_escuro.png" alt="GSM Log"><div><b>Painel executivo</b><span>Custos de última milha · diretoria e financeiro</span></div></div>
+      <div class="tv-aderencia" id="tv-ad">carregando…</div>
+      <div class="tv-relogio"><b id="tv-hora">--:--:--</b><span id="tv-data"></span></div>
+      <div class="tv-acoes"><button type="button" id="tv-atu" title="Atualizar agora">↻</button><button type="button" id="tv-full" title="Tela cheia">⛶</button><button type="button" id="tv-sair" title="Sair do modo TV">✕</button></div>
+    </header>
+    <section class="tv-kpis" id="tv-kpis"><div class="tv-vazio">Carregando os fechamentos…</div></section>
+    <section class="tv-meio"><div class="tv-card"><div class="tv-tit"><b>Custo mensal · previsto × realizado</b><span id="tv-g1s"></span></div><div id="tv-g1" class="tv-graf"></div></div>
+      <div class="tv-card"><div class="tv-tit"><b>Pagamentos do mês</b><span id="tv-g2s"></span></div><div id="tv-g2" class="tv-graf" style="overflow:hidden"></div></div></section>
+    <section class="tv-card tv-tab"><div class="tv-tit"><b>Praças · maiores variações sobre o mês anterior</b><span id="tv-tabs"></span></div><div id="tv-tabela"></div></section>
+    <footer class="tv-rodape" id="tv-rodape"></footer>
+  </div>`;
+  const relogio = () => { const d = new Date(); const h = $('#tv-hora'); if (!h) return pararTv();
+    h.textContent = d.toLocaleTimeString('pt-BR'); $('#tv-data').textContent = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); };
+  relogio(); S.tvRelogio = setInterval(relogio, 1000);
+  $('#tv-sair').onclick = tvSair; $('#tv-atu').onclick = () => tvDirCarregar();
+  $('#tv-full').onclick = () => { const t = $('#tv'); document.fullscreenElement ? document.exitFullscreen() : (t.requestFullscreen && t.requestFullscreen().catch(() => {})); };
+  document.onkeydown = ev => { if (S.view === 'tv' && ev.key === 'Escape' && !document.fullscreenElement) tvSair(); };
+  let rz; window.onresize = () => { clearTimeout(rz); rz = setTimeout(() => { if (S.tvDir && $('#tv')) tvDirDesenhar(); }, 250); };
+  await tvDirCarregar();
+  S.tvDados = setInterval(tvDirCarregar, 10 * 60000);
+}
+async function tvDirCarregar() {
+  try {
+    const ok = await carregarDiretoria(); if (!$('#tv')) return;
+    if (!ok) { $('#tv-kpis').innerHTML = '<div class="tv-erro">Ainda não há fechamentos registrados.</div>'; return; }
+    const D = S.dir; const comFech = D.comps.filter(c => D.fech.some(f => f.competencia_id === c.id));
+    const c = comFech[comFech.length - 1]; if (!c) { $('#tv-kpis').innerHTML = '<div class="tv-erro">Ainda não há fechamentos registrados.</div>'; return; }
+    const lotes = await q(sb.from('lotes_financeiro').select('id,competencia_id,data_pagamento,rotulo,status,total,pago_em').eq('competencia_id', c.id).order('data_pagamento')).catch(() => []);
+    const nfs = ['admin', 'financeiro'].includes(S.perfil.papel) ? await todas(() => sb.from('notas_fiscais').select('parceiro_id,status,tipo,adiantamento_id').eq('competencia_id', c.id)).catch(() => null) : null;
+    S.tvDir = { c, lotes: (lotes || []).filter(l => l.status !== 'desfeito'), nfs };
+    tvDirDesenhar();
+  } catch (e) { if ($('#tv-kpis')) $('#tv-kpis').innerHTML = `<div class="tv-erro">Não foi possível atualizar: ${esc(e.message)}. Nova tentativa em 10 minutos.</div>`; }
+}
+function tvDirDesenhar() {
+  const D = S.dir, T = S.tvDir, c = T.c; const n = v => Number(v) || 0; const pctTxt = v => (v > 0 ? '+' : '') + (v * 100).toFixed(1).replace('.', ',') + '%';
+  const idx = D.comps.findIndex(x => x.id === c.id); const ant = D.comps[idx - 1];
+  const doMes = id => D.fech.filter(f => f.competencia_id === id); const valor = r => n(r.valor_aprovado ?? r.valor_final);
+  const prevMes = id => D.prev.filter(f => f.competencia_id === id && f.previsto != null);
+  const L = doMes(c.id); const total = L.reduce((a, r) => a + valor(r), 0);
+  const totAnt = ant ? doMes(ant.id).reduce((a, r) => a + valor(r), 0) : 0; const varM = totAnt ? total / totAnt - 1 : null;
+  const prevTot = prevMes(c.id).reduce((a, r) => a + n(r.previsto), 0); const malote = L.reduce((a, r) => a + n(r.malote), 0);
+  const parcsMes = new Set([...L.map(r => r.parceiro_id), ...prevMes(c.id).map(r => r.parceiro_id)]);
+  const aprov = L.filter(r => r.valor_aprovado != null).length; const pago = L.filter(r => r.pago_em).reduce((a, r) => a + n(r.a_pagar ?? r.valor_aprovado), 0);
+  const emLote = L.filter(r => r.lote_id && !r.pago_em).reduce((a, r) => a + n(r.valor_aprovado), 0); const semLote = L.filter(r => r.valor_aprovado != null && !r.lote_id && !r.pago_em).reduce((a, r) => a + n(r.valor_aprovado), 0);
+  const ano = c.mes.slice(0, 4); const doAno = D.comps.filter(x => x.mes.slice(0, 4) === ano && x.mes <= c.mes);
+  const custoAno = doAno.reduce((a, x) => a + doMes(x.id).reduce((s, r) => s + valor(r), 0), 0); const mesesAno = doAno.filter(x => doMes(x.id).length).length;
+  const g = ganhosMes(D, c.id); const gAno = doAno.reduce((a, x) => a + ganhosMes(D, x.id).total, 0);
+  const ader = prevTot ? malote / prevTot : null;
+  $('#tv-ad').className = 'tv-aderencia ' + (varM == null ? 'neutro' : varM > 0.02 ? 'critico' : varM < 0 ? 'ok' : 'atencao');
+  $('#tv-ad').innerHTML = `<b>${BRL(total)}</b> em ${nomeMes(c.mes)}${varM != null ? ` · ${pctTxt(varM)} sobre ${nomeMes(ant.mes)}` : ''}`;
+  const kpi = (cls, tit, val, sub, extra = '') => `<div class="tv-kpi ${cls}"><small>${tit}</small><b>${val}</b><span>${sub}</span>${extra}</div>`;
+  const bar = p => `<div class="tv-barra"><i style="width:${Math.max(0, Math.min(100, p))}%"></i></div>`;
+  const nfConf = T.nfs ? new Set(T.nfs.filter(x => !x.adiantamento_id && x.status === 'conferida').map(x => x.parceiro_id)) : null;
+  const semNf = nfConf ? L.filter(r => r.valor_aprovado != null && !r.pago_em && !nfConf.has(r.parceiro_id)).length : null;
+  $('#tv-kpis').innerHTML =
+    kpi(varM != null && varM > 0.02 ? 'critico' : 'neutro', `Custo · ${nomeMes(c.mes)}`, BRLk(total), varM != null ? `${pctTxt(varM)} sobre ${nomeMes(ant.mes)} (${BRLk(totAnt)})` : 'primeiro mês da série') +
+    kpi(ader == null ? 'neutro' : ader <= 1 ? 'ok' : 'critico', 'Malote · previsto × realizado', ader == null ? '—' : (ader * 100).toFixed(1).replace('.', ',') + '%', `${BRLk(malote)} pagos de ${BRLk(prevTot)} previstos`) +
+    kpi('ok', 'Economia gerada', BRLk(g.total), `no mês · ${BRLk(gAno)} no ano`) +
+    kpi(aprov < parcsMes.size ? 'atencao' : 'ok', 'Fechamento', `${aprov} de ${parcsMes.size}`, `${Math.round(100 * aprov / Math.max(1, parcsMes.size))}% dos parceiros aprovados`, bar(100 * aprov / Math.max(1, parcsMes.size))) +
+    kpi(pago >= total - 1 ? 'ok' : 'atencao', 'Pagamento', BRLk(pago), `pago · ${BRLk(emLote)} em lote${semLote ? ` · ${BRLk(semLote)} sem lote` : ''}${semNf ? ` · ${semNf} sem NF` : ''}`, bar(total ? 100 * pago / total : 0)) +
+    kpi('neutro', `Custo no ano · ${ano}`, BRLk(custoAno), `média ${BRLk(custoAno / Math.max(1, mesesAno))} por mês · ${mesesAno} meses`);
+  // gráfico: últimos 12 meses previsto x realizado
+  const serie = D.comps.filter(x => x.mes <= c.mes).slice(-12).map(x => { const p = prevMes(x.id).reduce((a, r) => a + n(r.previsto), 0), r = doMes(x.id).reduce((a, f) => a + valor(f), 0);
+    return { rot: MES3[+x.mes.slice(5, 7) - 1], a: p, b: r, lbl: r ? BRLk(r).replace('R$ ', '').replace(' mil', 'k') : '' }; });
+  tvBarras($('#tv-g1'), serie, ['Previsto (calendarizado)', 'Realizado (pago)'], d => d.a && d.b > d.a * 1.02 ? 'var(--tv-critico)' : 'var(--tv-ok)', t => t ? BRLk(t).replace('R$ ', '') : '0');
+  $('#tv-g1s').textContent = 'barra vermelha = mês acima do previsto';
+  // pagamentos (lotes)
+  const ST = { gerado: ['Gerado', 'atencao'], enviado: ['Com o financeiro', 'atencao'], pago: ['Pago', 'ok'] };
+  const hoje = isoDia(new Date());
+  $('#tv-g2').innerHTML = T.lotes.length ? `<table><thead><tr><th>Data</th><th>Lote</th><th class="n">Parceiros</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
+    ${T.lotes.map(l => { const nP = L.filter(r => r.lote_id === l.id).length; const st = ST[l.status] || [l.status, 'neutro']; const atras = l.status !== 'pago' && l.data_pagamento < hoje;
+      return `<tr><td>${fmtD(l.data_pagamento)}</td><td>${esc(l.rotulo || '')}</td><td class="n">${nP}</td><td class="n">${BRL(n(l.total))}</td><td><span class="tv-sit ${atras ? 'critico' : st[1]}">${atras ? 'Vencido' : st[0]}</span></td></tr>`; }).join('')}</tbody></table>
+    ${semLote ? `<p class="tv-pag" style="text-align:left">Aprovados ainda sem lote: ${BRL(semLote)}</p>` : ''}` : '<div class="tv-vazio">Nenhum lote de pagamento gerado para o mês.</div>';
+  $('#tv-g2s').textContent = `${nomeMes(c.mes)} · total ${BRL(T.lotes.reduce((a, l) => a + n(l.total), 0))}`;
+  // praças com maior variação
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p])); const antPor = ant ? Object.fromEntries(doMes(ant.id).map(r => [r.parceiro_id, valor(r)])) : {};
+  const prevPor = Object.fromEntries(prevMes(c.id).map(r => [r.parceiro_id, n(r.previsto)]));
+  const linhas = L.map(r => { const v = valor(r), a = antPor[r.parceiro_id] ?? null; return { p: pm[r.parceiro_id], v, a, d: a == null ? null : v - a, prev: prevPor[r.parceiro_id], r }; })
+    .filter(x => x.p).sort((x, y) => Math.abs(y.d ?? y.v) - Math.abs(x.d ?? x.v));
+  S.tvLinhasDir = linhas; S.tvPag = 0; tvDirTabela(); clearInterval(S.tvPagina); S.tvPagina = setInterval(() => { S.tvPag++; tvDirTabela(); }, 12000);
+  const sobe = linhas.filter(x => x.d > 0).reduce((a, x) => a + x.d, 0), desce = linhas.filter(x => x.d < 0).reduce((a, x) => a + x.d, 0);
+  $('#tv-tabs').textContent = `${linhas.length} praças · aumentos ${BRL(sobe)} · reduções ${BRL(desce)}`;
+  const desc = L.reduce((a, r) => a + n(r.descontos), 0); const kits = L.reduce((a, r) => a + n(r.kits), 0);
+  $('#tv-rodape').innerHTML = [['neutro', `Malote ${BRL(malote)}`], ['atencao', `Kits/Spot ${BRL(kits)}`], ['ok', `Descontos ${BRL(desc)}`], ['ok', `Economia no ano ${BRL(gAno)}`],
+    ['neutro', `${parcsMes.size} parceiros no mês`], ['neutro', `Atualiza a cada 10 min · ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`]].map(([cl, t]) => `<span class="${cl}"><i></i>${t}</span>`).join('');
+}
+function tvDirTabela() {
+  const box = $('#tv-tabela'); if (!box) return pararTv(); const L = S.tvLinhasDir || [];
+  const porPag = Math.max(5, Math.floor((box.clientHeight || 360) / 38) - 1); const pags = Math.max(1, Math.ceil(L.length / porPag)); const pg = S.tvPag % pags;
+  const sit = r => r.pago_em ? ['ok', 'Pago'] : r.lote_id ? ['atencao', 'Em lote'] : r.valor_aprovado != null ? ['atencao', 'Aprovado'] : ['critico', 'Em fechamento'];
+  box.innerHTML = `<table><thead><tr><th>Praça · parceiro</th><th>Tipo</th><th class="n">Mês anterior</th><th class="n">Este mês</th><th class="n">Variação</th><th class="n">Var. %</th><th class="n">Previsto</th><th class="n">% do previsto</th><th>Situação</th></tr></thead><tbody>
+    ${L.slice(pg * porPag, (pg + 1) * porPag).map(x => { const s = sit(x.r); const vp = x.prev ? x.v / x.prev : null;
+      return `<tr><td>${esc(x.p.regiao)} · ${esc(x.p.nome)}</td><td>${esc(x.p.tipo || '')}</td><td class="n">${x.a == null ? '—' : BRL(x.a)}</td><td class="n">${BRL(x.v)}</td>
+      <td class="n">${x.d == null ? '<em class="atencao">novo</em>' : `<em class="${x.d > 0 ? 'critico' : x.d < 0 ? 'ok' : ''}" style="${x.d < 0 ? 'color:var(--tv-ok)' : ''}">${x.d > 0 ? '+' : ''}${BRL(x.d)}</em>`}</td>
+      <td class="n">${x.a ? `${x.d > 0 ? '+' : ''}${(100 * x.d / x.a).toFixed(1).replace('.', ',')}%` : '—'}</td><td class="n">${x.prev ? BRL(x.prev) : '—'}</td>
+      <td class="n">${vp == null ? '—' : `<em class="${vp > 1.02 ? 'critico' : ''}">${Math.round(vp * 100)}%</em>`}</td><td><span class="tv-sit ${s[0]}">${s[1]}</span></td></tr>`; }).join('')}</tbody></table>
+    ${pags > 1 ? `<div class="tv-pag">página ${pg + 1} de ${pags} · troca a cada 12 s</div>` : ''}`;
 }
