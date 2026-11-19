@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-1100';
+const VERSAO = '2026.11.19-1200';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1094,6 +1094,10 @@ async function vPontos() {
         <button class="btn sec" id="buscar">Buscar</button><button class="btn sec" id="novo">Novo ponto</button>
       </div>
       <div id="res"></div>
+    </section>
+    <section class="bloco" id="massa"><h2>Alteração em massa</h2>
+      <p class="sub">Para cancelamentos, suspensões ou inclusões grandes que ainda não vieram na planilha de inclusão e cancelamento (ex.: Casas Bahia). Mostra a prévia antes de gravar, e cada ponto alterado fica no histórico com o motivo. Se depois vier na planilha um movimento com data mais nova, ele vale.</p>
+      <div id="massa-corpo"></div>
     </section>`;
   if (S.apAuto) { const r = S.apAuto; S.apAuto = null; $('#msg-aplicar').innerHTML = `<div class="msg ok">Carteira atualizada pela última planilha de inclusão e cancelamento: ${fmtN(r.novos)} pontos novos, ${fmtN(r.situacao)} mudanças de situação e ${fmtN(r.frequencia)} de frequência. ${fmtN(r.pendencias)} pendências para revisar.</div>`; }
   $('#aplicar').onclick = async e => {
@@ -1110,6 +1114,7 @@ async function vPontos() {
   $('#busca').onkeydown = e => { if (e.key === 'Enter') buscarPontos(); };
   $('#novo').onclick = () => { $('#res').innerHTML = `<div class="tabela"><table><tbody>${linhaPonto({ cod_int: '', situacao: 'Ativo' }, true)}</tbody></table></div>`; ligarLinhas(); };
   carregarPend();
+  massaPontos();
 }
 
 const optsParc = (sel, bp) => `<option value="">Sem parceiro</option><option value="__bp" ${bp ? 'selected' : ''}>Base própria GSM (rota própria)</option>` + S.parceiros.filter(p => p.ativo || p.id === sel).map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.codigo + ' · ' + p.regiao)}</option>`).join('');
@@ -5180,4 +5185,114 @@ async function exportarAcomp() {
     { nome: 'Ocorrencias', linhas: (PA.lista_ocorr || []).map(r => ({ Data: r.data, Ocorrencia: r.status_gsm, Observacao: r.obs, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade })) },
     { nome: 'Por dia', linhas: (PR.dia || []).map(d => ({ Data: d.d, Previsto: d.prev, Realizado: d.real, 'Sem baixa': d.ab })) }] });
   baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Acompanhamento_${S.parc.regiao.replace(/\W+/g, '_')}_${A.de}_${A.ate}.xlsx`);
+}
+
+
+// ================= Carteira de pontos · alteração em massa =================
+const MASSA_ACOES = [['cancelar', 'Cancelar pontos'], ['suspender', 'Suspender pontos'], ['reativar', 'Reativar pontos'], ['trocar_parceiro', 'Trocar de parceiro'], ['incluir', 'Incluir pontos']];
+const MASSA_COLS = ['cod_int', 'cliente', 'loja', 'cidade', 'uf', 'frequencia', 'parceiro', 'v_unit'];
+function massaPontos() {
+  const box = $('#massa-corpo'); if (!box) return;
+  const M = S.massa || (S.massa = { acao: 'cancelar', modo: 'filtro', sel: new Set(), lista: [], data: isoDia(new Date()), motivo: '' });
+  const inc = M.acao === 'incluir'; const parcs = S.parceiros.filter(p => p.ativo !== false);
+  const optP = sel => `<option value="">— escolher —</option>${parcs.map(p => `<option value="${p.id}" ${sel === p.id ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}</option>`).join('')}`;
+  box.innerHTML = `
+    <div class="linha" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <label class="campo" style="flex:1 1 220px">O que fazer<select id="ms-acao">${MASSA_ACOES.map(([k, n]) => `<option value="${k}" ${M.acao === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label class="campo" style="flex:0 1 180px">${inc || M.acao === 'reativar' ? 'Ativo a partir de' : M.acao === 'trocar_parceiro' ? 'Vale a partir de' : 'Inativo a partir de'}<input type="date" id="ms-data" value="${M.data}"></label>
+      <label class="campo" style="flex:2 1 320px">Motivo (vai para o histórico de cada ponto)<input type="text" id="ms-motivo" value="${esc(M.motivo)}" placeholder="Ex.: Casas Bahia encerrou o contrato em 17/11"></label>
+    </div>
+    ${M.acao === 'trocar_parceiro' || inc ? `<div class="linha" style="gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:10px">
+      <label class="campo" style="flex:2 1 300px">${inc ? 'Parceiro padrão (quando a linha não tiver)' : 'Novo parceiro'}<select id="ms-parc">${optP(M.parc)}</select></label>
+      <label class="campo" style="flex:0 1 200px">${inc ? 'Valor unitário padrão' : 'Novo valor unitário (opcional)'}<input type="text" id="ms-vu" value="${esc(M.vu || '')}" placeholder="ex.: 25,00"></label></div>` : ''}
+    ${inc ? `<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+        <b style="font-size:14px">Pontos a incluir</b>
+        <span class="sub" style="margin:0">Cole as linhas do Excel (com ou sem cabeçalho) na ordem: <b>código de integração, cliente, loja, cidade, UF, frequência, parceiro, valor unitário</b>. O parceiro pode ser a região (ex.: "Bauru - SP"). Ou suba uma planilha com essas colunas. Se o código já existir, o ponto é atualizado e reativado.</span>
+        <textarea id="ms-txt" rows="7" style="width:100%;font:13px ui-monospace,monospace;padding:10px;border:1px solid var(--rule);border-radius:6px;background:var(--field);color:var(--ink)" placeholder="123456789	CASAS BAHIA	CB 1124 MARINGA	MARINGA	PR	QUINZENAL	Maringa - PR	10">${esc(M.txt || '')}</textarea>
+        <div class="linha" style="gap:8px"><label class="btn sec peq" style="cursor:pointer">Subir planilha<input type="file" id="ms-arq" accept=".xlsx,.xls,.csv" hidden></label><button class="btn sec peq" id="ms-modelo">Baixar modelo</button></div></div>`
+    : `<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+        <div role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;align-self:flex-start">${[['filtro', 'Escolher por filtro'], ['colar', 'Colar códigos']].map(([k, n]) => `<button type="button" data-msm="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${M.modo === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+        ${M.modo === 'filtro' ? `<div class="linha" style="gap:8px;flex-wrap:wrap">
+            <input type="text" id="ms-cli" placeholder="Cliente (ex.: Casas Bahia)" value="${esc(M.fcli || '')}" style="flex:2 1 220px">
+            <select id="ms-fparc" style="flex:2 1 220px"><option value="">Todos os parceiros</option>${S.parceiros.map(p => `<option value="${p.id}" ${M.fparc === p.id ? 'selected' : ''}>${esc(p.regiao)} · ${esc(p.nome)}${p.ativo === false ? ' (inativo)' : ''}</option>`).join('')}</select>
+            <input type="text" id="ms-cid" placeholder="Cidade ou UF" value="${esc(M.fcid || '')}" style="flex:1 1 160px">
+            <select id="ms-fsit" style="flex:0 1 140px">${['', 'Ativo', 'Suspenso', 'Cancelado'].map(x => `<option value="${x}" ${(M.fsit ?? 'Ativo') === x ? 'selected' : ''}>${x || 'Todas'}</option>`).join('')}</select>
+            <button class="btn sec" id="ms-carregar">Carregar pontos</button></div><div id="ms-lista"></div>`
+        : `<span class="sub" style="margin:0">Cole a coluna de códigos de integração (um por linha, direto do Excel).</span>
+           <textarea id="ms-cods" rows="6" style="width:100%;font:13px ui-monospace,monospace;padding:10px;border:1px solid var(--rule);border-radius:6px;background:var(--field);color:var(--ink)">${esc(M.cods || '')}</textarea>`}
+      </div>`}
+    <div class="linha" style="gap:8px;margin-top:12px"><button class="btn sec" id="ms-previa">Ver prévia</button></div>
+    <div id="ms-res" style="margin-top:10px"></div>`;
+  const ler = () => { M.data = $('#ms-data').value; M.motivo = $('#ms-motivo').value; if ($('#ms-parc')) M.parc = $('#ms-parc').value; if ($('#ms-vu')) M.vu = $('#ms-vu').value;
+    if ($('#ms-txt')) M.txt = $('#ms-txt').value; if ($('#ms-cods')) M.cods = $('#ms-cods').value;
+    if ($('#ms-cli')) { M.fcli = $('#ms-cli').value; M.fparc = $('#ms-fparc').value; M.fcid = $('#ms-cid').value; M.fsit = $('#ms-fsit').value; } };
+  $('#ms-acao').onchange = e => { ler(); M.acao = e.target.value; M.prev = null; massaPontos(); };
+  box.querySelectorAll('[data-msm]').forEach(b => b.onclick = () => { ler(); M.modo = b.dataset.msm; massaPontos(); });
+  if ($('#ms-carregar')) { $('#ms-carregar').onclick = async () => { ler(); await massaCarregar(); }; if (M.lista.length) massaDesenharLista(); }
+  if ($('#ms-modelo')) $('#ms-modelo').onclick = () => { const ws = XLSX.utils.aoa_to_sheet([['codigo_integracao', 'cliente', 'loja', 'cidade', 'uf', 'frequencia', 'parceiro', 'valor_unitario'], ['123456789', 'CASAS BAHIA', 'CB 1124 - MARINGA', 'MARINGA', 'PR', 'QUINZENAL', 'Maringa - PR', '10']]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Inclusao'); XLSX.writeFile(wb, 'Modelo_inclusao_pontos.xlsx'); };
+  if ($('#ms-arq')) $('#ms-arq').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { const abas = await lerPlanilha(f); const linhas = Object.values(abas)[0] || [];
+      ler(); M.txt = linhas.filter(l => l && l.some(c => c != null && String(c).trim() !== '')).map(l => l.map(c => c == null ? '' : String(c)).join('\t')).join('\n'); massaPontos(); } catch (er) { alertaTopo('Não consegui ler a planilha: ' + er.message); } };
+  $('#ms-previa').onclick = () => { ler(); massaExecutar(true); };
+  if (M.prev) massaMostrar(M.prev, true);
+}
+async function massaCarregar() {
+  const M = S.massa; $('#ms-lista').innerHTML = '<div class="carregando">Buscando…</div>';
+  if (!M.fcli && !M.fparc && !M.fcid) { $('#ms-lista').innerHTML = '<div class="msg alerta">Use pelo menos um filtro (cliente, parceiro ou cidade/UF).</div>'; return; }
+  try {
+    const L = await todas(() => { let qr = sb.from('cadastro_pontos').select('cod_int,cliente,loja,cidade,uf,frequencia,parceiro_id,situacao,v_unit').order('cliente').order('cod_int');
+      if (M.fcli) qr = qr.ilike('cliente', `%${M.fcli.trim().replace(/[%,()*]/g, ' ')}%`);
+      if (M.fparc) qr = qr.eq('parceiro_id', M.fparc);
+      if (M.fcid) { const t = M.fcid.trim().replace(/[%,()*]/g, ' '); qr = t.length === 2 ? qr.ilike('uf', t) : qr.ilike('cidade', `%${t}%`); }
+      if (M.fsit) qr = qr.eq('situacao', M.fsit); return qr; });
+    M.lista = L; M.sel = new Set(L.map(p => p.cod_int)); M.prev = null; massaDesenharLista();
+  } catch (e) { $('#ms-lista').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+}
+function massaDesenharLista() {
+  const M = S.massa, L = M.lista; const box = $('#ms-lista'); if (!box) return; const pn = id => { const p = S.parceiros.find(x => x.id === id); return p ? p.regiao + ' · ' + p.nome : '—'; };
+  if (!L.length) { box.innerHTML = '<p class="nota">Nenhum ponto com esses filtros.</p>'; return; }
+  box.innerHTML = `<p style="font-size:14px;margin:4px 0"><b id="ms-nsel">${fmtN(M.sel.size)}</b> de ${fmtN(L.length)} pontos selecionados</p>
+    <div class="tabela" style="max-height:420px;overflow:auto"><table><thead><tr><th><input type="checkbox" id="ms-all" ${M.sel.size === L.length ? 'checked' : ''} aria-label="Selecionar todos"></th><th>Código</th><th>Cliente · loja</th><th>Cidade</th><th>Frequência</th><th>Parceiro</th><th>Situação</th></tr></thead><tbody>
+    ${L.slice(0, 1000).map(p => `<tr><td><input type="checkbox" data-mscod="${esc(p.cod_int)}" ${M.sel.has(p.cod_int) ? 'checked' : ''}></td><td class="num">${esc(p.cod_int)}</td><td>${esc(p.cliente || '')}<br><span class="nota">${esc(p.loja || '')}</span></td><td>${esc(p.cidade || '')}${p.uf ? '/' + esc(p.uf) : ''}</td><td>${esc(p.frequencia || '—')}</td><td>${esc(pn(p.parceiro_id))}</td><td><span class="pill ${p.situacao === 'Ativo' ? '' : 'alerta'}">${esc(p.situacao)}</span></td></tr>`).join('')}</tbody></table></div>
+    ${L.length > 1000 ? `<p class="nota">Mostrando 1.000 de ${fmtN(L.length)} na tela; todos os selecionados entram na alteração.</p>` : ''}`;
+  const cont = () => { $('#ms-nsel').textContent = fmtN(M.sel.size); M.prev = null; $('#ms-res').innerHTML = ''; };
+  box.querySelectorAll('[data-mscod]').forEach(cb => cb.onchange = () => { cb.checked ? M.sel.add(cb.dataset.mscod) : M.sel.delete(cb.dataset.mscod); cont(); });
+  $('#ms-all').onchange = e => { if (e.target.checked) L.forEach(p => M.sel.add(p.cod_int)); else M.sel.clear(); box.querySelectorAll('[data-mscod]').forEach(cb => cb.checked = e.target.checked); cont(); };
+}
+function massaItens() {
+  const M = S.massa;
+  if (M.acao !== 'incluir') return M.modo === 'filtro' ? [...M.sel] : (M.cods || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+  const linhas = (M.txt || '').split(/\r?\n/).map(l => l.split(/\t|;/).map(c => c.trim())).filter(l => l.some(Boolean));
+  if (!linhas.length) return [];
+  let cols = MASSA_COLS; const cab = linhas[0].map(c => norm(c));
+  if (cab.some(c => /COD|INTEGRA/.test(c))) { cols = cab.map(c => /COD|INTEGRA/.test(c) ? 'cod_int' : /CLIENTE/.test(c) ? 'cliente' : /LOJA|NOMENCL|LOCAL/.test(c) ? 'loja' : /CIDADE|MUNIC/.test(c) ? 'cidade' : /^UF$|ESTADO/.test(c) ? 'uf' : /FREQ/.test(c) ? 'frequencia' : /PARC|REGI/.test(c) ? 'parceiro' : /VALOR|UNIT|PRECO/.test(c) ? 'v_unit' : null); linhas.shift(); }
+  return linhas.map(l => { const o = {}; cols.forEach((k, i) => { if (k && l[i] != null && l[i] !== '') o[k] = l[i]; }); return o; }).filter(o => o.cod_int);
+}
+async function massaExecutar(simular) {
+  const M = S.massa; const itens = massaItens(); const res = $('#ms-res');
+  if (!itens.length) { res.innerHTML = `<div class="msg alerta">${M.acao === 'incluir' ? 'Cole as linhas dos pontos a incluir ou suba a planilha.' : M.modo === 'filtro' ? 'Carregue e selecione os pontos.' : 'Cole os códigos de integração.'}</div>`; return; }
+  const vu = M.vu ? Number(String(M.vu).replace(/\./g, '').replace(',', '.')) : null;
+  res.innerHTML = `<div class="carregando">${simular ? 'Calculando a prévia…' : 'Gravando…'}</div>`;
+  try {
+    const r = await q(sb.rpc('alterar_pontos_massa', { p_acao: M.acao, p_pontos: itens, p_data: M.data, p_motivo: M.motivo, p_parceiro: M.parc || null, p_v_unit: Number.isFinite(vu) ? vu : null, p_simular: simular }));
+    if (simular) { M.prev = r; M.prevItens = itens.length; } else { M.prev = null; M.lista = []; M.sel = new Set(); }
+    massaMostrar(r, simular);
+  } catch (e) { res.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
+}
+function massaMostrar(r, simular) {
+  const M = S.massa, res = $('#ms-res'); if (!res) return; const acao = (MASSA_ACOES.find(a => a[0] === M.acao) || [])[1] || '';
+  const c = comp(); const lembrete = c && c.status === 'aberta' ? ` Para valer na base de ${nomeMes(c.mes)}, use <b>Gerar base de ${nomeMes(c.mes)}</b> na rotina do mês.` : '';
+  if (M.acao === 'incluir') {
+    const erros = r.erros || [];
+    res.innerHTML = `<div class="msg ${simular ? '' : 'ok'}"><b>${simular ? 'Prévia' : 'Gravado'} · ${acao}</b>: ${fmtN(r.informados)} linhas · ${fmtN(r.novos)} pontos novos · ${fmtN(r.atualizados)} já existiam (serão atualizados e reativados)${erros.length ? ` · <b>${fmtN(erros.length)} com erro</b> (não entram)` : ''}.${simular ? '' : lembrete}</div>
+      ${erros.length ? `<div class="tabela" style="max-height:220px;overflow:auto;margin-top:8px"><table><thead><tr><th>Código</th><th>Problema</th></tr></thead><tbody>${erros.map(e => `<tr><td>${esc(e.cod_int || '—')}</td><td>${esc(e.erro)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${simular && (r.novos + r.atualizados) ? `<div class="linha" style="margin-top:10px"><button class="btn marca" id="ms-gravar">Confirmar e gravar ${fmtN(r.novos + r.atualizados)} pontos</button></div>` : ''}`;
+  } else {
+    const nf = r.nao_encontrados || [];
+    res.innerHTML = `<div class="msg ${simular ? '' : 'ok'}"><b>${simular ? 'Prévia' : 'Gravado'} · ${acao}</b>: ${fmtN(r.informados)} códigos · ${fmtN(r.encontrados)} encontrados na carteira · <b>${fmtN(simular ? r.a_alterar : r.alterados)} ${simular ? 'serão alterados' : 'alterados'}</b>${r.ja_estavam ? ` · ${fmtN(r.ja_estavam)} já estavam assim` : ''}${nf.length ? ` · <b>${fmtN(nf.length)} não encontrados</b>` : ''}. Data efetiva ${fmtD(M.data)}.${simular ? '' : lembrete}</div>
+      ${nf.length ? `<p class="nota" style="margin-top:6px">Não encontrados na carteira: ${nf.slice(0, 60).map(esc).join(', ')}${nf.length > 60 ? '…' : ''}</p>` : ''}
+      ${simular && r.a_alterar ? `<div class="linha" style="margin-top:10px"><button class="btn marca" id="ms-gravar">Confirmar: ${acao.toLowerCase()} (${fmtN(r.a_alterar)})</button></div>` : ''}`;
+  }
+  const g = $('#ms-gravar'); if (g) g.onclick = async () => { if (!M.motivo || !M.motivo.trim()) { alertaTopo('Informe o motivo antes de gravar.'); return; }
+    if (!confirm(`Confirmar: ${acao.toLowerCase()} com data efetiva ${fmtD(M.data)}?`)) return; g.disabled = true; await massaExecutar(false); carregarPend(); };
 }
