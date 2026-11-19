@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-0800';
+const VERSAO = '2026.11.19-1100';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1435,7 +1435,12 @@ function telaParceiro() {
 
 async function vParceiroInicio() {
   if (S.baseFechada === undefined) S.baseFechada = !!S.previa;
-  const m = S.previa && $('#pvcorpo') ? $('#pvcorpo') : $('#main');
+  const m0 = S.previa && $('#pvcorpo') ? $('#pvcorpo') : $('#main');
+  S.pAba = S.pAba || 'acomp';
+  m0.innerHTML = `<nav class="abas" aria-label="Seções do portal">${[['acomp', 'Acompanhamento em tempo real'], ['fech', 'Fechamento do mês']].map(([k, t]) => `<button type="button" data-paba="${k}" class="${S.pAba === k ? 'on' : ''}">${t}</button>`).join('')}</nav><div id="pcorpo" style="display:flex;flex-direction:column;gap:22px"></div>`;
+  m0.querySelectorAll('[data-paba]').forEach(b => b.onclick = () => { S.pAba = b.dataset.paba; vParceiroInicio(); });
+  const m = m0.querySelector('#pcorpo');
+  if (S.pAba === 'acomp') return vParceiroAcomp(m);
   if (!S.compsP.length) {
     m.innerHTML = `<div class="bloco"><h2>Nenhum mês liberado</h2><p class="sub" style="margin:0">Assim que a GSM liberar a competência, a base do mês aparece aqui.</p></div>`;
     return;
@@ -5084,4 +5089,95 @@ function tvBarras(box, D, nomes, corB) {
         ${d.lbl && bw > 22 ? `<text x="${x + bw / 2}" y="${y(Math.max(d.a, d.b)) - 6}" text-anchor="middle" font-size="11" font-weight="600" fill="${corB(d)}">${d.lbl}</text>` : ''}
         <text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--tv-muted)">${d.rot}</text>`; }).join('')}
   </svg><div class="tv-leg"><span><i style="background:var(--tv-cinza)"></i>${nomes[0]}</span><span><i style="background:${corB(D[0]) === 'var(--tv-marca)' ? 'var(--tv-marca)' : 'var(--tv-ok)'}"></i>${nomes[1]}</span></div>`;
+}
+
+
+// ================= Portal do parceiro · acompanhamento em tempo real (Umov lido pelo robô) =================
+function periodoAcomp(k) { const h = new Date(); const d = n => { const x = new Date(h); x.setDate(x.getDate() + n); return isoDia(x); };
+  if (k === 'hoje') return [d(0), d(0)]; if (k === '7d') return [d(-6), d(0)];
+  if (k === 'ant') { const a = new Date(h.getFullYear(), h.getMonth() - 1, 1), b = new Date(h.getFullYear(), h.getMonth(), 0); return [isoDia(a), isoDia(b)]; }
+  return [isoDia(new Date(h.getFullYear(), h.getMonth(), 1)), d(0)]; }
+async function vParceiroAcomp(el) {
+  const A = S.pacomp || (S.pacomp = { per: 'mes', lista: 'pend', busca: '' }); [A.de, A.ate] = periodoAcomp(A.per);
+  const pid = S.parc.id; const args = { p_de: A.de, p_ate: A.ate, p_parceiro: pid };
+  el.innerHTML = '<div class="carregando">Carregando os seus atendimentos no Umov…</div>';
+  let PA, PR, EX, PV;
+  try { [PA, PR, EX, PV] = await Promise.all([q(sb.rpc('umov_painel', { ...args, p_cliente: null })), q(sb.rpc('umov_prev_real', { ...args, p_cliente: null })),
+      todas(() => sb.rpc('umov_extras', args)), q(sb.rpc('parceiro_previa_valor', args)).catch(() => null)]); }
+  catch (e) { el.innerHTML = `<div class="msg alerta">Não foi possível carregar o acompanhamento: ${esc(e.message)}</div>`; return; }
+  A.PA = PA; A.PR = PR; A.EX = EX || []; A.PV = PV; desenharAcomp(el);
+}
+function desenharAcomp(el) {
+  const A = S.pacomp, PA = A.PA || {}, PR = A.PR || {}, EX = A.EX, PV = A.PV; const k = PA.kpi || {}, t = PR.tot || {};
+  const n0 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 }); const pc = (a, b) => b ? Math.round(100 * a / b) + '%' : '—';
+  const hoje = isoDia(new Date()); const naoAut = EX.filter(r => r.rev_situacao === 'nao_autorizado'), revisar = EX.filter(r => !r.rev_situacao);
+  const tipo = PV?.tipo || S.parc.tipo || ''; const unit = tipo !== 'Fechado'; const tk = Number(PV?.ticket_medio) || 0;
+  const previa = PV ? (tipo === 'Fechado' ? Number(PV.fixo) : tipo === 'Misto' ? Number(PV.fixo) + Number(PV.unit_realizado) : Number(PV.unit_realizado)) : null;
+  const per = [['hoje', 'Hoje'], ['7d', '7 dias'], ['mes', 'Mês atual'], ['ant', 'Mês anterior']];
+  // o que pode afetar o pagamento
+  const imp = [
+    { q: k.atrasado || 0, cor: 'marca', t: 'Atendimentos sem baixa de dias anteriores', e: 'Atendimento que não retornou de campo no Umov não entra no fechamento.', a: 'Dê a baixa no app do Umov ou avise a GSM do motivo.', v: unit ? (k.atrasado || 0) * tk : null },
+    { q: t.sem_atend || 0, cor: 'marca', t: 'Pontos previstos sem nenhum atendimento', e: unit ? 'Ponto da sua carteira sem visita no período: não há o que pagar por ele.' : 'Ponto da sua carteira sem visita no período: é analisado pela GSM no fechamento.', a: 'Confira a rota desses pontos (lista abaixo).', v: null },
+    { q: naoAut.length, cor: 'marca', t: 'Atendimentos fora do previsto não autorizados', e: 'A GSM analisou e não autorizou esses atendimentos: não entram no pagamento.', a: 'Fale com a GSM se discordar.', v: unit ? naoAut.length * tk : null },
+    { q: revisar.length, cor: 'alerta', t: 'Atendimentos fora do previsto em análise', e: 'Atendimentos fora da frequência ou da carteira, ainda em análise pela GSM.', a: 'Se foi pedido pelo SAC ou pelo cliente, guarde a solicitação.', v: null },
+    { q: t.fora || 0, cor: 'alerta', t: 'Atendimentos em pontos fora da sua carteira', e: 'O ponto não está cadastrado para você no portal: só é pago depois da validação da GSM.', a: 'Peça à GSM a inclusão do ponto, se for fixo.', v: null },
+    { q: k.pendente || 0, cor: 'alerta', t: 'Atendimentos ainda não enviados para campo', e: 'Estão programados, mas ainda não foram para o app do motorista.', a: 'Confirme a rota do dia com a GSM.', v: null },
+    { q: k.ocorrencia || 0, cor: '', t: 'Atendimentos com ocorrência', e: 'Retornaram de campo sem entrega/coleta (local fechado, sem coleta etc.). Contam como visita, mas ocorrências repetidas no mesmo ponto são acompanhadas pela GSM e pelo cliente.', a: 'Registre bem a ocorrência no app (foto e observação).', v: null }
+  ].filter(x => x.q > 0);
+  el.innerHTML = `
+  <div class="topo"><div><h1>Acompanhamento em tempo real</h1><p>Os seus atendimentos no Umov, lidos pela GSM a cada 2 horas. Atualizado em <b>${PA.atualizado ? fmtDH(PA.atualizado) : '—'}</b>. É um acompanhamento: o valor oficial é o do fechamento aprovado pela GSM.</p></div>
+    <div class="linha" style="gap:8px;flex-wrap:wrap"><div role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
+      ${per.map(([kk, n]) => `<button type="button" data-apr="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${A.per === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+      <button class="btn sec peq" id="ac-xls" style="min-height:44px">Excel</button></div></div>
+  ${S.previa ? `<div class="msg alerta">Você está vendo o acompanhamento de <b>${esc(S.parc.regiao)} · ${esc(S.parc.nome)}</b>, como o parceiro vê.</div>` : ''}
+  <div class="kpis">
+    <div class="kpi neutro"><small>Previsto · sua carteira</small><b>${n0(t.prev)}</b><span>${n0(t.pontos)} pontos</span></div>
+    <div class="kpi eco"><small>Realizados</small><b>${n0(t.real)}</b><span>${pc(t.real, t.prev)} do previsto</span></div>
+    <div class="kpi ${(k.em_campo || 0) + (k.pendente || 0) ? '' : 'neutro'}"><small>Pendentes de baixa</small><b>${n0((k.em_campo || 0) + (k.pendente || 0))}</b><span>${n0(k.em_campo)} em campo · ${n0(k.pendente)} não enviados</span></div>
+    <div class="kpi ${k.atrasado ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${n0(k.atrasado)}</b><span>dias anteriores sem baixa</span></div>
+    <div class="kpi ${k.ocorrencia ? 'alerta' : 'neutro'}"><small>Ocorrências</small><b>${n0(k.ocorrencia)}</b><span>retornaram sem atender</span></div>
+    ${previa != null ? `<div class="kpi"><small>Prévia do valor</small><b>${BRL2(previa)}</b><span>${tipo === 'Fechado' ? 'valor fixo do contrato' : tipo === 'Misto' ? `fixo ${BRL(Number(PV.fixo))} + atendimentos ${BRL(Number(PV.unit_realizado))}` : 'realizados × valor por atendimento'} · estimativa</span></div>` : ''}
+  </div>
+  <section class="bloco"><h2>O que pode afetar o seu pagamento</h2><p class="sub">Itens do período que, se não forem resolvidos, podem mudar o valor do seu fechamento.</p>
+    ${imp.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">${imp.map(x => `<div style="border:1px solid var(--rule);border-left:4px solid ${x.cor === 'marca' ? 'var(--brand)' : x.cor === 'alerta' ? 'var(--alert)' : 'var(--rule)'};border-radius:8px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px">
+        <div class="linha" style="justify-content:space-between;gap:8px;flex-wrap:nowrap"><b style="font-size:15px">${x.t}</b><b style="font-size:22px;${x.cor === 'marca' ? 'color:var(--brand)' : x.cor === 'alerta' ? 'color:var(--alert)' : ''}">${n0(x.q)}</b></div>
+        <span style="font-size:13px">${x.e}</span><span class="nota">${x.a}${x.v ? ` · cerca de ${BRL(x.v)}` : ''}</span></div>`).join('')}</div>`
+      : '<div class="msg ok">Nada pendente no período. Continue dando baixa no Umov no dia do atendimento.</div>'}
+  </section>
+  ${(PR.dia || []).length > 1 ? `<section class="bloco"><h2>Previsto x realizado por dia</h2><div id="ac-graf" style="position:relative"></div></section>` : ''}
+  <section class="bloco"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Detalhe</h2>
+    <div class="linha" style="gap:8px"><div role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['pend', 'Pendências'], ['pontos', 'Pontos sem atendimento'], ['fora', 'Fora do previsto'], ['oc', 'Ocorrências']].map(([kk, n]) => `<button type="button" data-alis="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${A.lista === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
+    <input type="search" id="ac-busca" placeholder="Buscar ponto, cliente, cidade" value="${esc(A.busca)}" style="min-height:40px;min-width:220px"></div></div>
+    <div id="ac-lista" style="margin-top:10px"></div></section>`;
+  el.querySelectorAll('[data-apr]').forEach(b => b.onclick = () => { A.per = b.dataset.apr; vParceiroAcomp(el); });
+  el.querySelectorAll('[data-alis]').forEach(b => b.onclick = () => { A.lista = b.dataset.alis; desenharAcomp(el); });
+  el.querySelector('#ac-busca').oninput = e => { A.busca = e.target.value; listaAcomp(el); };
+  el.querySelector('#ac-xls').onclick = () => exportarAcomp().catch(e => alertaTopo(e.message));
+  if ((PR.dia || []).length > 1) graficoPR(el.querySelector('#ac-graf'), PR.dia, hoje);
+  listaAcomp(el);
+}
+function listaAcomp(el) {
+  const A = S.pacomp, PA = A.PA || {}, PR = A.PR || {}; const f = norm(A.busca || ''); const box = el.querySelector('#ac-lista'); if (!box) return;
+  const filt = (L, campos) => L.filter(r => !f || norm(campos(r).join(' ')).includes(f));
+  const tab = (cab, linhas, vazio) => linhas.length ? `<div class="tabela" style="max-height:560px;overflow:auto"><table><thead><tr>${cab.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${linhas.slice(0, 600).join('')}</tbody></table></div><p class="nota">${linhas.length > 600 ? `Mostrando 600 de ${fmtN(linhas.length)}; use a busca ou o Excel.` : `${fmtN(linhas.length)} item(ns).`}</p>` : `<p class="nota">${vazio}</p>`;
+  const SIT = { atrasado: ['Atrasado · sem baixa', 'marca'], em_campo: ['Em campo', ''], pendente: ['Não enviado para campo', 'alerta'] };
+  if (A.lista === 'pend') { const L = filt([...(PA.abertos || [])].sort((a, b) => (a.cat === 'atrasado' ? 0 : 1) - (b.cat === 'atrasado' ? 0 : 1) || a.data.localeCompare(b.data)), r => [r.cod_int, r.local_desc, r.grupo_cliente, r.cidade]);
+    box.innerHTML = tab(['Data', 'Situação', 'Ponto', 'Cliente', 'Cidade'], L.map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}</td><td><span class="pill ${SIT[r.cat]?.[1] || ''}">${SIT[r.cat]?.[0] || esc(r.situacao)}</span>${r.op === 'kit' ? ' <span class="pill">Kit</span>' : ''}</td><td>${esc(r.cod_int || '')}<br><span class="nota">${esc(r.local_desc || '')}</span></td><td>${esc(r.grupo_cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td></tr>`), 'Nenhuma pendência de baixa no período.'); return; }
+  if (A.lista === 'pontos') { const L = filt((PR.pontos || []).filter(r => r.prev >= 1 && r.real === 0), r => [r.cod_int, r.cliente, r.loja, r.cidade]);
+    box.innerHTML = tab(['Ponto', 'Cliente', 'Cidade', 'Frequência', 'Previsto', 'Realizado'], L.map(r => `<tr><td>${esc(r.cod_int)}<br><span class="nota">${esc(r.loja || '')}</span></td><td>${esc(r.cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td><td>${esc(r.frequencia || '—')}</td><td class="n">${(+r.prev).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</td><td class="n"><b>0</b></td></tr>`), 'Todos os pontos previstos tiveram atendimento.'); return; }
+  if (A.lista === 'fora') { const L = filt(A.EX, r => [r.cod_int, r.local_desc, r.cliente, r.cidade, r.motivo, r.inserido_por]);
+    box.innerHTML = tab(['Data', 'Ponto', 'Por que está fora do previsto', 'Incluído por', 'Análise da GSM'], L.map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}</td><td>${esc(r.cod_int || '—')}<br><span class="nota">${esc(r.local_desc || '')}${r.cidade ? ' · ' + esc(r.cidade) : ''}</span></td><td><span class="pill alerta">${esc(r.motivo)}</span></td><td>${esc(r.inserido_por || '—')}<br><span class="nota">${esc(r.canal || '')}</span></td>
+      <td>${r.rev_situacao === 'ok' ? '<span class="pill">Autorizado</span>' : r.rev_situacao === 'nao_autorizado' ? `<span class="pill marca">Não autorizado</span>${r.rev_obs ? `<br><span class="nota">${esc(r.rev_obs)}</span>` : ''}` : '<span class="nota">em análise</span>'}</td></tr>`), 'Nenhum atendimento fora do previsto no período.'); return; }
+  const L = filt(PA.lista_ocorr || [], r => [r.cod_int, r.local_desc, r.grupo_cliente, r.cidade, r.status_gsm]);
+  box.innerHTML = tab(['Data', 'Ocorrência', 'Ponto', 'Cliente', 'Cidade'], L.map(r => `<tr><td style="white-space:nowrap">${fmtD(r.data)}</td><td><span class="pill alerta">${esc(r.status_gsm)}</span>${r.obs ? `<br><span class="nota">${esc(r.obs)}</span>` : ''}</td><td>${esc(r.cod_int || '')}<br><span class="nota">${esc(r.local_desc || '')}</span></td><td>${esc(r.grupo_cliente || '—')}</td><td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td></tr>`), 'Nenhuma ocorrência no período.');
+}
+async function exportarAcomp() {
+  const A = S.pacomp, PA = A.PA || {}, PR = A.PR || {}; const per = A.de === A.ate ? fmtD(A.de) : `${fmtD(A.de)} a ${fmtD(A.ate)}`;
+  const buf = await planilhaPadrao({ titulo: `Acompanhamento · ${S.parc.regiao} · ${S.parc.nome}`, sub: per, abas: [
+    { nome: 'Pendencias', linhas: (PA.abertos || []).map(r => ({ Data: r.data, Situacao: r.cat === 'atrasado' ? 'Atrasado' : r.situacao, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade, UF: r.uf })) },
+    { nome: 'Pontos sem atendimento', linhas: (PR.pontos || []).filter(r => r.prev >= 1 && r.real === 0).map(r => ({ Ponto: r.cod_int, Loja: r.loja, Cliente: r.cliente, Cidade: r.cidade, UF: r.uf, Frequencia: r.frequencia, Previsto: r.prev })) },
+    { nome: 'Fora do previsto', linhas: A.EX.map(r => ({ Data: r.data, Ponto: r.cod_int, Local: r.local_desc, Motivo: r.motivo, 'Incluido por': r.inserido_por, Canal: r.canal, Analise: r.rev_situacao === 'ok' ? 'Autorizado' : r.rev_situacao === 'nao_autorizado' ? 'Não autorizado' : 'Em análise' })) },
+    { nome: 'Ocorrencias', linhas: (PA.lista_ocorr || []).map(r => ({ Data: r.data, Ocorrencia: r.status_gsm, Observacao: r.obs, Ponto: r.cod_int, Local: r.local_desc, Cliente: r.grupo_cliente, Cidade: r.cidade })) },
+    { nome: 'Por dia', linhas: (PR.dia || []).map(d => ({ Data: d.d, Previsto: d.prev, Realizado: d.real, 'Sem baixa': d.ab })) }] });
+  baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Acompanhamento_${S.parc.regiao.replace(/\W+/g, '_')}_${A.de}_${A.ate}.xlsx`);
 }
