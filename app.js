@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.18-1815';
+const VERSAO = '2026.11.19-0800';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -464,7 +464,8 @@ async function vVerParceiro() {
 
 function rotear() {
   const v = (location.hash || '#pendencias').slice(1);
-  S.previa = false;
+  S.previa = false; pararTv();
+  if (v === 'tv') { S.view = 'tv'; return vTv(); }
   S.view = VIEWS[v] ? v : 'pendencias';
   casca();
   VIEWS[S.view]();
@@ -4632,7 +4633,7 @@ function desenharOperacao(el) {
       <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${per.map(([kk, n]) => `<button type="button" data-oper="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.per === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
       <input type="date" id="op-de" value="${O.de}" style="min-height:44px"> <input type="date" id="op-ate" value="${O.ate}" style="min-height:44px">
-      <button class="btn sec peq" id="op-xls" style="min-height:44px">Excel</button></div></div>
+      <button class="btn sec peq" id="op-xls" style="min-height:44px">Excel</button><button class="btn marca peq" id="op-tv" style="min-height:44px">Modo TV</button></div></div>
   <div class="linha" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
     <select id="op-parc" style="min-height:44px;max-width:340px"><option value="">Todos os parceiros</option>${fP.map(p => `<option value="${p.id}" ${O.parc === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
     <select id="op-cli" style="min-height:44px;max-width:300px"><option value="">Todos os clientes</option>${fC.map(c => `<option ${O.cli === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -4665,6 +4666,7 @@ function desenharOperacao(el) {
   el.querySelector('#op-busca').oninput = e => { O.busca = e.target.value; listaOp(el); };
   el.querySelector('#op-bcli').oninput = e => { O.bcli = e.target.value; clientesOp(el); };
   el.querySelector('#op-xls').onclick = () => exportarOp().catch(e => alertaTopo(e.message));
+  el.querySelector('#op-tv').onclick = () => { if (S.perfil.papel === 'admin') location.hash = '#tv'; else vTv(); };
   if (!umDia) graficoOp(el.querySelector('#op-graf'), R.dia || []);
   parceirosOp(el); clientesOp(el); listaOp(el); prevRealOp(el); extrasOp(el);
   const oc = R.ocorrencias || []; const mx = Math.max(1, ...oc.map(o => o.n));
@@ -4767,8 +4769,9 @@ const emTxt = d => { if (!d) return '—'; const m = Math.round((d - Date.now())
 async function vTorre() {
   const m = $('#main'); clearInterval(S.torreTimer);
   if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Todos os robôs agendados no Supabase: se estão rodando, quando rodaram, quanto demoraram e se alguma execução falhou. A tela se atualiza sozinha a cada minuto.</p></div>
-    <div class="linha"><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
+    <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Abrir modo TV</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
   $('#tr-atu').onclick = () => vTorre();
+  $('#tr-tv').onclick = () => { location.hash = '#tv'; };
   let T; try { T = await q(sb.rpc('torre_robos')); } catch (e) { $('#torre').innerHTML = `<div class="msg alerta">Não foi possível ler os robôs: ${esc(e.message)}</div>`; return; }
   S.torre = T; desenharTorre();
   S.torreTimer = setInterval(() => { if (S.view !== 'torre' || !document.body.contains($('#torre'))) { clearInterval(S.torreTimer); return; } vTorre(); }, 60000);
@@ -4961,4 +4964,124 @@ async function avisoExtrasParceiro(m, c, p) {
     const topo = m.querySelector('.topo'); if (!topo || !document.body.contains(m)) return; topo.after(d);
     d.querySelector('#av-ex').onclick = ev => { ev.preventDefault(); S.oper = { ...(S.oper || {}), per: 'custom', de: c.mes.slice(0, 10), ate, parc: p.id, cli: '', lista: 'abertos', sort: ['aberto', -1], busca: '', bcli: '', exF: 'todos' }; location.hash = '#operacao'; };
   } catch (e) { /* aviso é só complemento */ }
+}
+
+
+// ================= Torre de controle · modo TV (tela cheia para monitor/TV) =================
+const TV_META = 0.95;
+function pararTv() { clearInterval(S.tvRelogio); clearInterval(S.tvDados); clearInterval(S.tvPagina); S.tvRelogio = S.tvDados = S.tvPagina = null; }
+function tvSair() { pararTv(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (S.perfil.papel === 'admin') location.hash = '#torre'; else location.reload(); }
+async function vTv() {
+  pararTv();
+  app.innerHTML = `<div class="tv" id="tv">
+    <header class="tv-top">
+      <div class="tv-marca"><img src="logo_escuro.png" alt="GSM Log"><div><b>Torre de controle</b><span>Operação de última milha · malote</span></div></div>
+      <div class="tv-aderencia" id="tv-ad">carregando…</div>
+      <div class="tv-relogio"><b id="tv-hora">--:--:--</b><span id="tv-data"></span></div>
+      <div class="tv-acoes"><span class="tv-robo" id="tv-robo" title="Robôs"></span><button type="button" id="tv-atu" title="Atualizar agora">↻</button><button type="button" id="tv-full" title="Tela cheia">⛶</button><button type="button" id="tv-sair" title="Sair do modo TV">✕</button></div>
+    </header>
+    <section class="tv-kpis" id="tv-kpis"></section>
+    <section class="tv-meio"><div class="tv-card"><div class="tv-tit"><b>Previsto × realizado · dia a dia</b><span id="tv-g1s"></span></div><div id="tv-g1" class="tv-graf"></div></div>
+      <div class="tv-card"><div class="tv-tit"><b>Baixas por hora · hoje × ontem</b><span id="tv-g2s"></span></div><div id="tv-g2" class="tv-graf"></div></div></section>
+    <section class="tv-card tv-tab"><div class="tv-tit"><b>Parceiros · maior desvio primeiro</b><span id="tv-tabs"></span></div><div id="tv-tabela"></div></section>
+    <footer class="tv-rodape" id="tv-rodape"></footer>
+  </div>`;
+  const relogio = () => { const d = new Date(); const h = $('#tv-hora'); if (!h) return pararTv();
+    h.textContent = d.toLocaleTimeString('pt-BR'); $('#tv-data').textContent = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); };
+  relogio(); S.tvRelogio = setInterval(relogio, 1000);
+  $('#tv-sair').onclick = tvSair; $('#tv-atu').onclick = () => tvCarregar();
+  $('#tv-full').onclick = () => { const t = $('#tv'); document.fullscreenElement ? document.exitFullscreen() : (t.requestFullscreen && t.requestFullscreen().catch(() => {})); };
+  document.onkeydown = ev => { if (S.view === 'tv' && ev.key === 'Escape' && !document.fullscreenElement) tvSair(); };
+  let rz; window.onresize = () => { if (S.view !== 'tv' && !$('#tv')) return; clearTimeout(rz); rz = setTimeout(() => { if (S.tvD && $('#tv')) tvDesenhar(); }, 250); };
+  await tvCarregar();
+  S.tvDados = setInterval(tvCarregar, 5 * 60000);
+}
+async function tvCarregar() {
+  const hoje = isoDia(new Date()); const on = new Date(); on.setDate(on.getDate() - 1); const ontem = isoDia(on);
+  const ini = hoje.slice(0, 8) + '01'; const iniMes = ontem < ini ? ontem.slice(0, 8) + '01' : ini; const s7 = new Date(); s7.setDate(s7.getDate() - 6);
+  const rpc = (f, a) => q(sb.rpc(f, a)).catch(e => ({ erro: e.message }));
+  const [PH, PM, PA, EX, BH, TR] = await Promise.all([
+    rpc('umov_prev_real', { p_de: hoje, p_ate: hoje }), rpc('umov_prev_real', { p_de: iniMes, p_ate: ontem }), rpc('umov_painel', { p_de: hoje, p_ate: hoje }),
+    todas(() => sb.rpc('umov_extras', { p_de: isoDia(s7), p_ate: hoje })).catch(() => []), rpc('umov_baixas_hora', {}),
+    S.perfil.papel === 'admin' ? rpc('torre_robos', {}) : Promise.resolve(null)]);
+  if (!$('#tv')) return;
+  if (PH.erro || PM.erro || PA.erro) { $('#tv-kpis').innerHTML = `<div class="tv-erro">Não foi possível atualizar: ${esc(PH.erro || PM.erro || PA.erro)}. Nova tentativa em 5 minutos.</div>`; return; }
+  S.tvD = { hoje, PH, PM, PA, EX: Array.isArray(EX) ? EX : [], BH: Array.isArray(BH) ? BH : [], TR };
+  tvDesenhar();
+}
+function tvDesenhar() {
+  const { hoje, PH, PM, PA, EX, BH, TR } = S.tvD; const n0 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+  const pc = (a, b) => b ? Math.round(100 * a / b) : null; const k = PA.kpi || {};
+  // aderência do mês até ontem
+  const tm = PM.tot || {}; const ad = tm.prev ? tm.real / tm.prev : null; const adCor = ad == null ? 'neutro' : ad >= TV_META ? 'ok' : ad >= .85 ? 'atencao' : 'critico';
+  $('#tv-ad').className = 'tv-aderencia ' + adCor;
+  $('#tv-ad').innerHTML = `<b>${ad == null ? '—' : (ad * 100).toFixed(1).replace('.', ',') + '%'}</b> de aderência ao previsto no mês · meta ${Math.round(TV_META * 100)}%`;
+  // robôs
+  const rob = TR && !TR.erro ? (TR.robos || []).filter(r => r.active) : null; const prob = rob ? rob.filter(r => ['falha', 'atrasado'].includes(statusRobo(r)[0])).length : 0;
+  $('#tv-robo').className = 'tv-robo ' + (rob == null ? '' : prob ? 'critico' : 'ok'); $('#tv-robo').textContent = rob == null ? '' : prob ? `● ${prob} robô(s) com problema` : '● Robôs ok';
+  // série diária (mês até ontem) para sparklines
+  const dias = (PM.dia || []).filter(d => d.prev > 0);
+  const spark = (vals, cor) => { if (vals.length < 2) return ''; const mx = Math.max(...vals), mn = Math.min(...vals); const W = 150, H = 34;
+    const pts = vals.map((v, i) => `${(i / (vals.length - 1) * W).toFixed(1)},${(H - 3 - (mx === mn ? .5 : (v - mn) / (mx - mn)) * (H - 6)).toFixed(1)}`).join(' ');
+    return `<svg viewBox="0 0 ${W} ${H}" class="tv-spark" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${cor}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`; };
+  const th = PH.tot || {}; const abertos = (k.em_campo || 0) + (k.pendente || 0); const exRev = EX.filter(r => !r.rev_situacao); const exHoje = EX.filter(r => r.data === hoje);
+  const kpi = (cls, tit, val, sub, extra = '') => `<div class="tv-kpi ${cls}"><small>${tit}</small><b>${val}</b><span>${sub}</span>${extra}</div>`;
+  const realHoje = th.real || 0, prevHoje = th.prev || 0; const pHoje = pc(realHoje, prevHoje);
+  $('#tv-kpis').innerHTML =
+    kpi(adCor, 'Aderência no mês', ad == null ? '—' : (ad * 100).toFixed(1).replace('.', ',') + '%', `${n0(tm.real)} de ${n0(tm.prev)} previstos até ontem`, spark(dias.map(d => d.real / d.prev), 'var(--tv-ok)')) +
+    kpi('neutro', 'Previsto hoje', n0(prevHoje), `${n0(th.pontos)} pontos na carteira`, spark(dias.map(d => d.prev), 'var(--tv-muted)')) +
+    kpi(pHoje == null ? 'neutro' : 'ok', 'Realizado hoje', n0(realHoje), `${pHoje == null ? '—' : pHoje + '%'} do previsto · dia em andamento`, `<div class="tv-barra"><i style="width:${Math.min(100, pHoje || 0)}%"></i></div>`) +
+    kpi(abertos ? 'atencao' : 'neutro', 'Falta baixa hoje', n0(abertos), `${n0(k.em_campo)} em campo · ${n0(k.pendente)} não enviados`) +
+    kpi(k.atrasado ? 'critico' : 'ok', 'Atrasados', n0(k.atrasado), 'dias anteriores sem baixa') +
+    kpi(exRev.length ? 'atencao' : 'ok', 'Fora do previsto', n0(exRev.length), `a revisar em 7 dias · ${n0(exHoje.length)} hoje`);
+  // gráfico 1: previsto x realizado por dia
+  const g1 = PM.dia || []; tvBarras($('#tv-g1'), g1.map(d => ({ rot: d.d.slice(8, 10), a: d.prev, b: d.real, lbl: d.prev ? pc(d.real, d.prev) + '%' : '' })), ['Previsto', 'Realizado'], d => d.lbl && parseInt(d.lbl) < 90 ? 'var(--tv-critico)' : 'var(--tv-ok)');
+  $('#tv-g1s').textContent = `média ${ad == null ? '—' : (ad * 100).toFixed(1).replace('.', ',') + '%'} · meta ${Math.round(TV_META * 100)}%`;
+  // gráfico 2: baixas por hora
+  const hrs = BH.filter(h => h.hora >= 6 && h.hora <= 22); const tH = BH.reduce((a, h) => a + Number(h.hoje), 0), tO = BH.reduce((a, h) => a + Number(h.ontem), 0);
+  const agora = new Date().getHours(); const tOate = BH.filter(h => h.hora <= agora).reduce((a, h) => a + Number(h.ontem), 0);
+  tvBarras($('#tv-g2'), hrs.map(h => ({ rot: String(h.hora).padStart(2, '0') + 'h', a: Number(h.ontem), b: Number(h.hoje), lbl: '' })), ['Ontem', 'Hoje'], () => 'var(--tv-marca)');
+  $('#tv-g2s').textContent = `hoje ${n0(tH)} baixas · ontem até esta hora ${n0(tOate)} (dia todo ${n0(tO)})`;
+  // tabela de parceiros: aderência do mês até ontem + situação de hoje
+  const pa = {}; (PA.parceiros || []).forEach(p => { if (p.id) pa[p.id] = p; }); const ph = {}; (PH.parceiros || []).forEach(p => { if (p.id) ph[p.id] = p; });
+  const ex = {}; exRev.forEach(r => { ex[r.parceiro_id] = (ex[r.parceiro_id] || 0) + 1; });
+  const L = (PM.parceiros || []).filter(p => p.id && p.prev >= 1).map(p => { const a = p.real / p.prev; const o = pa[p.id] || {}; const h = ph[p.id] || {};
+    return { ...p, a, hp: h.prev || 0, hr: h.real || 0, fb: o.aberto_hoje || 0, atr: o.atrasado || 0, fora: ex[p.id] || 0,
+      sit: a < .8 ? ['critico', 'Crítico'] : a < TV_META ? ['atencao', 'Atenção'] : ['ok', 'No previsto'] }; })
+    .sort((x, y) => x.a - y.a);
+  S.tvLinhas = L; S.tvPag = 0; tvTabela();
+  clearInterval(S.tvPagina); S.tvPagina = setInterval(() => { S.tvPag++; tvTabela(); }, 12000);
+  const nc = L.filter(p => p.sit[0] === 'critico').length, na = L.filter(p => p.sit[0] === 'atencao').length;
+  $('#tv-tabs').textContent = `${L.length} parceiros · ${nc} críticos · ${na} em atenção · aderência do mês até ontem`;
+  $('#tv-rodape').innerHTML = [
+    ['ok', `${n0(tm.real)} realizados no mês`], ['neutro', `${n0(tm.prev)} previstos no mês`], ['critico', `${n0(tm.sem_atend)} pontos sem atendimento no mês`],
+    ['atencao', `${n0(tm.oc)} ocorrências no mês`], ['atencao', `${n0(tm.fora)} atendimentos fora da carteira`],
+    ['neutro', `Umov atualizado ${PA.atualizado ? fmtDH(PA.atualizado) : '—'} · tela atualiza a cada 5 min`]].map(([c, t]) => `<span class="${c}"><i></i>${t}</span>`).join('');
+}
+function tvTabela() {
+  const box = $('#tv-tabela'); if (!box) return pararTv(); const L = S.tvLinhas || [];
+  const porPag = Math.max(5, Math.floor((box.clientHeight || 360) / 38) - 1); const pags = Math.max(1, Math.ceil(L.length / porPag)); const pg = S.tvPag % pags;
+  const n0 = v => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+  box.innerHTML = `<table><thead><tr><th>Parceiro</th><th class="n">Previsto mês</th><th class="n">Realizado</th><th>Aderência</th><th class="n">Sem atend.</th><th class="n">Hoje prev.</th><th class="n">Hoje real.</th><th class="n">Falta baixa</th><th class="n">Atrasados</th><th class="n">Fora do prev.</th><th>Situação</th></tr></thead><tbody>
+    ${L.slice(pg * porPag, (pg + 1) * porPag).map(p => `<tr><td>${esc(p.nome)}</td><td class="n">${n0(p.prev)}</td><td class="n">${n0(p.real)}</td>
+      <td><div class="tv-ader ${p.sit[0]}"><i style="width:${Math.min(100, p.a * 100)}%"></i><span>${(p.a * 100).toFixed(1).replace('.', ',')}%</span></div></td>
+      <td class="n">${p.sem_atend ? `<em class="critico">${n0(p.sem_atend)}</em>` : '0'}</td><td class="n">${n0(p.hp)}</td><td class="n">${n0(p.hr)}</td>
+      <td class="n">${n0(p.fb)}</td><td class="n">${p.atr ? `<em class="critico">${n0(p.atr)}</em>` : '0'}</td><td class="n">${p.fora ? `<em class="atencao">${n0(p.fora)}</em>` : '0'}</td>
+      <td><span class="tv-sit ${p.sit[0]}">${p.sit[1]}</span></td></tr>`).join('')}</tbody></table>
+    ${pags > 1 ? `<div class="tv-pag">página ${pg + 1} de ${pags} · troca a cada 12 s</div>` : ''}`;
+}
+function tvBarras(box, D, nomes, corB) {
+  if (!box) return; if (!D.length) { box.innerHTML = '<div class="tv-vazio">Sem dados no período.</div>'; return; }
+  const W = Math.max(600, box.clientWidth || 800), H = Math.max(200, box.clientHeight || 260), pl = 40, pr = 8, pt = 22, pb = 26;
+  const mx = Math.max(1, ...D.map(d => Math.max(d.a, d.b))); const bw = (W - pl - pr) / D.length; const y = v => pt + (H - pt - pb) * (1 - v / mx);
+  const tk = [0, .5, 1].map(t => Math.round(mx * t));
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img">
+    ${tk.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--tv-linha)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--tv-muted)">${t.toLocaleString('pt-BR')}</text>`).join('')}
+    ${D.map((d, i) => { const x = pl + i * bw; const w = Math.max(2, bw * .34);
+      return `<rect x="${x + bw * .14}" y="${y(d.a)}" width="${w}" height="${Math.max(0, y(0) - y(d.a))}" fill="var(--tv-cinza)" rx="2"/>
+        <rect x="${x + bw * .14 + w + 2}" y="${y(d.b)}" width="${w}" height="${Math.max(0, y(0) - y(d.b))}" fill="${corB(d)}" rx="2"/>
+        ${d.lbl && bw > 22 ? `<text x="${x + bw / 2}" y="${y(Math.max(d.a, d.b)) - 6}" text-anchor="middle" font-size="11" font-weight="600" fill="${corB(d)}">${d.lbl}</text>` : ''}
+        <text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--tv-muted)">${d.rot}</text>`; }).join('')}
+  </svg><div class="tv-leg"><span><i style="background:var(--tv-cinza)"></i>${nomes[0]}</span><span><i style="background:${corB(D[0]) === 'var(--tv-marca)' ? 'var(--tv-marca)' : 'var(--tv-ok)'}"></i>${nomes[1]}</span></div>`;
 }

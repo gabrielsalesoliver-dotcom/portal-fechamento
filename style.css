@@ -259,3 +259,57 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
   .kpi b{font-size:18px}
   .btn{min-height:44px}
 }
+
+/* ===== Torre de controle · modo TV ===== */
+.tv{--tv-fundo:#0D0C0F;--tv-card:#16151A;--tv-linha:#2A282F;--tv-texto:#EDEBE8;--tv-muted:#9B98A0;--tv-cinza:#4A4750;
+  --tv-marca:#E8435F;--tv-ok:#43C08A;--tv-atencao:#E3A64A;--tv-critico:#E8435F;
+  position:fixed;inset:0;z-index:2000;background:var(--tv-fundo);color:var(--tv-texto);display:grid;grid-template-rows:auto auto minmax(0,1fr) minmax(0,1.15fr) auto;gap:14px;padding:16px 20px;font-family:inherit;overflow:hidden}
+.tv-top{display:flex;align-items:center;gap:20px;border-bottom:2px solid var(--tv-marca);padding-bottom:12px}
+.tv-marca{display:flex;align-items:center;gap:14px}.tv-marca img{height:34px;width:102px;object-fit:contain}
+.tv-marca b{display:block;font-size:20px;font-weight:700;letter-spacing:-.2px}.tv-marca span{font-size:13px;color:var(--tv-muted)}
+.tv-aderencia{margin:0 auto;border:1px solid var(--tv-linha);border-radius:999px;padding:8px 18px;font-size:15px;color:var(--tv-muted);display:flex;gap:8px;align-items:baseline}
+.tv-aderencia b{font-size:20px;color:var(--tv-texto)}
+.tv-aderencia.ok{border-color:var(--tv-ok)}.tv-aderencia.ok b{color:var(--tv-ok)}
+.tv-aderencia.atencao{border-color:var(--tv-atencao)}.tv-aderencia.atencao b{color:var(--tv-atencao)}
+.tv-aderencia.critico{border-color:var(--tv-critico)}.tv-aderencia.critico b{color:var(--tv-critico)}
+.tv-relogio{text-align:right}.tv-relogio b{display:block;font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px;line-height:1}
+.tv-relogio span{font-size:13px;color:var(--tv-muted);text-transform:capitalize}
+.tv-acoes{display:flex;gap:8px;align-items:center}
+.tv-acoes button{font:inherit;font-size:16px;color:var(--tv-texto);background:var(--tv-card);border:1px solid var(--tv-linha);border-radius:8px;width:40px;height:40px;cursor:pointer}
+.tv-acoes button:hover{border-color:var(--tv-muted)}
+.tv-robo{font-size:13px;font-weight:600;white-space:nowrap}.tv-robo.ok{color:var(--tv-ok)}.tv-robo.critico{color:var(--tv-critico)}
+.tv-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.tv-kpi{background:var(--tv-card);border:1px solid var(--tv-linha);border-top:3px solid var(--tv-cinza);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0;position:relative}
+.tv-kpi small{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--tv-muted);font-weight:600}
+.tv-kpi b{font-size:clamp(26px,2.6vw,46px);font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}
+.tv-kpi span{font-size:12.5px;color:var(--tv-muted)}
+.tv-kpi.ok{border-top-color:var(--tv-ok)}.tv-kpi.ok b{color:var(--tv-ok)}
+.tv-kpi.atencao{border-top-color:var(--tv-atencao)}.tv-kpi.atencao b{color:var(--tv-atencao)}
+.tv-kpi.critico{border-top-color:var(--tv-critico)}.tv-kpi.critico b{color:var(--tv-critico)}
+.tv-spark{width:100%;height:30px;margin-top:4px}
+.tv-barra{height:6px;background:var(--tv-linha);border-radius:999px;overflow:hidden;margin-top:6px}.tv-barra i{display:block;height:100%;background:var(--tv-ok)}
+.tv-meio{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;min-height:0}
+.tv-card{background:var(--tv-card);border:1px solid var(--tv-linha);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;min-height:0}
+.tv-tit{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.tv-tit b{font-size:14px;letter-spacing:.06em;text-transform:uppercase}.tv-tit span{font-size:12.5px;color:var(--tv-muted);text-align:right}
+.tv-graf{flex:1;min-height:0;display:flex;flex-direction:column}.tv-graf svg{flex:1;min-height:0}
+.tv-leg{display:flex;gap:16px;font-size:12px;color:var(--tv-muted);margin-top:4px}.tv-leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.tv-tab #tv-tabela{flex:1;min-height:0;overflow:hidden}
+.tv table{width:100%;border-collapse:collapse;font-size:14px}
+.tv th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--tv-muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--tv-linha);font-weight:600}
+.tv td{padding:7px 8px;border-bottom:1px solid var(--tv-linha);white-space:nowrap}
+.tv td:first-child{max-width:340px;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.tv .n{text-align:right;font-variant-numeric:tabular-nums}
+.tv em{font-style:normal;font-weight:700}.tv em.critico{color:var(--tv-critico)}.tv em.atencao{color:var(--tv-atencao)}
+.tv-ader{position:relative;height:20px;min-width:150px;background:var(--tv-linha);border-radius:4px;overflow:hidden}
+.tv-ader i{position:absolute;inset:0 auto 0 0}.tv-ader span{position:relative;font-size:12px;font-weight:700;padding-left:8px;line-height:20px}
+.tv-ader.ok i{background:rgba(67,192,138,.45)}.tv-ader.atencao i{background:rgba(227,166,74,.5)}.tv-ader.critico i{background:rgba(232,67,95,.55)}
+.tv-sit{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:4px;border:1px solid}
+.tv-sit.ok{color:var(--tv-ok);border-color:var(--tv-ok)}.tv-sit.atencao{color:var(--tv-atencao);border-color:var(--tv-atencao)}.tv-sit.critico{color:#fff;background:var(--tv-critico);border-color:var(--tv-critico)}
+.tv-pag{font-size:12px;color:var(--tv-muted);text-align:right;padding-top:6px}
+.tv-rodape{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:var(--tv-muted);border-top:1px solid var(--tv-linha);padding-top:10px}
+.tv-rodape span{display:inline-flex;align-items:center;gap:7px}.tv-rodape i{width:9px;height:9px;border-radius:2px;background:var(--tv-cinza)}
+.tv-rodape .ok i{background:var(--tv-ok)}.tv-rodape .atencao i{background:var(--tv-atencao)}.tv-rodape .critico i{background:var(--tv-critico)}
+.tv-erro,.tv-vazio{grid-column:1/-1;color:var(--tv-atencao);font-size:15px;padding:12px}
+@media (max-width:1100px){.tv{position:static;min-height:100vh;overflow:auto;grid-template-rows:none}.tv-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.tv-meio{grid-template-columns:1fr}.tv-graf{height:240px}.tv-tab #tv-tabela{overflow-x:auto}.tv-top{flex-wrap:wrap}.tv-aderencia{margin:0}}
+@media (max-width:640px){.tv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.tv-relogio b{font-size:24px}}
