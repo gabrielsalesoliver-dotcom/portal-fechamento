@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-1200b';
+const VERSAO = '2026.11.19-1300';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -5318,11 +5318,10 @@ async function vTvDir() {
       <div class="tv-acoes"><button type="button" id="tv-atu" title="Atualizar agora">↻</button><button type="button" id="tv-full" title="Tela cheia">⛶</button><button type="button" id="tv-sair" title="Sair do modo TV">✕</button></div>
     </header>
     <section class="tv-kpis" id="tv-kpis"><div class="tv-vazio">Carregando os fechamentos…</div></section>
-    <section class="tv-meio"><div class="tv-card"><div class="tv-tit"><b>Custo mensal · previsto × realizado</b><span id="tv-g1s"></span></div><div id="tv-g1" class="tv-graf"></div></div>
-      <div class="tv-card"><div class="tv-tit"><b>Pagamentos do mês</b><span id="tv-g2s"></span></div><div id="tv-g2" class="tv-graf" style="overflow:hidden"></div></div></section>
-    <section class="tv-card tv-tab"><div class="tv-tit"><b>Praças · maiores variações sobre o mês anterior</b><span id="tv-tabs"></span></div><div id="tv-tabela"></div></section>
+    <section class="tv-card tv-slides"><div class="tv-tit"><b id="tv-stit"></b><span class="tv-snav" id="tv-snav"></span></div><div class="tv-palco" id="tv-palco"></div></section>
     <footer class="tv-rodape" id="tv-rodape"></footer>
   </div>`;
+  $('#tv').classList.add('tv-dir');
   const relogio = () => { const d = new Date(); const h = $('#tv-hora'); if (!h) return pararTv();
     h.textContent = d.toLocaleTimeString('pt-BR'); $('#tv-data').textContent = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); };
   relogio(); S.tvRelogio = setInterval(relogio, 1000);
@@ -5333,6 +5332,45 @@ async function vTvDir() {
   await tvDirCarregar();
   S.tvDados = setInterval(tvDirCarregar, 10 * 60000);
 }
+// slides com os gráficos do portal (mesmas funções da visão da diretoria), girando sozinhos
+const TV_SLIDES = [
+  ['geral', 'Visão geral do mês'], ['variacao', 'O que mudou sobre o mês anterior'], ['mapa', 'Mapa de custos'], ['evolucao', 'Evolução por praça'],
+  ['previsto', 'Previsto (calendarizado) × realizado · malote'], ['ano', 'Resumo do ano'], ['pagamentos', 'Pagamentos e praças com maior variação']];
+const TV_SLIDE_SEG = 30;
+function tvSlide(i) {
+  const palco = $('#tv-palco'); if (!palco || !S.tvDir) return; const D = S.dir, c = S.tvDir.c; const idx = D.comps.findIndex(x => x.id === c.id); const ant = D.comps[idx - 1];
+  S.tvSl = ((i % TV_SLIDES.length) + TV_SLIDES.length) % TV_SLIDES.length; const [k, t] = TV_SLIDES[S.tvSl];
+  $('#tv-stit').textContent = `${t} · ${nomeMes(c.mes)}`;
+  $('#tv-snav').innerHTML = `<button type="button" data-tvs="-1" title="Anterior">‹</button>${TV_SLIDES.map((x, j) => `<i data-tvi="${j}" class="${j === S.tvSl ? 'on' : ''}" title="${esc(x[1])}"></i>`).join('')}<button type="button" data-tvs="1" title="Próximo">›</button><button type="button" id="tv-pausa" title="${S.tvPausa ? 'Continuar' : 'Pausar'}">${S.tvPausa ? '▶' : '❚❚'}</button>`;
+  $('#tv-snav').querySelectorAll('[data-tvs]').forEach(b => b.onclick = () => { tvSlide(S.tvSl + Number(b.dataset.tvs)); tvRodar(); });
+  $('#tv-snav').querySelectorAll('[data-tvi]').forEach(b => b.onclick = () => { tvSlide(Number(b.dataset.tvi)); tvRodar(); });
+  $('#tv-pausa').onclick = () => { S.tvPausa = !S.tvPausa; tvRodar(); tvSlide(S.tvSl); };
+  palco.innerHTML = `<div class="tv-escala" id="tv-esc" data-sl="${k}"></div>`; const box = $('#tv-esc');
+  D.compId = c.id; D.aba = k === 'geral' ? 'geral' : D.aba; D.op = 'tudo';
+  try {
+    if (k === 'geral') visaoGeral(box, D, c, ant);
+    else if (k === 'variacao') { box.innerHTML = '<section class="bloco"><div id="tv-ponte" style="position:relative"></div></section>'; ponte($('#tv-ponte'), D, c, ant); }
+    else if (k === 'mapa') { box.innerHTML = '<div id="tv-mapa"></div>'; mapaCustos($('#tv-mapa'), D, c); }
+    else if (k === 'evolucao') { box.innerHTML = '<section class="gcard" id="tv-evol"></section>'; evolucaoPracas($('#tv-evol'), D, c); }
+    else if (k === 'previsto') { const n = v => Number(v) || 0; const pts = D.comps.filter(x => x.mes <= c.mes).slice(-12).map(x => { const pr = D.prev.filter(f => f.competencia_id === x.id && f.previsto != null);
+        const fe = D.fech.filter(f => f.competencia_id === x.id); return { c: x, p: pr.reduce((a, r) => a + n(r.previsto), 0), r: fe.length ? fe.reduce((a, r) => a + n(r.malote), 0) : null, origem: (pr[0] || {}).origem_previsao }; });
+      box.innerHTML = '<section class="bloco"><div id="tv-gprev" style="position:relative"></div><div id="tv-tprev"></div></section>'; graficoPrev($('#tv-gprev'), $('#tv-tprev'), pts, c.id); }
+    else if (k === 'ano') { const n = v => Number(v) || 0; const doMes = id => D.fech.filter(f => f.competencia_id === id);
+      box.innerHTML = '<section class="bloco"><div id="tv-ano"></div></section><section class="bloco"><h2>Custo mês a mês</h2><div id="tv-graf" style="position:relative"></div></section>';
+      blocoAno($('#tv-ano'), D, c); grafico($('#tv-graf'), D.comps.filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && x.mes <= c.mes).map(x => ({ rot: MES3[+x.mes.slice(5, 7) - 1], v: doMes(x.id).reduce((a, r) => a + n(r.valor_aprovado ?? r.valor_final), 0), atual: x.id === c.id, id: x.id }))); }
+    else { box.innerHTML = `<div class="tv-duas"><div><h3 class="tv-h3">Lotes de pagamento</h3><div id="tv-lotes"></div></div><div><h3 class="tv-h3">Praças com maior variação</h3><div id="tv-tabela"></div></div></div>`; tvDirPagamentos(); }
+  } catch (e) { box.innerHTML = `<div class="tv-erro">Não foi possível montar este gráfico: ${esc(e.message)}</div>`; }
+  tvEncaixar();
+}
+// escala o conteúdo do slide para caber inteiro no palco (o portal é desenhado com 1500 px de largura)
+function tvEncaixar() {
+  const palco = $('#tv-palco'), box = $('#tv-esc'); if (!palco || !box) return;
+  const fit = () => { if (!box.isConnected) return; box.style.transform = 'none'; const w = palco.clientWidth, h = palco.clientHeight, ih = box.scrollHeight || 1;
+    const bw = box.offsetWidth || 1500; const k = Math.min(w / bw, h / ih, 1.35); box.style.transform = `scale(${k})`; box.style.left = Math.max(0, (w - bw * k) / 2) + 'px'; };
+  fit(); if (S.tvRO) S.tvRO.disconnect(); if (window.ResizeObserver) { S.tvRO = new ResizeObserver(() => fit()); S.tvRO.observe(box); S.tvRO.observe(palco); }
+  [400, 1500, 4000].forEach(ms => setTimeout(fit, ms));
+}
+function tvRodar() { clearInterval(S.tvPagina); if (S.tvPausa) return; S.tvPagina = setInterval(() => tvSlide((S.tvSl || 0) + 1), TV_SLIDE_SEG * 1000); }
 async function tvDirCarregar() {
   try {
     const ok = await carregarDiretoria(); if (!$('#tv')) return;
@@ -5373,34 +5411,30 @@ function tvDirDesenhar() {
     kpi(aprov < parcsMes.size ? 'atencao' : 'ok', 'Fechamento', `${aprov} de ${parcsMes.size}`, `${Math.round(100 * aprov / Math.max(1, parcsMes.size))}% dos parceiros aprovados`, bar(100 * aprov / Math.max(1, parcsMes.size))) +
     kpi(pago >= total - 1 ? 'ok' : 'atencao', 'Pagamento', BRLk(pago), `pago · ${BRLk(emLote)} em lote${semLote ? ` · ${BRLk(semLote)} sem lote` : ''}${semNf ? ` · ${semNf} sem NF` : ''}`, bar(total ? 100 * pago / total : 0)) +
     kpi('neutro', `Custo no ano · ${ano}`, BRLk(custoAno), `média ${BRLk(custoAno / Math.max(1, mesesAno))} por mês · ${mesesAno} meses`);
-  // gráfico: últimos 12 meses previsto x realizado
-  const serie = D.comps.filter(x => x.mes <= c.mes).slice(-12).map(x => { const p = prevMes(x.id).reduce((a, r) => a + n(r.previsto), 0), r = doMes(x.id).reduce((a, f) => a + valor(f), 0);
-    return { rot: MES3[+x.mes.slice(5, 7) - 1], a: p, b: r, lbl: r ? BRLk(r).replace('R$ ', '').replace(' mil', 'k') : '' }; });
-  tvBarras($('#tv-g1'), serie, ['Previsto (calendarizado)', 'Realizado (pago)'], d => d.a && d.b > d.a * 1.02 ? 'var(--tv-critico)' : 'var(--tv-ok)', t => t ? BRLk(t).replace('R$ ', '') : '0');
-  $('#tv-g1s').textContent = 'barra vermelha = mês acima do previsto';
-  // pagamentos (lotes)
-  const ST = { gerado: ['Gerado', 'atencao'], enviado: ['Com o financeiro', 'atencao'], pago: ['Pago', 'ok'] };
-  const hoje = isoDia(new Date());
-  $('#tv-g2').innerHTML = T.lotes.length ? `<table><thead><tr><th>Data</th><th>Lote</th><th class="n">Parceiros</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
-    ${T.lotes.map(l => { const nP = L.filter(r => r.lote_id === l.id).length; const st = ST[l.status] || [l.status, 'neutro']; const atras = l.status !== 'pago' && l.data_pagamento < hoje;
-      return `<tr><td>${fmtD(l.data_pagamento)}</td><td>${esc(l.rotulo || '')}</td><td class="n">${nP}</td><td class="n">${BRL(n(l.total))}</td><td><span class="tv-sit ${atras ? 'critico' : st[1]}">${atras ? 'Vencido' : st[0]}</span></td></tr>`; }).join('')}</tbody></table>
-    ${semLote ? `<p class="tv-pag" style="text-align:left">Aprovados ainda sem lote: ${BRL(semLote)}</p>` : ''}` : '<div class="tv-vazio">Nenhum lote de pagamento gerado para o mês.</div>';
-  $('#tv-g2s').textContent = `${nomeMes(c.mes)} · total ${BRL(T.lotes.reduce((a, l) => a + n(l.total), 0))}`;
-  // praças com maior variação
+  // dados da lâmina de pagamentos e praças
   const pm = Object.fromEntries(D.parcs.map(p => [p.id, p])); const antPor = ant ? Object.fromEntries(doMes(ant.id).map(r => [r.parceiro_id, valor(r)])) : {};
   const prevPor = Object.fromEntries(prevMes(c.id).map(r => [r.parceiro_id, n(r.previsto)]));
-  const linhas = L.map(r => { const v = valor(r), a = antPor[r.parceiro_id] ?? null; return { p: pm[r.parceiro_id], v, a, d: a == null ? null : v - a, prev: prevPor[r.parceiro_id], r }; })
+  S.tvLinhasDir = L.map(r => { const v = valor(r), a = antPor[r.parceiro_id] ?? null; return { p: pm[r.parceiro_id], v, a, d: a == null ? null : v - a, prev: prevPor[r.parceiro_id], r }; })
     .filter(x => x.p).sort((x, y) => Math.abs(y.d ?? y.v) - Math.abs(x.d ?? x.v));
-  S.tvLinhasDir = linhas; S.tvPag = 0; tvDirTabela(); clearInterval(S.tvPagina); S.tvPagina = setInterval(() => { S.tvPag++; tvDirTabela(); }, 12000);
-  const sobe = linhas.filter(x => x.d > 0).reduce((a, x) => a + x.d, 0), desce = linhas.filter(x => x.d < 0).reduce((a, x) => a + x.d, 0);
-  $('#tv-tabs').textContent = `${linhas.length} praças · aumentos ${BRL(sobe)} · reduções ${BRL(desce)}`;
+  S.tvSemLote = semLote; S.tvLotesMes = L;
+  tvSlide(S.tvSl || 0); tvRodar();
   const desc = L.reduce((a, r) => a + n(r.descontos), 0); const kits = L.reduce((a, r) => a + n(r.kits), 0);
   $('#tv-rodape').innerHTML = [['neutro', `Malote ${BRL(malote)}`], ['atencao', `Kits/Spot ${BRL(kits)}`], ['ok', `Descontos ${BRL(desc)}`], ['ok', `Economia no ano ${BRL(gAno)}`],
     ['neutro', `${parcsMes.size} parceiros no mês`], ['neutro', `Atualiza a cada 10 min · ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`]].map(([cl, t]) => `<span class="${cl}"><i></i>${t}</span>`).join('');
 }
-function tvDirTabela() {
-  const box = $('#tv-tabela'); if (!box) return pararTv(); const L = S.tvLinhasDir || [];
-  const porPag = Math.max(5, Math.floor((box.clientHeight || 360) / 38) - 1); const pags = Math.max(1, Math.ceil(L.length / porPag)); const pg = S.tvPag % pags;
+function tvDirPagamentos() {
+  const T = S.tvDir, L = S.tvLotesMes || []; const n = v => Number(v) || 0; const hoje = isoDia(new Date());
+  const ST = { gerado: ['Gerado', 'atencao'], enviado: ['Com o financeiro', 'atencao'], pago: ['Pago', 'ok'] };
+  $('#tv-lotes').innerHTML = T.lotes.length ? `<table><thead><tr><th>Data</th><th>Lote</th><th class="n">Parceiros</th><th class="n">Valor</th><th>Situação</th></tr></thead><tbody>
+    ${T.lotes.map(l => { const nP = L.filter(r => r.lote_id === l.id).length; const st = ST[l.status] || [l.status, 'neutro']; const atras = l.status !== 'pago' && l.data_pagamento < hoje;
+      return `<tr><td>${fmtD(l.data_pagamento)}</td><td>${esc(l.rotulo || '')}</td><td class="n">${nP}</td><td class="n">${BRL(n(l.total))}</td><td><span class="tv-sit ${atras ? 'critico' : st[1]}">${atras ? 'Vencido' : st[0]}</span></td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td colspan="3"><b>Total em lotes</b></td><td class="n"><b>${BRL(T.lotes.reduce((a, l) => a + n(l.total), 0))}</b></td><td></td></tr></tfoot></table>
+    ${S.tvSemLote ? `<p class="tv-pag" style="text-align:left">Aprovados ainda sem lote: ${BRL(S.tvSemLote)}</p>` : ''}` : '<div class="tv-vazio">Nenhum lote de pagamento gerado para o mês.</div>';
+  S.tvPag = 0; tvDirTabela(14);
+}
+function tvDirTabela(porPagFixo) {
+  const box = $('#tv-tabela'); if (!box) return; const L = S.tvLinhasDir || [];
+  const porPag = porPagFixo || Math.max(5, Math.floor((box.clientHeight || 360) / 38) - 1); const pags = Math.max(1, Math.ceil(L.length / porPag)); const pg = S.tvPag % pags;
   const sit = r => r.pago_em ? ['ok', 'Pago'] : r.lote_id ? ['atencao', 'Em lote'] : r.valor_aprovado != null ? ['atencao', 'Aprovado'] : ['critico', 'Em fechamento'];
   box.innerHTML = `<table><thead><tr><th>Praça · parceiro</th><th>Tipo</th><th class="n">Mês anterior</th><th class="n">Este mês</th><th class="n">Variação</th><th class="n">Var. %</th><th class="n">Previsto</th><th class="n">% do previsto</th><th>Situação</th></tr></thead><tbody>
     ${L.slice(pg * porPag, (pg + 1) * porPag).map(x => { const s = sit(x.r); const vp = x.prev ? x.v / x.prev : null;
@@ -5408,5 +5442,5 @@ function tvDirTabela() {
       <td class="n">${x.d == null ? '<em class="atencao">novo</em>' : `<em class="${x.d > 0 ? 'critico' : x.d < 0 ? 'ok' : ''}" style="${x.d < 0 ? 'color:var(--tv-ok)' : ''}">${x.d > 0 ? '+' : ''}${BRL(x.d)}</em>`}</td>
       <td class="n">${x.a ? `${x.d > 0 ? '+' : ''}${(100 * x.d / x.a).toFixed(1).replace('.', ',')}%` : '—'}</td><td class="n">${x.prev ? BRL(x.prev) : '—'}</td>
       <td class="n">${vp == null ? '—' : `<em class="${vp > 1.02 ? 'critico' : ''}">${Math.round(vp * 100)}%</em>`}</td><td><span class="tv-sit ${s[0]}">${s[1]}</span></td></tr>`; }).join('')}</tbody></table>
-    ${pags > 1 ? `<div class="tv-pag">página ${pg + 1} de ${pags} · troca a cada 12 s</div>` : ''}`;
+    ${L.length > porPag ? `<div class="tv-pag">${porPag} maiores variações de ${L.length} praças</div>` : ''}`;
 }

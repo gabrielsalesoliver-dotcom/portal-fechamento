@@ -313,3 +313,28 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .tv-erro,.tv-vazio{grid-column:1/-1;color:var(--tv-atencao);font-size:15px;padding:12px}
 @media (max-width:1100px){.tv{position:static;min-height:100vh;overflow:auto;grid-template-rows:none}.tv-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.tv-meio{grid-template-columns:1fr}.tv-graf{height:240px}.tv-tab #tv-tabela{overflow-x:auto}.tv-top{flex-wrap:wrap}.tv-aderencia{margin:0}}
 @media (max-width:640px){.tv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.tv-relogio b{font-size:24px}}
+
+/* Modo TV da diretoria: lâminas com os gráficos do portal (tema escuro do portal dentro da TV) */
+.tv{--ink:#ECEAE7;--brand:#E8435F;--brand-deep:#F27A8F;--muted:#A4A1A6;--rule:#3A373B;--rule-soft:#2D2B2E;--paper:#16151A;--field:#1F1E21;--wash:#3A1C24;
+  --alert:#D9A24A;--alert-bg:#352A17;--alert-line:#6E5628;--num-light:#F0C2CC;--on-dark:#B8B6B4;--panel-line:#3A3639;--ok-bg:#242326;--eco:#5DC58B;--eco-bg:#16291F;
+  --surface:#1B1A1D;--panel:#0C0B0C;--on-panel:#FFFFFF;--panel-hover:#211F22;--btn:#ECEAE7;--on-btn:#121112;--btn-hover:#FFFFFF;
+  --alert-ink:#F1D29B;--alert-ink2:#F1D29B;--alert-num:#E7B865;--hl-row:#2E2617;--off:#6E6B70;--off2:#57545A;color-scheme:dark}
+.tv.tv-dir{grid-template-rows:auto auto minmax(0,1fr) auto}
+.tv-slides{min-height:0}
+.tv-palco{position:relative;flex:1;min-height:0;overflow:hidden}
+.tv-escala{position:absolute;top:0;left:0;width:1500px;transform-origin:top left;display:flex;flex-direction:column;gap:18px;color:var(--ink)}
+.tv-escala .bloco{border-top-color:var(--brand)}
+.tv-escala button,.tv-escala select,.tv-escala input{pointer-events:none}
+.tv-snav{display:inline-flex;align-items:center;gap:8px}
+.tv-snav i{width:10px;height:10px;border-radius:50%;background:var(--tv-cinza);cursor:pointer}.tv-snav i.on{background:var(--tv-marca);width:26px;border-radius:6px}
+.tv-snav button{font:inherit;font-size:14px;color:var(--tv-texto);background:var(--tv-fundo);border:1px solid var(--tv-linha);border-radius:6px;min-width:30px;height:28px;cursor:pointer}
+.tv-duas{display:grid;grid-template-columns:1fr 1.6fr;gap:28px}
+.tv-h3{margin:0 0 10px;font-size:15px;letter-spacing:.06em;text-transform:uppercase;color:var(--tv-muted)}
+.tv-escala table{font-size:15px}
+/* na TV cada lâmina mostra só a parte visual (as tabelas detalhadas ficam no portal) */
+.tv-escala[data-sl="geral"] #gresdet,.tv-escala[data-sl="geral"] #gevol{display:none!important}
+.tv-escala[data-sl="variacao"] table,.tv-escala[data-sl="variacao"] .tabela,.tv-escala[data-sl="evolucao"] table,.tv-escala[data-sl="evolucao"] .tabela,.tv-escala[data-sl="evolucao"] input,
+.tv-escala[data-sl="previsto"] #tv-tprev{display:none!important}
+.tv-escala[data-sl="geral"]{width:2100px}
+.tv-escala[data-sl="geral"] .ggrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.tv-escala[data-sl="geral"] .gtiles{grid-template-columns:repeat(4,minmax(0,1fr))}
