@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-1200';
+const VERSAO = '2026.11.19-1115';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4765,6 +4765,7 @@ function proximaCron(expr, de = new Date()) {
 const RX_INTERROMPIDO = /due to user request|^job canceled/i;
 function statusRobo(r, agora = new Date()) {
   const u = r.ultima || {};
+  if (!r.active && /^umov-backfill/.test(r.jobname || '') && (r.ultima || {}).status === 'succeeded') return ['concluido', 'Concluído · carga terminada', 'var(--eco)'];
   if (!r.active) return ['pausado', 'Pausado', 'var(--off)'];
   if (u.status === 'running' || u.status === 'starting') return ['rodando', 'Rodando agora', 'var(--off2)'];
   if (u.status === 'failed' && RX_INTERROMPIDO.test(u.msg || '')) return ['interrompido', 'Interrompido manualmente', 'var(--alert)'];
@@ -4797,7 +4798,7 @@ function desenharTorre() {
     <div class="kpi eco"><small>Funcionando</small><b>${cont('ok') + cont('rodando')}</b><span>${cont('rodando') ? cont('rodando') + ' rodando agora' : 'de ' + R.filter(r => r.active).length + ' ativos'}</span></div>
     <div class="kpi ${cont('falha') ? '' : 'neutro'}"><small>Com falha</small><b style="${cont('falha') ? 'color:var(--brand)' : ''}">${cont('falha')}</b><span>${R.reduce((a, r) => a + (+r.falhas_24h || 0), 0)} falha(s) nas últimas 24 h</span></div>
     <div class="kpi ${cont('atrasado') ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${cont('atrasado')}</b><span>sem rodar no prazo</span></div>
-    <div class="kpi neutro"><small>Pausados</small><b>${cont('pausado')}</b><span>${cont('aguardando') ? cont('aguardando') + ' aguardando 1ª execução' : 'desligados'}</span></div>
+    <div class="kpi neutro"><small>Pausados</small><b>${cont('pausado')}</b><span>${cont('concluido') ? cont('concluido') + ' concluído(s) · ' : ''}${cont('aguardando') ? cont('aguardando') + ' aguardando 1ª execução' : 'desligados'}</span></div>
   </div>
   <div style="display:flex;flex-direction:column;gap:14px">${st.map(({ r, s }) => { const u = r.ultima || {}; const prox = r.active ? proximaCron(r.schedule) : null;
     const dur = u.fim && u.inicio ? (new Date(u.fim) - new Date(u.inicio)) / 1000 : null; const H = (r.historico || []).slice().reverse();
