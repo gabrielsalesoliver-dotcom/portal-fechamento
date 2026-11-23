@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1100a';
+const VERSAO = '2026.11.23-1100b';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4826,7 +4826,7 @@ function proximaCron(expr, de = new Date()) {
 const RX_INTERROMPIDO = /due to user request|^job canceled/i;
 function statusRobo(r, agora = new Date()) {
   const u = r.ultima || {};
-  if (!r.active && /^umov-backfill/.test(r.jobname || '') && (r.ultima || {}).status === 'succeeded') return ['concluido', 'Concluído · carga terminada', 'var(--eco)'];
+  if (!r.active && /^umov-(backfill|outubro)/.test(r.jobname || '') && (r.ultima || {}).status === 'succeeded') return ['concluido', 'Concluído · carga terminada', 'var(--eco)'];
   if (!r.active) return ['pausado', 'Pausado', 'var(--off)'];
   if (u.status === 'running' || u.status === 'starting') return ['rodando', 'Rodando agora', 'var(--off2)'];
   if (u.status === 'failed' && RX_INTERROMPIDO.test(u.msg || '')) return ['interrompido', 'Interrompido manualmente', 'var(--alert)'];
