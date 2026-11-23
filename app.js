@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1000c';
+const VERSAO = '2026.11.23-1000d';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3797,6 +3797,7 @@ function visaoGeral(box, D, c, ant) {
     <section class="gcard"><h3>Composição do custo</h3>
       ${semReal ? '<p class="nota">Sem fechamento neste mês.</p>' : `<div class="gstack">${comp.map(x => `<i style="width:${100 * x[1] / base}%;background:${x[2]}" title="${x[0]}: ${BRL(x[1])}"></i>`).join('')}</div>
       <table class="gtab gpop"><tbody>${comp.map(x => `<tr data-pop="${x[0]}" title="Clique para abrir por cliente"><td><i class="gdot" style="background:${x[2]}"></i>${x[0]} <span class="gseta">›</span></td><td class="n">${BRL(x[1])}</td><td class="n gmut">${Math.round(100 * x[1] / base)}%</td></tr>`).join('')}
+        <tr class="gtot"><td>Realizado no mês</td><td class="n">${BRL(comp.reduce((a, x) => a + x[1], 0))}</td><td></td></tr>
         ${ajNeg < -0.5 ? `<tr data-pop="Ajustes de fatura" title="Clique para ver por parceiro"><td><i class="gdot" style="background:var(--off)"></i>Ajustes de fatura e adiantamentos <span class="gseta">›</span></td><td class="n">${BRL(ajNeg)}</td><td></td></tr>` : ''}
         ${desc ? `<tr data-pop="Descontos" title="Clique para abrir por categoria"><td><i class="gdot" style="background:var(--eco)"></i>Descontos <span class="gseta">›</span></td><td class="n eco">${BRL(desc)}</td><td></td></tr>` : ''}
         <tr class="gtot"><td>Total</td><td class="n">${BRL(custo)}</td><td></td></tr></tbody></table>`}
