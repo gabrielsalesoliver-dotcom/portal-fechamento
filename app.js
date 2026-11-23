@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1010';
+const VERSAO = '2026.11.23-1100a';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -200,7 +200,7 @@ async function carregarBase() {
 // ---------- casca ----------
 const MENU = [
   ['Visão geral', [['pendencias', 'Pendências e cobrança'], ['painel', 'Painel do mês']]],
-  ['Base do mês', [['umov', 'Importar Umov'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
+  ['Base do mês', [['umov', 'Base do Umov (API)'], ['carteira', 'Inclusão e cancelamento'], ['pontos', 'Carteira de pontos'], ['competencias', 'Liberar competência']]],
   ['Parceiros', [['cadastro', 'Parceiros e rotas'], ['conferencia', 'Conferência e aprovação'], ['adiantamentos', 'Adiantamentos e antecipações'], ['notas', 'Notas fiscais'], ['verparceiro', 'Portal do parceiro (GSM)']]],
   ['Financeiro', [['pacote', 'Pacote e pagamento']]],
   ['Acompanhamento', [['operacao', 'Operação ao vivo (Umov)'], ['diretoria', 'Diretoria e financeiro'], ['historico', 'Histórico por cliente']]],
@@ -657,10 +657,12 @@ async function vPainel() {
 async function vUmov() {
   const m = $('#main');
   m.innerHTML = `
-    <div class="topo"><div><h1>Importar Umov</h1><p>Suba a Listagem de atendimentos exportada do Umov. O que tem “KIT …” no Grupo Cliente vira Kits/Spot; o resto é Malote. O arquivo original fica guardado no portal.</p></div>${seletorComp()}</div>
+    <div class="topo"><div><h1>Base do Umov (API)</h1><p>Os atendimentos do mês vêm direto da API do Umov: o robô traz as movimentações a cada 2 horas e a base do fechamento é montada sozinha às 6h, 12h e 18h. O que é “KIT …” no grupo cliente vira Kits/Spot; o resto é Malote. Não é preciso subir planilha.</p></div>${seletorComp()}</div>
     <div id="ativa"></div>
+    <div id="apiacao"></div>
+    <details class="bloco" id="contingencia" style="margin-top:12px"${S.umovPrev ? ' open' : ''}><summary style="cursor:pointer"><b>Importar arquivo manualmente</b> <span class="nota">· só em contingência (API fora do ar)</span></summary>
     ${zonaArquivo('arq', 'Arraste a Listagem de atendimentos ou clique para escolher', 'CSV ou Excel, do jeito que sai do Umov', '.csv,.txt,.xlsx,.xls')}
-    <div id="prev"></div>
+    <div id="prev"></div></details>
     <div id="rotas"></div>
     <div id="hist"></div>`;
   ligarSeletor(vUmov);
@@ -671,10 +673,34 @@ async function vUmov() {
 
 async function umovAtivaEHist() {
   const hist = await q(sb.from('umov_importacoes').select('*').eq('competencia_id', S.compId).order('importado_em', { ascending: false }));
-  const ativa = hist.find(h => h.status === 'ativa');
+  const ativa = hist.find(h => h.status === 'ativa'); const c = comp();
+  const daApi = ativa && ativa.origem === 'api';
   $('#ativa').innerHTML = ativa
-    ? `<div class="msg ok">Base ativa de ${nomeMes(comp().mes)}: <b>${esc(ativa.arquivo)}</b>, importada em ${fmtDH(ativa.importado_em)} · ${fmtN(ativa.linhas)} linhas (${fmtN(ativa.malote)} malote, ${fmtN(ativa.kits)} kits).</div>`
-    : `<div class="msg alerta">${nomeMes(comp().mes)} ainda não tem base do Umov.</div>`;
+    ? `<div class="msg ok">Base ativa de ${nomeMes(c.mes)}: <b>${esc(ativa.arquivo)}</b>${daApi ? ' (API)' : ' (arquivo)'}, ${daApi ? 'montada' : 'importada'} em ${fmtDH(ativa.importado_em)} · ${fmtN(ativa.linhas)} linhas (${fmtN(ativa.malote)} malote, ${fmtN(ativa.kits)} kits).</div>`
+    : `<div class="msg alerta">${nomeMes(c.mes)} ainda não tem base do Umov. ${c.status === 'fechada' ? '' : 'Ela é montada sozinha pela API; se quiser, monte agora.'}</div>`;
+  const ac = $('#apiacao');
+  if (ac) {
+    const fechada = c.status === 'fechada';
+    ac.innerHTML = fechada ? '' : ativa && !daApi
+      ? `<div class="msg">Este mês foi fechado com base de arquivo, por isso a montagem automática não mexe nele. <button class="btn sec peq" id="api-trocar">Trocar pela base da API</button> <button class="btn sec peq" id="api-teste">Só comparar (sem trocar)</button></div>`
+      : `<div class="linha"><button class="btn marca" id="api-gerar">Atualizar base agora pela API</button><span class="nota">Leva de 1 a 3 minutos.</span></div>`;
+    const rodar = async (bt, forcar, teste) => {
+      if (forcar && !confirm(`Trocar a base de ${nomeMes(c.mes)} pela API? A base de arquivo fica no histórico, mas os valores do Umov deste mês passam a vir da API.`)) return;
+      bt.disabled = true; const t = bt.textContent; bt.textContent = 'Montando a base…';
+      try { const r = await q(sb.rpc('gerar_base_umov', { p_comp: c.id, p_forcar: !!forcar, p_teste: !!teste }));
+        bt.textContent = 'Na fila · montando (1 a 3 min)…';
+        for (let i = 0; i < 40; i++) { await new Promise(ok => setTimeout(ok, 15000));
+          const pd = (await q(sb.from('umov_base_pedido').select('fim,resultado,erro').eq('id', r.pedido)))[0];
+          if (!pd || !pd.fim) continue;
+          const res = pd.resultado || {};
+          if (pd.erro) alertaErro('A base não foi montada: ' + pd.erro); else if (res.ok === false) alertaErro(res.motivo);
+          else alertaOk(teste ? `Base de comparação montada: ${fmtN(res.linhas)} linhas (não foi ativada).` : `Base de ${nomeMes(c.mes)} atualizada pela API: ${fmtN(res.linhas)} linhas.`);
+          if ($('#apiacao')) await umovAtivaEHist(); break; }
+      } catch (e) { alertaErro(e.message); } finally { bt.disabled = false; bt.textContent = t; }
+    };
+    const b1 = $('#api-gerar'), b2 = $('#api-trocar'), b3 = $('#api-teste');
+    if (b1) b1.onclick = () => rodar(b1, false, false); if (b2) b2.onclick = () => rodar(b2, true, false); if (b3) b3.onclick = () => rodar(b3, false, true);
+  }
   $('#hist').innerHTML = hist.length ? `<section class="bloco"><h2>Histórico de importações</h2><div class="tabela"><table>
     <thead><tr><th>Arquivo</th><th>Importado em</th><th class="n">Linhas</th><th class="n">Malote</th><th class="n">Kits</th><th class="n">Sem parceiro</th><th>Situação</th></tr></thead>
     <tbody>${hist.map(h => `<tr><td>${esc(h.arquivo)}</td><td>${fmtDH(h.importado_em)}</td><td class="n">${fmtN(h.linhas)}</td><td class="n">${fmtN(h.malote)}</td><td class="n">${fmtN(h.kits)}</td><td class="n">${fmtN(h.sem_parceiro)}</td>
@@ -879,6 +905,7 @@ async function rotasSemParceiro(ativa) {
 }
 
 function alertaOk(t) { const d = document.createElement('div'); d.className = 'msg ok'; d.textContent = t; $('#main').prepend(d); }
+function alertaErro(t) { const d = document.createElement('div'); d.className = 'msg erro'; d.textContent = t; $('#main').prepend(d); }
 function alertaTopo(t) { const d = document.createElement('div'); d.className = 'msg erro'; d.textContent = t; $('#main').prepend(d); }
 
 // ---------- Passo 2: Inclusão e cancelamento ----------
