@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1100';
+const VERSAO = '2026.11.23-1010';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4406,7 +4406,7 @@ function popComposicao(item, D, c, ant) {
   if (item === ATX) {
     const box = abrirPop(`${ATX} · ${mes}`, 'Atendimentos de malote além do contrato: 2ª visita de ponto mensal (ex.: Crefisa) e atendimentos extras lançados. Não contam como Kits/Spot.');
     (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
-      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente', { p_comp: c.id }))); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente_j', { p_comp: c.id })) || []); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
       const g = {}; rs.filter(r => cliSpotDe(r, pm) === ATX).forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, n: 0, ls: [] }); y.v += n(r.valor); y.n += n(r.qtd) || 1; y.ls.push(r); });
       tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, itens: y.ls.map(l => ({ d: l.destino || l.cliente || 'Atendimento extra', v: l.valor, x: [l.cidade, l.data].filter(Boolean).join(' · ') })), det: y.ls.slice(0, 0).map(l => esc(l.origem === 'planilha' ? `${l.cliente} (planilha)` : (l.destino || l.cliente || ''))).join(' · ') + (y.ls.length > 1e9 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro', 'Antes ficavam em Kits/Spot como "Crefisa" e "Atendimento". O total do parceiro não muda.');
     })(); return;
@@ -4424,7 +4424,7 @@ function popComposicao(item, D, c, ant) {
     const box = pos ? abrirPop(`Fora do Umov · ${mes}`, 'Serviços que o parceiro cobrou e que não passam pelo Umov: coletas de Fiorino/Van, corridas, rateio de fatura, armazenamento, taxas, transferências. Malote de cliente e 2ª visita de ponto mensal não entram aqui (estão em Malote e Atendimentos extras).')
       : abrirPop(`Ajustes de fatura e adiantamentos · ${mes}`, 'Lançamentos negativos: valor já pago por adiantamento em mês anterior, rateio de fatura entre praças e ajustes para bater com a NF do parceiro.');
     (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
-      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente', { p_comp: c.id }))); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente_j', { p_comp: c.id })) || []); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
       const g = {};
       rs.filter(r => r.origem === 'fora').filter(r => { const k = cliSpotDe(r, pm); return !NAO_SPOT.has(k) && k !== ATX; })
         .forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, ls: [] }); y.v += n(r.valor); y.ls.push(r); });
@@ -4485,7 +4485,7 @@ function clienteSpot(t, destino) {
 }
 async function spotPorCliente(box, c, ant) {
   const D = S.dir; D.spot = D.spot || {};
-  const pega = async id => D.spot[id] || (D.spot[id] = await q(sb.rpc('dir_spot_cliente', { p_comp: id })));
+  const pega = async id => D.spot[id] || (D.spot[id] = await q(sb.rpc('dir_spot_cliente_j', { p_comp: id })) || []);
   let atual, antes;
   try { [atual, antes] = await Promise.all([pega(c.id), ant ? pega(ant.id) : []]); }
   catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
