@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1000b';
+const VERSAO = '2026.11.23-1000c';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3731,7 +3731,7 @@ function visaoGeral(box, D, c, ant) {
   // Ano
   const ano = c.mes.slice(0, 4), mSel = +c.mes.slice(5, 7);
   const meses = D.comps.filter(x => x.mes.slice(0, 4) === ano);
-  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), k: doMes(x.id).reduce((a, r) => a + n(r.kits) + Math.max(0, n(r.fora_umov)), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
+  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), k: doMes(x.id).reduce((a, r) => a + n(r.kits), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
   const acum = serie.filter(s => +s.c.mes.slice(5, 7) <= mSel).reduce((a, s) => a + s.v, 0);
   const comV = serie.filter(s => s.v > 0); const ultR = comV.length ? +comV[comV.length - 1].c.mes.slice(5, 7) : 0;
   const ultP = serie.filter(s => s.p > 0).slice(-1)[0];
@@ -3745,7 +3745,7 @@ function visaoGeral(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const pend = parceirosMes - nFech;
 
-  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', foraPos, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', outros - outNeg, 'var(--on-dark)']].filter(x => x[1] > 0.5);
+  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Serviços fora do Umov', foraPos, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', outros - outNeg, 'var(--on-dark)']].filter(x => x[1] > 0.5);
   const base = comp.reduce((a, x) => a + x[1], 0) || 1;
   const maxS = Math.max(...serie.map(s => Math.max(s.v, s.p)), 1);
   const tile = (rot, val, sub, cls = '') => `<div class="gtile ${cls}"><small>${rot}</small><b>${val}</b><span>${sub}</span></div>`;
@@ -3790,7 +3790,7 @@ function visaoGeral(box, D, c, ant) {
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
     ${tile('Malote realizado', semReal ? '—' : BRL(mal), !previsto || !prevComReal ? 'sem previsão no mês' : `${pct(difPrev / prevComReal)} sobre o previsto`)}
-    ${tile('Kits/Spot', semReal ? '—' : BRL(kit + foraPos), custo ? `${Math.round(100 * (kit + foraPos) / custo)}% do custo do mês · com fora do Umov` : '')}
+    ${tile('Kits/Spot', semReal ? '—' : BRL(kit), custo ? `${Math.round(100 * kit / custo)}% do custo do mês · sem fora do Umov` : '')}
     ${tile(`Acumulado ${ano}`, BRL(acum), `projeção do ano ${BRLk(proj)}`)}
   </div>
   <div class="ggrid">
@@ -4413,8 +4413,8 @@ function popComposicao(item, D, c, ant) {
     return;
   }
   const total = r => n(r.valor_aprovado ?? r.valor_final);
-  if (item === 'Fora do Umov' || item === 'Ajustes de fatura') {
-    const pos = item === 'Fora do Umov';
+  if (item === 'Serviços fora do Umov' || item === 'Ajustes de fatura') {
+    const pos = item === 'Serviços fora do Umov';
     const box = pos ? abrirPop(`Fora do Umov · ${mes}`, 'Serviços que o parceiro cobrou e que não passam pelo Umov: coletas de Fiorino/Van, corridas, rateio de fatura, armazenamento, taxas, transferências. Malote de cliente e 2ª visita de ponto mensal não entram aqui (estão em Malote e Atendimentos extras).')
       : abrirPop(`Ajustes de fatura e adiantamentos · ${mes}`, 'Lançamentos negativos: valor já pago por adiantamento em mês anterior, rateio de fatura entre praças e ajustes para bater com a NF do parceiro.');
     (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
