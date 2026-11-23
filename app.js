@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.19-1300';
+const VERSAO = '2026.11.23-1000';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3687,6 +3687,9 @@ function visaoGeral(box, D, c, ant) {
   const custo = fe.reduce((a, r) => a + total(r), 0), custoAnt = fa.reduce((a, r) => a + total(r), 0);
   const mal = fe.reduce((a, r) => a + n(r.malote), 0), kit = fe.reduce((a, r) => a + n(r.kits), 0), fora = fe.reduce((a, r) => a + n(r.fora_umov), 0), atx = fe.reduce((a, r) => a + n(r.atend_extra), 0), desc = fe.reduce((a, r) => a + n(r.descontos), 0);
   const outros = custo - mal - kit - fora - atx - desc;
+  // fora do Umov separado por sinal: serviços/coletas cobrados (+) e ajustes de fatura/adiantamento já pago (−)
+  const foraPos = fe.reduce((a, r) => a + Math.max(0, n(r.fora_umov)), 0), foraNeg = fe.reduce((a, r) => a + Math.min(0, n(r.fora_umov)), 0);
+  const ajNeg = foraNeg + Math.min(0, outros);
   const prevPor = Object.fromEntries(prevDe(c.id).map(p => [p.parceiro_id, n(p.previsto)]));
   const previsto = Object.values(prevPor).reduce((a, v) => a + v, 0);
   const malComPrev = fe.filter(r => prevPor[r.parceiro_id] != null).reduce((a, r) => a + n(r.malote), 0);
@@ -3727,7 +3730,7 @@ function visaoGeral(box, D, c, ant) {
   // Ano
   const ano = c.mes.slice(0, 4), mSel = +c.mes.slice(5, 7);
   const meses = D.comps.filter(x => x.mes.slice(0, 4) === ano);
-  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), k: doMes(x.id).reduce((a, r) => a + n(r.kits) + n(r.fora_umov), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
+  const serie = meses.map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), k: doMes(x.id).reduce((a, r) => a + n(r.kits) + Math.max(0, n(r.fora_umov)), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
   const acum = serie.filter(s => +s.c.mes.slice(5, 7) <= mSel).reduce((a, s) => a + s.v, 0);
   const comV = serie.filter(s => s.v > 0); const ultR = comV.length ? +comV[comV.length - 1].c.mes.slice(5, 7) : 0;
   const ultP = serie.filter(s => s.p > 0).slice(-1)[0];
@@ -3741,7 +3744,7 @@ function visaoGeral(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const pend = parceirosMes - nFech;
 
-  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', fora, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', outros, 'var(--on-dark)']].filter(x => x[1] > 0.5);
+  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', foraPos, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', Math.max(0, outros), 'var(--on-dark)']].filter(x => x[1] > 0.5);
   const base = comp.reduce((a, x) => a + x[1], 0) || 1;
   const maxS = Math.max(...serie.map(s => Math.max(s.v, s.p)), 1);
   const tile = (rot, val, sub, cls = '') => `<div class="gtile ${cls}"><small>${rot}</small><b>${val}</b><span>${sub}</span></div>`;
@@ -3786,13 +3789,14 @@ function visaoGeral(box, D, c, ant) {
   <div class="gtiles">
     ${tile('Previsto (calendarizado)', previsto ? BRL(previsto) : '—', previsto ? 'fixo do contrato + pontos × valor unitário' : 'base do mês ainda não gerada')}
     ${tile('Malote realizado', semReal ? '—' : BRL(mal), !previsto || !prevComReal ? 'sem previsão no mês' : `${pct(difPrev / prevComReal)} sobre o previsto`)}
-    ${tile('Kits/Spot', semReal ? '—' : BRL(kit + fora), custo ? `${Math.round(100 * (kit + fora) / custo)}% do custo do mês` : '')}
+    ${tile('Kits/Spot', semReal ? '—' : BRL(kit + foraPos), custo ? `${Math.round(100 * (kit + foraPos) / custo)}% do custo do mês · com fora do Umov` : '')}
     ${tile(`Acumulado ${ano}`, BRL(acum), `projeção do ano ${BRLk(proj)}`)}
   </div>
   <div class="ggrid">
     <section class="gcard"><h3>Composição do custo</h3>
       ${semReal ? '<p class="nota">Sem fechamento neste mês.</p>' : `<div class="gstack">${comp.map(x => `<i style="width:${100 * x[1] / base}%;background:${x[2]}" title="${x[0]}: ${BRL(x[1])}"></i>`).join('')}</div>
       <table class="gtab gpop"><tbody>${comp.map(x => `<tr data-pop="${x[0]}" title="Clique para abrir por cliente"><td><i class="gdot" style="background:${x[2]}"></i>${x[0]} <span class="gseta">›</span></td><td class="n">${BRL(x[1])}</td><td class="n gmut">${Math.round(100 * x[1] / base)}%</td></tr>`).join('')}
+        ${ajNeg < -0.5 ? `<tr data-pop="Ajustes de fatura" title="Clique para ver por parceiro"><td><i class="gdot" style="background:var(--off)"></i>Ajustes de fatura e adiantamentos <span class="gseta">›</span></td><td class="n">${BRL(ajNeg)}</td><td></td></tr>` : ''}
         ${desc ? `<tr data-pop="Descontos" title="Clique para abrir por categoria"><td><i class="gdot" style="background:var(--eco)"></i>Descontos <span class="gseta">›</span></td><td class="n eco">${BRL(desc)}</td><td></td></tr>` : ''}
         <tr class="gtot"><td>Total</td><td class="n">${BRL(custo)}</td><td></td></tr></tbody></table>`}
     </section>
@@ -4408,6 +4412,11 @@ function popComposicao(item, D, c, ant) {
     return;
   }
   const total = r => n(r.valor_aprovado ?? r.valor_final);
+  if (item === 'Ajustes de fatura') {
+    const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: Math.min(0, n(r.fora_umov)) + Math.min(0, total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos)) })).filter(l => l.v < -0.5);
+    tabela(abrirPop(`Ajustes de fatura e adiantamentos · ${mes}`, 'Lançamentos negativos fora do Umov: valor já pago por adiantamento em mês anterior, rateio de fatura entre praças e ajustes para bater com a NF do parceiro.'), ls, 'Parceiro', 'Não são descontos nem economia: só acertam o valor do mês com o que o parceiro faturou ou já recebeu.');
+    return;
+  }
   const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos) })).filter(l => Math.abs(l.v) > 0.5);
   tabela(abrirPop(`Outros ajustes · ${mes}`, 'Diferença entre o valor aprovado e malote + kits + fora do Umov − descontos, por parceiro.'), ls, 'Parceiro', 'Normalmente são acertos combinados na aprovação (valor aprovado diferente do calculado).');
 }
