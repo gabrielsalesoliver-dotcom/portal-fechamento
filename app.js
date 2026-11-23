@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1500';
+const VERSAO = '2026.11.23-1720';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3755,43 +3755,63 @@ function resumoExecutivo(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const excesso = acima.reduce((a, r) => a + n(r.malote) - prevPor[r.parceiro_id], 0);
   const acoes = [];
-  if (altas.length) acoes.push([`${altas.map(x => esc(nomeP(x.id))).join(' e ')} ${altas.length > 1 ? 'subiram' : 'subiu'}`, `Sobre ${nomeMes(ant.mes)}. Rever volume e valor unitário com ${altas.length > 1 ? 'os parceiros' : 'o parceiro'}.`, `+ R$ ${mil(altas.reduce((a, x) => a + x.d, 0))} mil`, 'rx-ruim']);
-  if (potM) acoes.push(['Fixo pago sem atendimento', 'Atendimentos previstos que não aconteceram, mas entraram no fixo dos parceiros. Ponto de renegociação.', `R$ ${mil(potM)} mil`, 'rx-atencao']);
-  if (acima.length) acoes.push([`${acima.length} parceiro${acima.length > 1 ? 's' : ''} com malote mais de 10% acima do previsto`, acima.slice(0, 4).map(r => esc(nomeP(r.parceiro_id))).join(', ') + (acima.length > 4 ? '…' : '') + '. Conferir se a carteira está atualizada.', `+ R$ ${mil(excesso)} mil`, 'rx-ruim']);
+  if (altas.length) acoes.push([`${altas.map(x => esc(nomeP(x.id))).join(' e ')} ${altas.length > 1 ? 'subiram' : 'subiu'}`, `Sobre ${nomeMes(ant.mes)}. Rever volume e valor unitário com ${altas.length > 1 ? 'os parceiros' : 'o parceiro'}.`, `+ R$ ${mil(altas.reduce((a, x) => a + x.d, 0))} mil`, 'rx-ruim', '#var']);
+  if (potM) acoes.push(['Fixo pago sem atendimento', 'Atendimentos previstos que não aconteceram, mas entraram no fixo dos parceiros. Ponto de renegociação.', `R$ ${mil(potM)} mil`, 'rx-atencao', '@mapa']);
+  if (acima.length) acoes.push([`${acima.length} parceiro${acima.length > 1 ? 's' : ''} com malote mais de 10% acima do previsto`, acima.slice(0, 4).map(r => esc(nomeP(r.parceiro_id))).join(', ') + (acima.length > 4 ? '…' : '') + '. Conferir se a carteira está atualizada.', `+ R$ ${mil(excesso)} mil`, 'rx-ruim', '@previsto']);
   // cascata
-  const passos = [['Malote', mal, 0, 'rx-c-base'], ['Entregas avulsas (kits)', kit, 1, 'rx-c-sobe'], ['Serviços extras', foraPos, 1, 'rx-c-sobe'], ['Atendimentos extras', atx, 1, 'rx-c-sobe'], ['Outros acertos', outPos, 1, 'rx-c-sobe'],
-    ['Realizado no mês', realizado, 2, 'rx-c-tot'], ['Abatimentos', abat, 1, 'rx-c-desce'], ['Descontos', desc, 1, 'rx-c-desce'], ['Custo do mês', custo, 2, 'rx-c-fim']].filter(p => p[2] !== 1 || Math.abs(p[1]) > 0.5);
+  const passos = [['Malote', mal, 0, 'rx-c-base', 'Malote'], ['Entregas avulsas (kits)', kit, 1, 'rx-c-sobe', 'Kits/Spot'], ['Serviços extras', foraPos, 1, 'rx-c-sobe', 'Serviços fora do Umov'], ['Atendimentos extras', atx, 1, 'rx-c-sobe', ATX], ['Outros acertos', outPos, 1, 'rx-c-sobe', 'Outros ajustes'],
+    ['Realizado no mês', realizado, 2, 'rx-c-tot', '#parc'], ['Abatimentos', abat, 1, 'rx-c-desce', 'Ajustes de fatura'], ['Descontos', desc, 1, 'rx-c-desce', 'Descontos'], ['Custo do mês', custo, 2, 'rx-c-fim', '#parc']].filter(p => p[2] !== 1 || Math.abs(p[1]) > 0.5);
   const piso = Math.max(0, Math.floor(Math.min(mal, custo) * 0.9 / 50000) * 50000), teto = Math.max(realizado, previsto || 0) * 1.03, H = 260;
   const y = v => (v - piso) / (teto - piso) * H;
-  let run = 0; const barras = passos.map(([rot, v, k, cls]) => { let lo, hi;
+  let run = 0; const barras = passos.map(([rot, v, k, cls, pop]) => { let lo, hi;
     if (k === 0) { lo = piso; hi = v; run = v; } else if (k === 2) { lo = piso; hi = v; run = v; } else { lo = Math.min(run, run + v); hi = Math.max(run, run + v); run += v; }
     const b = y(lo), h = Math.max(3, y(hi) - y(lo)); const val = k === 1 ? `${v > 0 ? '+' : '−'} R$ ${mil(Math.abs(v))} mil` : `R$ ${mil(v)} mil`;
-    return `<div class="rx-col"><div class="rx-area" style="height:${H}px"><i class="${cls}" style="bottom:${b.toFixed(0)}px;height:${h.toFixed(0)}px"></i><span style="bottom:${(b + h + 6).toFixed(0)}px"${k === 2 ? ' class="rx-forte"' : ''}>${val}</span></div><small>${rot}</small></div>`; }).join('');
+    return `<button type="button" class="rx-col" data-rx="${esc(pop)}" title="Clique para ver os lançamentos"><div class="rx-area" style="height:${H}px"><i class="${cls}" style="bottom:${b.toFixed(0)}px;height:${h.toFixed(0)}px"></i><span style="bottom:${(b + h + 6).toFixed(0)}px"${k === 2 ? ' class="rx-forte"' : ''}>${val}</span></div><small>${rot}</small></button>`; }).join('');
   const linhaPrev = previsto ? `<div class="rx-prev" style="bottom:${(y(previsto) + 44).toFixed(0)}px" title="Previsto: ${BRL(previsto)}"></div>` : '';
   const maxM = Math.max(...serie.map(s => s.v), 1);
-  const kpi = (rot, val, tag, cls, sub) => `<div class="rx-kpi"><small>${rot}</small><b>${val}</b>${tag ? `<span class="rx-tag ${cls}">${tag}</span>` : ''}<p>${sub}</p></div>`;
+  const kpi = (rot, val, tag, cls, sub, ir) => `<button type="button" class="rx-kpi" data-rx="${ir}"><small>${rot}</small><b>${val}</b>${tag ? `<span class="rx-tag ${cls}">${tag}</span>` : ''}<p>${sub}</p><span class="rx-ir">${{ '#parc': 'Ver por parceiro ›', '@eficiencia': 'Ver custo unitário ›', '@geral-eco': 'Ver economia por praça ›', '@resumo': 'Ver resumo do ano ›' }[ir] || ''}</span></button>`;
   const pago = fe.every(r => r.pago_em), nF = fe.filter(fechado).length;
   box.innerHTML = `<div class="rx">
     <div class="rx-topo"><div><small class="rx-sobre">Resumo executivo · Última milha</small><h2>${nomeMes(c.mes)}</h2></div>
       <span class="rx-selo ${c.status === 'fechada' && pago ? 'ok' : ''}">${c.status === 'fechada' ? 'Mês fechado' : 'Mês em andamento'} · ${pago ? '100% pago' : `${nF} de ${fe.length} aprovados`} · ${fe.length} parceiros</span></div>
     <div class="rx-frase">${frase}</div>
     <div class="rx-kpis">
-      ${kpi('Custo do mês', `R$ ${mil(custo)} mil`, vPrev != null ? `${vPrev <= 0 ? '▼' : '▲'} ${comoPct(vPrev)} ${vPrev <= 0 ? 'abaixo' : 'acima'} do previsto` : '', vPrev != null && vPrev <= 0 ? 'rx-bom' : 'rx-ruim', `Previsto pelo contrato: R$ ${mil(previsto)} mil${ant ? ` · ${nomeMes(ant.mes).split('/')[0]}: R$ ${mil(custoAnt)} mil` : ''}`)}
-      ${kpi('Custo por atendimento', cpa ? cpa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—', cpa && cpaAnt ? `${cpa <= cpaAnt ? '▼' : '▲'} ${comoPct(cpa / cpaAnt - 1)} sobre ${nomeMes(ant.mes).split('/')[0].toLowerCase()}` : '', cpa && cpaAnt && cpa <= cpaAnt ? 'rx-bom' : 'rx-ruim', at ? `${at.toLocaleString('pt-BR')} atendimentos realizados (Umov)${cpaAnt ? ` · ${nomeMes(ant.mes).split('/')[0]}: ${cpaAnt.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}` : ''}` : 'sem a contagem de atendimentos deste mês')}
-      ${kpi('Economia gerada pela GSM', `R$ ${mil(G.total)} mil`, custo ? `${comoPct(G.total / (custo + G.total))} do que seria pago` : '', 'rx-bom', `Validação do fechamento, descontos e antecipações · acumulado ${ano}: R$ ${mil(GAtot)} mil`)}
-      ${kpi(`Projeção de ${ano}`, `R$ ${(proj / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`, '', '', `Realizado até ${MES3[mSel - 1].toLowerCase()}: R$ ${(acum / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi · meses seguintes pelo previsto`)}
+      ${kpi('Custo do mês', `R$ ${mil(custo)} mil`, vPrev != null ? `${vPrev <= 0 ? '▼' : '▲'} ${comoPct(vPrev)} ${vPrev <= 0 ? 'abaixo' : 'acima'} do previsto` : '', vPrev != null && vPrev <= 0 ? 'rx-bom' : 'rx-ruim', `Previsto pelo contrato: R$ ${mil(previsto)} mil${ant ? ` · ${nomeMes(ant.mes).split('/')[0]}: R$ ${mil(custoAnt)} mil` : ''}`, '#parc')}
+      ${kpi('Custo por atendimento', cpa ? cpa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—', cpa && cpaAnt ? `${cpa <= cpaAnt ? '▼' : '▲'} ${comoPct(cpa / cpaAnt - 1)} sobre ${nomeMes(ant.mes).split('/')[0].toLowerCase()}` : '', cpa && cpaAnt && cpa <= cpaAnt ? 'rx-bom' : 'rx-ruim', at ? `${at.toLocaleString('pt-BR')} atendimentos realizados (Umov)${cpaAnt ? ` · ${nomeMes(ant.mes).split('/')[0]}: ${cpaAnt.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}` : ''}` : 'sem a contagem de atendimentos deste mês', '@eficiencia')}
+      ${kpi('Economia gerada pela GSM', `R$ ${mil(G.total)} mil`, custo ? `${comoPct(G.total / (custo + G.total))} do que seria pago` : '', 'rx-bom', `Validação do fechamento, descontos e antecipações · acumulado ${ano}: R$ ${mil(GAtot)} mil`, '@geral-eco')}
+      ${kpi(`Projeção de ${ano}`, `R$ ${(proj / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`, '', '', `Realizado até ${MES3[mSel - 1].toLowerCase()}: R$ ${(acum / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi · meses seguintes pelo previsto`, '@resumo')}
     </div>
     <section class="rx-card"><div class="rx-cab"><h3>Como chegamos aos R$ ${mil(custo)} mil</h3><span>Eixo a partir de R$ ${mil(piso).replace(',0', '')} mil${previsto ? ` · tracejado = previsto (R$ ${mil(previsto)} mil)` : ''}</span></div>
       <div class="rx-rolar"><div class="rx-cascata">${linhaPrev}${barras}</div></div>
       <div class="rx-legenda"><span><b>Entregas avulsas</b>: kits e spots fora da rota fixa</span><span><b>Serviços extras</b>: coletas, corridas e taxas cobradas à parte</span>${abat < -0.5 ? '<span><b>Abatimentos</b>: valor já pago antes (adiantamento) e rateio de fatura</span>' : ''}<span><b>Descontos</b>: repasses, penalidades e taxa de antecipação</span></div></section>
     <div class="rx-duas">
       <section class="rx-card"><div class="rx-cab"><h3>Custo mês a mês</h3><span>em R$ mil · média ${ano}: ${Math.round(media / 1000)}</span></div>
-        <div class="rx-meses">${serie.filter(s => s.v > 0).map(s => `<div class="${s.c.id === c.id ? 'atual' : ''}"><small>${Math.round(s.v / 1000)}</small><i style="height:${(s.v / maxM * 150).toFixed(0)}px"></i><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></div>`).join('')}</div></section>
-      <section class="rx-card"><h3 style="margin:0 0 6px">Onde agir</h3>${acoes.length ? acoes.slice(0, 3).map((a, i) => `<div class="rx-acao"><em>${i + 1}</em><div><b>${a[0]}</b><p>${a[1]}</p></div><strong class="${a[3]}">${a[2]}</strong></div>`).join('') : '<p class="nota">Nada fora do esperado neste mês.</p>'}
+        <div class="rx-meses">${serie.filter(s => s.v > 0).map(s => `<button type="button" data-rxmes="${s.c.id}" class="${s.c.id === c.id ? 'atual' : ''}" title="Abrir ${nomeMes(s.c.mes)}"><small>${Math.round(s.v / 1000)}</small><i style="height:${(s.v / maxM * 150).toFixed(0)}px"></i><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></button>`).join('')}</div><p class="nota" style="margin:0">Clique num mês para abrir o resumo dele.</p></section>
+      <section class="rx-card"><h3 style="margin:0 0 6px">Onde agir</h3>${acoes.length ? acoes.slice(0, 3).map((a, i) => `<button type="button" class="rx-acao" data-rx="${a[4]}"><em>${i + 1}</em><div><b>${a[0]}</b><p>${a[1]} <span class="rx-ir">${a[4] === '#var' ? 'Ver variação por parceiro ›' : a[4] === '@mapa' ? 'Abrir Mapa de custos ›' : 'Abrir Previsto x Realizado ›'}</span></p></div><strong class="${a[3]}">${a[2]}</strong></button>`).join('') : '<p class="nota">Nada fora do esperado neste mês.</p>'}
         ${potM === undefined ? '<p class="nota">Calculando o fixo pago sem atendimento…</p>' : ''}</section>
     </div>
-    <p class="rx-fonte">Fonte: Portal de Fechamento · valores aprovados de ${nomeMes(c.mes)} · atendimentos pela base do Umov. Detalhes por parceiro e por cliente na Visão geral.</p>
+    <p class="rx-fonte">Fonte: Portal de Fechamento · valores aprovados de ${nomeMes(c.mes)} · atendimentos pela base do Umov. Clique nos números, nas barras e nas ações para ver o detalhe.</p>
   </div>`;
+  const tela = box.closest('main') || $('#main');
+  const irAba = k => { const ok = [...document.querySelectorAll('[data-aba]')].some(x => x.dataset.aba === k); D.aba = ok ? k : 'geral'; desenharDiretoria(tela); window.scrollTo({ top: 0 }); };
+  const porParceiro = ordem => {
+    const L = ids.length ? ids : fe.map(r => r.parceiro_id);
+    const linhas = [...new Set(L)].map(id => { const v = fe.filter(r => r.parceiro_id === id).reduce((a, r) => a + total(r), 0), va = fa.filter(r => r.parceiro_id === id).reduce((a, r) => a + total(r), 0); return { id, v, va, d: v - va }; })
+      .sort((x, y) => ordem === 'var' ? Math.abs(y.d) - Math.abs(x.d) : y.v - x.v);
+    const pb = abrirPop(`${ordem === 'var' ? 'Variação' : 'Custo'} por parceiro · ${nomeMes(c.mes)}`, ant ? `Comparado com ${nomeMes(ant.mes)}. Clique no título de uma coluna para ordenar.` : '');
+    const desenha = (k, dir) => { linhas.sort((x, y) => k === 'p' ? dir * nomeP(x.id).localeCompare(nomeP(y.id)) : dir * (x[k] - y[k]));
+      const th = (kk, t, cl) => `<th class="${cl || 'n'}" data-o="${kk}" style="cursor:pointer;white-space:nowrap">${t}${k === kk ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+      pb.className = ''; pb.innerHTML = `<div class="tabela"><table><thead><tr>${th('p', 'Parceiro', ' ')}${th('v', nomeMes(c.mes))}${ant ? th('va', nomeMes(ant.mes)) + th('d', 'Variação') : ''}</tr></thead><tbody>${linhas.map(l => `<tr><td><b>${esc(nomeP(l.id))}</b>${pm[l.id] && pm[l.id].nome ? `<br><span class="nota">${esc(pm[l.id].nome)}</span>` : ''}</td><td class="n">${BRL(l.v)}</td>${ant ? `<td class="n">${BRL(l.va)}</td><td class="n" style="color:${l.d > 0.5 ? 'var(--brand-deep)' : l.d < -0.5 ? 'var(--eco)' : 'inherit'}">${Math.abs(l.d) > 0.5 ? (l.d > 0 ? '+' : '−') + BRL(Math.abs(l.d)) : '—'}</td>` : ''}</tr>`).join('')}</tbody>
+        <tfoot><tr><td><b>Total (${linhas.length})</b></td><td class="n"><b>${BRL(custo)}</b></td>${ant ? `<td class="n"><b>${BRL(custoAnt)}</b></td><td class="n"><b>${custo - custoAnt >= 0 ? '+' : '−'}${BRL(Math.abs(custo - custoAnt))}</b></td>` : ''}</tr></tfoot></table></div>`;
+      pb.querySelectorAll('[data-o]').forEach(t => t.onclick = () => { const kk = t.dataset.o; desenha(kk, kk === k ? -dir : (kk === 'p' ? 1 : -1)); }); };
+    if (ordem === 'var') { linhas.sort((x, y) => Math.abs(y.d) - Math.abs(x.d)); desenha('d', -1); } else desenha('v', -1);
+  };
+  box.querySelectorAll('[data-rx]').forEach(e => e.onclick = () => { const k = e.dataset.rx;
+    if (k === '#parc') porParceiro('valor'); else if (k === '#var') porParceiro('var');
+    else if (k === '@geral-eco') { D.gresAberto = true; irAba('geral'); setTimeout(() => { const d = $('#gresdet'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80); }
+    else if (k.startsWith('@')) irAba(k.slice(1));
+    else popComposicao(k, D, c, ant); });
+  box.querySelectorAll('[data-rxmes]').forEach(e => e.onclick = () => { D.compId = e.dataset.rxmes; desenharDiretoria(tela); });
 }
 
 function visaoGeral(box, D, c, ant) {
