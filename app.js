@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1100b';
+const VERSAO = '2026.11.23-1500';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3239,7 +3239,7 @@ async function carregarDiretoria() {
   if (!comComDados.length) return false;
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.nomesMes = nomesMes || []; D.quinz = quinz || []; D.aba = D.aba || 'geral';
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.nomesMes = nomesMes || []; D.quinz = quinz || []; D.aba = D.aba || 'executivo';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const vig = comComDados.find(c => c.mes === hojeMes); if (vig) D.compId = vig.id; }
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
@@ -3273,15 +3273,15 @@ function desenharDiretoria(el) {
   if (D.filtro) { const f = norm(D.filtro); tab = tab.filter(t => norm(t.regiao + ' ' + t.nome).includes(f)); }
 
   el.innerHTML = `
-  <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} ${D.aba === 'geral' ? 'Valores totais, já com descontos.' : `Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.`}</p></div>
+  <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} ${(D.aba === 'geral' || D.aba === 'executivo') ? 'Valores totais, já com descontos.' : `Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.`}</p></div>
     <div class="linha">
-      ${D.aba === 'geral' ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}<button class="btn marca peq" id="dtv" style="min-height:44px">Modo TV</button>
-      <div class="alterna" role="group" aria-label="Operação" style="display:${D.aba === 'geral' ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
+      ${(D.aba === 'geral' || D.aba === 'executivo') ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}<button class="btn marca peq" id="dtv" style="min-height:44px">Modo TV</button>
+      <div class="alterna" role="group" aria-label="Operação" style="display:${(D.aba === 'geral' || D.aba === 'executivo') ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
       </div>
       <select id="dcomp" class="peq" style="min-height:44px;font-size:15px">${D.comps.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${nomeMes(x.mes)}</option>`).join('')}</select>
     </div></div>
-  <div class="kpis" ${D.aba === 'geral' ? 'style="display:none"' : ''}>
+  <div class="kpis" ${(D.aba === 'geral' || D.aba === 'executivo') ? 'style="display:none"' : ''}>
     <div class="kpi"><small>${OPS[op]} · ${nomeMes(c.mes)}</small><b>${BRL(total)}</b><span>${ant && total ? `${pct(total / totalAnt - 1)} sobre ${MES3[+ant.mes.slice(5, 7) - 1]}` : ''}</span></div>
     <div class="kpi ${nFech < linhas.length ? 'alerta' : ''}"><small>Parceiros fechados</small><b>${nFech} de ${linhas.length}</b><span>${Math.round(100 * nFech / Math.max(1, linhas.length))}% dos parceiros</span></div>
     <div class="kpi ${vFech < total ? 'alerta' : ''}"><small>Valor fechado</small><b>${BRL(vFech)}</b><span>${total ? Math.round(100 * vFech / total) : 0}% do valor do mês</span></div>
@@ -3289,6 +3289,7 @@ function desenharDiretoria(el) {
     <div class="kpi eco"><small>Descontos aplicados</small><b>${BRL(desc)}</b><span>no mês</span></div>
   </div>
   <nav class="abas" style="flex-wrap:wrap">${ABAS_DIR.filter(([k]) => S.perfil?.papel !== 'diretoria' || !SO_FIN.includes(k)).concat(S.perfil?.papel === 'financeiro' || S.perfil?.papel === 'admin' ? [['lotes', 'Lotes de pagamento']].concat(S.perfil?.papel === 'financeiro' ? [['docs', 'Notas fiscais']] : []) : []).map(([k, n]) => `<button type="button" data-aba="${k}" class="${D.aba === k ? 'on' : ''}">${n}</button>`).join('')}</nav>
+  <div data-sec="executivo" style="display:flex;flex-direction:column;gap:22px"><div id="dexec"></div></div>
   <div data-sec="geral" style="display:flex;flex-direction:column;gap:22px"><div id="dgeral"></div></div>
   <div data-sec="resumo" style="display:flex;flex-direction:column;gap:22px">
   <section class="bloco"><h2>2026 até ${nomeMes(c.mes)}</h2><div id="dano"></div></section>
@@ -3332,6 +3333,7 @@ function desenharDiretoria(el) {
   el.querySelectorAll('[data-sec]').forEach(x => x.style.display = x.dataset.sec === D.aba ? 'flex' : 'none');
   el.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => { D.aba = b.dataset.aba; desenharDiretoria(el); });
   visaoGeral($('#dgeral'), D, c, ant);
+  if (D.aba === 'executivo') resumoExecutivo($('#dexec'), D, c, ant);
   blocoAno($('#dano'), D, c);
   ponte($('#dponte'), D, c, ant);
   eficiencia($('#defic'), D, c);
@@ -3684,7 +3686,7 @@ function graficoPrev(box, tbox, pts, atualId) {
 }
 
 const SO_FIN = ['atendimentos', 'eficiencia']; // abas operacionais: financeiro e GSM
-const ABAS_DIR = [['geral', 'Visão geral'], ['operacao', 'Operação ao vivo'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['carteira', 'Movimentação de pontos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
+const ABAS_DIR = [['executivo', 'Resumo executivo'], ['geral', 'Visão geral'], ['operacao', 'Operação ao vivo'], ['mapa', 'Mapa de custos'], ['resumo', 'Resumo do ano'], ['previsto', 'Previsto x Realizado'], ['variacao', 'Variação do mês'], ['eficiencia', 'Custo unitário'], ['atendimentos', 'Atendimentos'], ['carteira', 'Movimentação de pontos'], ['caixa', 'Caixa'], ['parceiros', 'Parceiros']];
 
 // Visão geral: uma tela para bater o olho (diretoria e financeiro)
 const kE = v => Math.abs(v) < 1000 ? BRL(v) : BRLk(v);
@@ -3703,6 +3705,94 @@ function ganhosMes(D, id) {
     const antPl = cat.antecipacao || 0; const d = (cat.repasse || 0) + (cat.penalidade || 0) + (cat.ajuste || 0);
     const sv = (D.adis || []).filter(a => a.competencia_id === id).reduce((a, x) => a + n(x.valor_desconto), 0) + f.reduce((a, r) => a + n(r.antec_desconto), 0) + antPl;
     return { val, abaixo, acima: acimaV, nAbaixo: comP.filter(r => pp[r.parceiro_id] > n(r.malote)).length, nAcima: comP.filter(r => n(r.malote) > pp[r.parceiro_id]).length, desc: d, cat, save: sv, total: val + d + sv }; }
+
+// ---------- Resumo executivo (CEO/CFO): uma história só, poucos números ----------
+function resumoExecutivo(box, D, c, ant) {
+  if (!box) return;
+  const n = v => Number(v) || 0;
+  const doMes = id => D.fech.filter(f => f.competencia_id === id);
+  const total = r => n(r.valor_aprovado ?? r.valor_final);
+  const prevDe = id => D.prev.filter(f => f.competencia_id === id && f.previsto != null);
+  const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const mil = v => (v / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const fe = doMes(c.id), fa = ant ? doMes(ant.id) : [];
+  const nomeP = id => (pm[id] && pm[id].regiao || '—').replace(/\s+-\s+[A-Z]{2}$/, '');
+  if (!fe.length) { box.innerHTML = `<div class="msg">${nomeMes(c.mes)} ainda não tem fechamento. O resumo executivo aparece quando os parceiros começarem a ser aprovados; até lá, veja a Visão geral.</div>`; return; }
+  const custo = fe.reduce((a, r) => a + total(r), 0), custoAnt = fa.reduce((a, r) => a + total(r), 0);
+  const mal = fe.reduce((a, r) => a + n(r.malote), 0), kit = fe.reduce((a, r) => a + n(r.kits), 0), atx = fe.reduce((a, r) => a + n(r.atend_extra), 0), desc = fe.reduce((a, r) => a + n(r.descontos), 0);
+  const foraPos = fe.reduce((a, r) => a + Math.max(0, n(r.fora_umov)), 0), foraNeg = fe.reduce((a, r) => a + Math.min(0, n(r.fora_umov)), 0);
+  const outP = r => total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos);
+  const outPos = fe.reduce((a, r) => a + Math.max(0, outP(r)), 0), outNeg = fe.reduce((a, r) => a + Math.min(0, outP(r)), 0);
+  const realizado = mal + kit + foraPos + atx + outPos, abat = foraNeg + outNeg;
+  const previsto = prevDe(c.id).reduce((a, p) => a + n(p.previsto), 0);
+  const atend = id => (D.efic || []).filter(e => e.competencia_id === id).reduce((a, e) => a + n(e.atend_umov), 0);
+  const at = atend(c.id), atAnt = ant ? atend(ant.id) : 0;
+  const cpa = at ? custo / at : null, cpaAnt = atAnt && custoAnt ? custoAnt / atAnt : null;
+  const G = ganhosMes(D, c.id);
+  const mesesAno = D.comps.filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && +x.mes.slice(5, 7) <= +c.mes.slice(5, 7));
+  const GAtot = mesesAno.reduce((a, x) => a + ganhosMes(D, x.id).total, 0);
+  const potM = potencialMes(D, c);
+  if (potM === undefined && !D.mapaCarregando) { D.mapaCarregando = true; carregarMapa(D, c).then(() => { D.mapaCarregando = false; if (D.aba === 'executivo' && D.compId === c.id) resumoExecutivo(box, D, c, ant); }).catch(() => { D.mapaCarregando = false; }); }
+  // ano e projeção (mesma regra da Visão geral)
+  const ano = c.mes.slice(0, 4), mSel = +c.mes.slice(5, 7);
+  const serie = D.comps.filter(x => x.mes.slice(0, 4) === ano).map(x => ({ c: x, v: doMes(x.id).reduce((a, r) => a + total(r), 0), p: prevDe(x.id).reduce((a, r) => a + n(r.previsto), 0) }));
+  const acum = serie.filter(s => +s.c.mes.slice(5, 7) <= mSel).reduce((a, s) => a + s.v, 0);
+  const comV = serie.filter(s => s.v > 0); const ultR = comV.length ? +comV[comV.length - 1].c.mes.slice(5, 7) : 0; const ultP = serie.filter(s => s.p > 0).slice(-1)[0];
+  let futuro = 0; for (let m = ultR + 1; m <= 12; m++) { const s = serie.find(x => +x.c.mes.slice(5, 7) === m); futuro += s && s.p ? s.p : (ultP ? ultP.p : 0); }
+  const proj = comV.reduce((a, s) => a + s.v, 0) + futuro;
+  const media = comV.length ? comV.reduce((a, s) => a + s.v, 0) / comV.length : 0;
+  // variação por parceiro sobre o mês anterior (inclui quem saiu)
+  const ids = ant && fa.length ? [...new Set([...fe, ...fa].map(r => r.parceiro_id))] : [];
+  const vari = ids.map(id => ({ id, d: fe.filter(r => r.parceiro_id === id).reduce((a, r) => a + total(r), 0) - fa.filter(r => r.parceiro_id === id).reduce((a, r) => a + total(r), 0) })).filter(x => Math.abs(x.d) > 0.5);
+  const quedas = vari.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 2), altas = vari.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 2);
+  const lista = xs => xs.map(x => `${esc(nomeP(x.id))} (${x.d > 0 ? '+' : '−'}R$ ${mil(Math.abs(x.d))} mil)`).join(' e ');
+  const vAnt = custoAnt ? custo / custoAnt - 1 : null, vPrev = previsto ? custo / previsto - 1 : null;
+  const comoPct = v => (Math.abs(v) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+  const frase = `O custo de ${nomeMes(c.mes).split('/')[0].toLowerCase()} foi <b>R$ ${mil(custo)} mil</b>${vAnt != null ? `, <b class="${vAnt <= 0 ? 'rx-bom' : 'rx-ruim'}">${comoPct(vAnt)} ${vAnt <= 0 ? 'menor' : 'maior'} que ${nomeMes(ant.mes).split('/')[0].toLowerCase()}</b>` : ''}${vPrev != null ? ` e ${comoPct(vPrev)} ${vPrev <= 0 ? 'abaixo' : 'acima'} do previsto` : ''}.`
+    + (quedas.length ? ` As maiores quedas vieram de ${lista(quedas)}` : '') + (altas.length ? `${quedas.length ? ';' : ''} as maiores altas, de ${lista(altas)}` : '') + (quedas.length || altas.length ? '.' : '');
+  // onde agir
+  const prevPor = Object.fromEntries(prevDe(c.id).map(p => [p.parceiro_id, n(p.previsto)]));
+  const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
+  const excesso = acima.reduce((a, r) => a + n(r.malote) - prevPor[r.parceiro_id], 0);
+  const acoes = [];
+  if (altas.length) acoes.push([`${altas.map(x => esc(nomeP(x.id))).join(' e ')} ${altas.length > 1 ? 'subiram' : 'subiu'}`, `Sobre ${nomeMes(ant.mes)}. Rever volume e valor unitário com ${altas.length > 1 ? 'os parceiros' : 'o parceiro'}.`, `+ R$ ${mil(altas.reduce((a, x) => a + x.d, 0))} mil`, 'rx-ruim']);
+  if (potM) acoes.push(['Fixo pago sem atendimento', 'Atendimentos previstos que não aconteceram, mas entraram no fixo dos parceiros. Ponto de renegociação.', `R$ ${mil(potM)} mil`, 'rx-atencao']);
+  if (acima.length) acoes.push([`${acima.length} parceiro${acima.length > 1 ? 's' : ''} com malote mais de 10% acima do previsto`, acima.slice(0, 4).map(r => esc(nomeP(r.parceiro_id))).join(', ') + (acima.length > 4 ? '…' : '') + '. Conferir se a carteira está atualizada.', `+ R$ ${mil(excesso)} mil`, 'rx-ruim']);
+  // cascata
+  const passos = [['Malote', mal, 0, 'rx-c-base'], ['Entregas avulsas (kits)', kit, 1, 'rx-c-sobe'], ['Serviços extras', foraPos, 1, 'rx-c-sobe'], ['Atendimentos extras', atx, 1, 'rx-c-sobe'], ['Outros acertos', outPos, 1, 'rx-c-sobe'],
+    ['Realizado no mês', realizado, 2, 'rx-c-tot'], ['Abatimentos', abat, 1, 'rx-c-desce'], ['Descontos', desc, 1, 'rx-c-desce'], ['Custo do mês', custo, 2, 'rx-c-fim']].filter(p => p[2] !== 1 || Math.abs(p[1]) > 0.5);
+  const piso = Math.max(0, Math.floor(Math.min(mal, custo) * 0.9 / 50000) * 50000), teto = Math.max(realizado, previsto || 0) * 1.03, H = 260;
+  const y = v => (v - piso) / (teto - piso) * H;
+  let run = 0; const barras = passos.map(([rot, v, k, cls]) => { let lo, hi;
+    if (k === 0) { lo = piso; hi = v; run = v; } else if (k === 2) { lo = piso; hi = v; run = v; } else { lo = Math.min(run, run + v); hi = Math.max(run, run + v); run += v; }
+    const b = y(lo), h = Math.max(3, y(hi) - y(lo)); const val = k === 1 ? `${v > 0 ? '+' : '−'} R$ ${mil(Math.abs(v))} mil` : `R$ ${mil(v)} mil`;
+    return `<div class="rx-col"><div class="rx-area" style="height:${H}px"><i class="${cls}" style="bottom:${b.toFixed(0)}px;height:${h.toFixed(0)}px"></i><span style="bottom:${(b + h + 6).toFixed(0)}px"${k === 2 ? ' class="rx-forte"' : ''}>${val}</span></div><small>${rot}</small></div>`; }).join('');
+  const linhaPrev = previsto ? `<div class="rx-prev" style="bottom:${(y(previsto) + 44).toFixed(0)}px" title="Previsto: ${BRL(previsto)}"></div>` : '';
+  const maxM = Math.max(...serie.map(s => s.v), 1);
+  const kpi = (rot, val, tag, cls, sub) => `<div class="rx-kpi"><small>${rot}</small><b>${val}</b>${tag ? `<span class="rx-tag ${cls}">${tag}</span>` : ''}<p>${sub}</p></div>`;
+  const pago = fe.every(r => r.pago_em), nF = fe.filter(fechado).length;
+  box.innerHTML = `<div class="rx">
+    <div class="rx-topo"><div><small class="rx-sobre">Resumo executivo · Última milha</small><h2>${nomeMes(c.mes)}</h2></div>
+      <span class="rx-selo ${c.status === 'fechada' && pago ? 'ok' : ''}">${c.status === 'fechada' ? 'Mês fechado' : 'Mês em andamento'} · ${pago ? '100% pago' : `${nF} de ${fe.length} aprovados`} · ${fe.length} parceiros</span></div>
+    <div class="rx-frase">${frase}</div>
+    <div class="rx-kpis">
+      ${kpi('Custo do mês', `R$ ${mil(custo)} mil`, vPrev != null ? `${vPrev <= 0 ? '▼' : '▲'} ${comoPct(vPrev)} ${vPrev <= 0 ? 'abaixo' : 'acima'} do previsto` : '', vPrev != null && vPrev <= 0 ? 'rx-bom' : 'rx-ruim', `Previsto pelo contrato: R$ ${mil(previsto)} mil${ant ? ` · ${nomeMes(ant.mes).split('/')[0]}: R$ ${mil(custoAnt)} mil` : ''}`)}
+      ${kpi('Custo por atendimento', cpa ? cpa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—', cpa && cpaAnt ? `${cpa <= cpaAnt ? '▼' : '▲'} ${comoPct(cpa / cpaAnt - 1)} sobre ${nomeMes(ant.mes).split('/')[0].toLowerCase()}` : '', cpa && cpaAnt && cpa <= cpaAnt ? 'rx-bom' : 'rx-ruim', at ? `${at.toLocaleString('pt-BR')} atendimentos realizados (Umov)${cpaAnt ? ` · ${nomeMes(ant.mes).split('/')[0]}: ${cpaAnt.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}` : ''}` : 'sem a contagem de atendimentos deste mês')}
+      ${kpi('Economia gerada pela GSM', `R$ ${mil(G.total)} mil`, custo ? `${comoPct(G.total / (custo + G.total))} do que seria pago` : '', 'rx-bom', `Validação do fechamento, descontos e antecipações · acumulado ${ano}: R$ ${mil(GAtot)} mil`)}
+      ${kpi(`Projeção de ${ano}`, `R$ ${(proj / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`, '', '', `Realizado até ${MES3[mSel - 1].toLowerCase()}: R$ ${(acum / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi · meses seguintes pelo previsto`)}
+    </div>
+    <section class="rx-card"><div class="rx-cab"><h3>Como chegamos aos R$ ${mil(custo)} mil</h3><span>Eixo a partir de R$ ${mil(piso).replace(',0', '')} mil${previsto ? ` · tracejado = previsto (R$ ${mil(previsto)} mil)` : ''}</span></div>
+      <div class="rx-rolar"><div class="rx-cascata">${linhaPrev}${barras}</div></div>
+      <div class="rx-legenda"><span><b>Entregas avulsas</b>: kits e spots fora da rota fixa</span><span><b>Serviços extras</b>: coletas, corridas e taxas cobradas à parte</span>${abat < -0.5 ? '<span><b>Abatimentos</b>: valor já pago antes (adiantamento) e rateio de fatura</span>' : ''}<span><b>Descontos</b>: repasses, penalidades e taxa de antecipação</span></div></section>
+    <div class="rx-duas">
+      <section class="rx-card"><div class="rx-cab"><h3>Custo mês a mês</h3><span>em R$ mil · média ${ano}: ${Math.round(media / 1000)}</span></div>
+        <div class="rx-meses">${serie.filter(s => s.v > 0).map(s => `<div class="${s.c.id === c.id ? 'atual' : ''}"><small>${Math.round(s.v / 1000)}</small><i style="height:${(s.v / maxM * 150).toFixed(0)}px"></i><span>${MES3[+s.c.mes.slice(5, 7) - 1]}</span></div>`).join('')}</div></section>
+      <section class="rx-card"><h3 style="margin:0 0 6px">Onde agir</h3>${acoes.length ? acoes.slice(0, 3).map((a, i) => `<div class="rx-acao"><em>${i + 1}</em><div><b>${a[0]}</b><p>${a[1]}</p></div><strong class="${a[3]}">${a[2]}</strong></div>`).join('') : '<p class="nota">Nada fora do esperado neste mês.</p>'}
+        ${potM === undefined ? '<p class="nota">Calculando o fixo pago sem atendimento…</p>' : ''}</section>
+    </div>
+    <p class="rx-fonte">Fonte: Portal de Fechamento · valores aprovados de ${nomeMes(c.mes)} · atendimentos pela base do Umov. Detalhes por parceiro e por cliente na Visão geral.</p>
+  </div>`;
+}
 
 function visaoGeral(box, D, c, ant) {
   const n = v => Number(v) || 0;
