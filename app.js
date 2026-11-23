@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1000';
+const VERSAO = '2026.11.23-1000b';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3689,7 +3689,8 @@ function visaoGeral(box, D, c, ant) {
   const outros = custo - mal - kit - fora - atx - desc;
   // fora do Umov separado por sinal: serviços/coletas cobrados (+) e ajustes de fatura/adiantamento já pago (−)
   const foraPos = fe.reduce((a, r) => a + Math.max(0, n(r.fora_umov)), 0), foraNeg = fe.reduce((a, r) => a + Math.min(0, n(r.fora_umov)), 0);
-  const ajNeg = foraNeg + Math.min(0, outros);
+  const outP = r => n(r.valor_aprovado ?? r.valor_final) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos);
+  const outNeg = fe.reduce((a, r) => a + Math.min(0, outP(r)), 0), ajNeg = foraNeg + outNeg;
   const prevPor = Object.fromEntries(prevDe(c.id).map(p => [p.parceiro_id, n(p.previsto)]));
   const previsto = Object.values(prevPor).reduce((a, v) => a + v, 0);
   const malComPrev = fe.filter(r => prevPor[r.parceiro_id] != null).reduce((a, r) => a + n(r.malote), 0);
@@ -3744,7 +3745,7 @@ function visaoGeral(box, D, c, ant) {
   const acima = fe.filter(r => prevPor[r.parceiro_id] && n(r.malote) > prevPor[r.parceiro_id] * 1.1);
   const pend = parceirosMes - nFech;
 
-  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', foraPos, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', Math.max(0, outros), 'var(--on-dark)']].filter(x => x[1] > 0.5);
+  const comp = [['Malote', mal, 'var(--ink)'], ['Kits/Spot', kit, 'var(--brand)'], ['Fora do Umov', foraPos, 'var(--brand-deep)'], [ATX, atx, 'var(--muted)'], ['Outros ajustes', outros - outNeg, 'var(--on-dark)']].filter(x => x[1] > 0.5);
   const base = comp.reduce((a, x) => a + x[1], 0) || 1;
   const maxS = Math.max(...serie.map(s => Math.max(s.v, s.p)), 1);
   const tile = (rot, val, sub, cls = '') => `<div class="gtile ${cls}"><small>${rot}</small><b>${val}</b><span>${sub}</span></div>`;
@@ -4391,7 +4392,7 @@ function popComposicao(item, D, c, ant) {
   const n = v => Number(v) || 0; const mes = nomeMes(c.mes);
   const pm = Object.fromEntries((D.parcs || []).map(p => [p.id, p]));
   const nomeP = id => pm[id] ? `${pm[id].regiao || ''}${pm[id].nome ? ' · ' + pm[id].nome : ''}` : '—';
-  if (item === 'Kits/Spot' || item === 'Fora do Umov') { spotPorCliente(abrirPop(`Kits/Spot por cliente · ${mes}`, 'Kits, spots e serviços fora do Umov. Clique no cliente para ver os parceiros e no parceiro para ver cada kit.'), c, ant); return; }
+  if (item === 'Kits/Spot') { spotPorCliente(abrirPop(`Kits/Spot por cliente · ${mes}`, 'Kits, spots e serviços fora do Umov. Clique no cliente para ver os parceiros e no parceiro para ver cada kit.'), c, ant); return; }
   if (item === 'Malote') { clientesMes(abrirPop(`Malote por cliente · ${mes}`, 'Valor do malote de cada parceiro dividido pelos atendimentos de cada cliente.'), c.id, 'malote', null); return; }
   const fe = D.fech.filter(f => f.competencia_id === c.id);
   const tabela = (box, linhas, cab, nota) => { box.className = ''; const tot = linhas.reduce((a, l) => a + l.v, 0);
@@ -4412,10 +4413,21 @@ function popComposicao(item, D, c, ant) {
     return;
   }
   const total = r => n(r.valor_aprovado ?? r.valor_final);
-  if (item === 'Ajustes de fatura') {
-    const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: Math.min(0, n(r.fora_umov)) + Math.min(0, total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos)) })).filter(l => l.v < -0.5);
-    tabela(abrirPop(`Ajustes de fatura e adiantamentos · ${mes}`, 'Lançamentos negativos fora do Umov: valor já pago por adiantamento em mês anterior, rateio de fatura entre praças e ajustes para bater com a NF do parceiro.'), ls, 'Parceiro', 'Não são descontos nem economia: só acertam o valor do mês com o que o parceiro faturou ou já recebeu.');
-    return;
+  if (item === 'Fora do Umov' || item === 'Ajustes de fatura') {
+    const pos = item === 'Fora do Umov';
+    const box = pos ? abrirPop(`Fora do Umov · ${mes}`, 'Serviços que o parceiro cobrou e que não passam pelo Umov: coletas de Fiorino/Van, corridas, rateio de fatura, armazenamento, taxas, transferências. Malote de cliente e 2ª visita de ponto mensal não entram aqui (estão em Malote e Atendimentos extras).')
+      : abrirPop(`Ajustes de fatura e adiantamentos · ${mes}`, 'Lançamentos negativos: valor já pago por adiantamento em mês anterior, rateio de fatura entre praças e ajustes para bater com a NF do parceiro.');
+    (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
+      try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente', { p_comp: c.id }))); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
+      const g = {};
+      rs.filter(r => r.origem === 'fora').filter(r => { const k = cliSpotDe(r, pm); return !NAO_SPOT.has(k) && k !== ATX; })
+        .forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, ls: [] }); y.v += n(r.valor); y.ls.push(r); });
+      Object.keys(g).forEach(k => { if (pos ? g[k].v <= 0.005 : g[k].v >= -0.005) delete g[k]; });
+      if (!pos) fe.forEach(r => { const o = total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos); if (o < -0.5) { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, ls: [] }); y.v += o; y.ls.push({ destino: 'Acerto na aprovação (aprovado abaixo do calculado)', valor: o }); } });
+      const desc = l => { const t = [l.cliente, l.destino].filter(x => x && !/^outro$/i.test(x)).join(' · '); return `${esc(t || 'Serviço')} ${BRL(n(l.valor))}`; };
+      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, det: y.ls.sort((a, b) => Math.abs(n(b.valor)) - Math.abs(n(a.valor))).slice(0, 8).map(desc).join(' · ') + (y.ls.length > 8 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro',
+        pos ? 'Lançados pelo parceiro no envio (ou pela GSM) e aceitos no fechamento.' : 'Não são descontos nem economia: só acertam o valor do mês com o que o parceiro faturou ou já recebeu.');
+    })(); return;
   }
   const ls = fe.map(r => ({ k: nomeP(r.parceiro_id), v: total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos) })).filter(l => Math.abs(l.v) > 0.5);
   tabela(abrirPop(`Outros ajustes · ${mes}`, 'Diferença entre o valor aprovado e malote + kits + fora do Umov − descontos, por parceiro.'), ls, 'Parceiro', 'Normalmente são acertos combinados na aprovação (valor aprovado diferente do calculado).');
