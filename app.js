@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1000d';
+const VERSAO = '2026.11.23-1100';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3200,7 +3200,7 @@ async function carregarDiretoria() {
     todas(() => sb.from('previsao_realizado').select('competencia_id,parceiro_id,previsto,origem_previsao,atendimentos_previstos,pontos')),
     todas(() => sb.from('dir_eficiencia').select('competencia_id,parceiro_id,pontos,atend_previstos,atend_umov')),
     todas(() => sb.from('adiantamentos').select('competencia_id,parceiro_id,valor,taxa_pct,valor_desconto,status')),
-    todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,valor,origem')).catch(() => []),
+    todas(() => sb.from('descontos_detalhe').select('competencia_id,parceiro_id,categoria,descricao,cliente,valor,origem')).catch(() => []),
     todas(() => sb.rpc('dir_spot_todos')).catch(e => { console.error('dir_spot_todos', e); return []; }),
     todas(() => sb.from('parceiro_nome_mes').select('competencia_id,parceiro_id,nome,razao_social,cnpj')).catch(() => []),
     todas(() => sb.rpc('quinzenas_descobertas')).catch(() => []),
@@ -4396,20 +4396,25 @@ function popComposicao(item, D, c, ant) {
   if (item === 'Kits/Spot') { spotPorCliente(abrirPop(`Kits/Spot por cliente · ${mes}`, 'Kits, spots e serviços fora do Umov. Clique no cliente para ver os parceiros e no parceiro para ver cada kit.'), c, ant); return; }
   if (item === 'Malote') { clientesMes(abrirPop(`Malote por cliente · ${mes}`, 'Valor do malote de cada parceiro dividido pelos atendimentos de cada cliente.'), c.id, 'malote', null); return; }
   const fe = D.fech.filter(f => f.competencia_id === c.id);
-  const tabela = (box, linhas, cab, nota) => { box.className = ''; const tot = linhas.reduce((a, l) => a + l.v, 0);
-    box.innerHTML = linhas.length ? `<div class="tabela"><table><thead><tr><th>${cab}</th><th class="n">Valor</th><th class="n">%</th></tr></thead><tbody>${linhas.sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).map(l => `<tr><td><b>${esc(l.k)}</b>${l.det ? `<br><span class="nota">${l.det}</span>` : ''}</td><td class="n">${BRL2(l.v)}</td><td class="n">${tot ? Math.round(100 * l.v / tot) : 0}%</td></tr>`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL2(tot)}</b></td><td></td></tr></tfoot></table></div>${nota ? `<p class="nota">${nota}</p>` : ''}` : '<p class="nota">Nada lançado neste mês.</p>'; };
+  const tabela = (box, linhas, cab, nota) => { box.className = ''; const tot = linhas.reduce((a, l) => a + l.v, 0); linhas.sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+    const temItens = linhas.some(l => l.itens && l.itens.length);
+    const sub = (l, ix) => (l.itens || []).slice().sort((a, b) => Math.abs(n(b.v)) - Math.abs(n(a.v))).map(t => `<tr class="pop-item" data-de="${ix}" hidden><td style="padding-left:28px">${esc(t.d || '—')}${t.x ? `<br><span class="nota">${esc(t.x)}</span>` : ''}</td><td class="n">${BRL2(n(t.v))}</td><td></td></tr>`).join('');
+    box.innerHTML = linhas.length ? `${temItens ? '<p style="margin:0 0 8px"><button type="button" class="btn" data-abretudo>Abrir todos os lançamentos</button> <span class="nota">ou clique na linha para ver os lançamentos</span></p>' : ''}<div class="tabela"><table><thead><tr><th>${cab}</th><th class="n">Valor</th><th class="n">%</th></tr></thead><tbody>${linhas.map((l, ix) => `<tr ${l.itens && l.itens.length ? `data-abre="${ix}" style="cursor:pointer"` : ''}><td><b>${l.itens && l.itens.length ? '<span class="gseta" data-seta>›</span> ' : ''}${esc(l.k)}</b>${l.itens && l.itens.length ? ` <span class="nota">(${l.itens.length} lançamento${l.itens.length > 1 ? 's' : ''})</span>` : ''}${l.det ? `<br><span class="nota">${l.det}</span>` : ''}</td><td class="n">${BRL2(l.v)}</td><td class="n">${tot ? Math.round(100 * l.v / tot) : 0}%</td></tr>${sub(l, ix)}`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL2(tot)}</b></td><td></td></tr></tfoot></table></div>${nota ? `<p class="nota">${nota}</p>` : ''}` : '<p class="nota">Nada lançado neste mês.</p>';
+    const abre = (ix, v) => { box.querySelectorAll(`[data-de="${ix}"]`).forEach(r => r.hidden = v === undefined ? !r.hidden : !v); const s = box.querySelector(`[data-abre="${ix}"] [data-seta]`); if (s) s.textContent = box.querySelector(`[data-de="${ix}"]`)?.hidden ? '›' : '⌄'; };
+    box.querySelectorAll('[data-abre]').forEach(r => r.onclick = () => abre(r.dataset.abre));
+    const bt = box.querySelector('[data-abretudo]'); if (bt) bt.onclick = () => { const abrir = bt.textContent.startsWith('Abrir'); box.querySelectorAll('[data-abre]').forEach(r => abre(r.dataset.abre, abrir)); bt.textContent = abrir ? 'Fechar todos' : 'Abrir todos os lançamentos'; }; };
   if (item === ATX) {
     const box = abrirPop(`${ATX} · ${mes}`, 'Atendimentos de malote além do contrato: 2ª visita de ponto mensal (ex.: Crefisa) e atendimentos extras lançados. Não contam como Kits/Spot.');
     (async () => { const D2 = S.dir; D2.spot = D2.spot || {}; let rs;
       try { rs = D2.spot[c.id] || (D2.spot[c.id] = await q(sb.rpc('dir_spot_cliente', { p_comp: c.id }))); } catch (e) { box.className = ''; box.innerHTML = `<div class="msg alerta">${esc(e.message)}</div>`; return; }
       const g = {}; rs.filter(r => cliSpotDe(r, pm) === ATX).forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, n: 0, ls: [] }); y.v += n(r.valor); y.n += n(r.qtd) || 1; y.ls.push(r); });
-      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, det: y.ls.slice(0, 8).map(l => esc(l.origem === 'planilha' ? `${l.cliente} (planilha)` : (l.destino || l.cliente || ''))).join(' · ') + (y.ls.length > 8 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro', 'Antes ficavam em Kits/Spot como "Crefisa" e "Atendimento". O total do parceiro não muda.');
+      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, itens: y.ls.map(l => ({ d: l.destino || l.cliente || 'Atendimento extra', v: l.valor, x: [l.cidade, l.data].filter(Boolean).join(' · ') })), det: y.ls.slice(0, 0).map(l => esc(l.origem === 'planilha' ? `${l.cliente} (planilha)` : (l.destino || l.cliente || ''))).join(' · ') + (y.ls.length > 1e9 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro', 'Antes ficavam em Kits/Spot como "Crefisa" e "Atendimento". O total do parceiro não muda.');
     })(); return;
   }
   if (item === 'Descontos') {
     const dd = (D.ddet || []).filter(x => x.competencia_id === c.id); const g = {};
-    dd.forEach(x => { const k = x.categoria || 'Outros'; const y = g[k] || (g[k] = { k, v: 0, ps: {} }); y.v += n(x.valor); y.ps[x.parceiro_id] = (y.ps[x.parceiro_id] || 0) + n(x.valor); });
-    const ls = Object.values(g).map(y => ({ k: y.k, v: y.v, det: Object.entries(y.ps).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([pid, v]) => `${esc(nomeP(pid))} ${BRL(v)}`).join(' · ') }));
+    dd.forEach(x => { const k = x.categoria || 'Outros'; const y = g[k] || (g[k] = { k, v: 0, ps: {}, it: [] }); y.v += n(x.valor); y.ps[x.parceiro_id] = (y.ps[x.parceiro_id] || 0) + n(x.valor); y.it.push({ d: nomeP(x.parceiro_id), v: x.valor, x: [x.cliente, x.descricao].filter(Boolean).join(' · ') }); });
+    const ls = Object.values(g).map(y => ({ k: y.k, v: y.v, itens: y.it }));
     tabela(abrirPop(`Descontos · ${mes}`, 'Por categoria, com os parceiros que mais tiveram desconto.'), ls.length ? ls : fe.filter(r => n(r.descontos)).map(r => ({ k: nomeP(r.parceiro_id), v: n(r.descontos) })), ls.length ? 'Categoria' : 'Parceiro');
     return;
   }
@@ -4425,8 +4430,8 @@ function popComposicao(item, D, c, ant) {
         .forEach(r => { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, ls: [] }); y.v += n(r.valor); y.ls.push(r); });
       Object.keys(g).forEach(k => { if (pos ? g[k].v <= 0.005 : g[k].v >= -0.005) delete g[k]; });
       if (!pos) fe.forEach(r => { const o = total(r) - n(r.malote) - n(r.kits) - n(r.fora_umov) - n(r.atend_extra) - n(r.descontos); if (o < -0.5) { const y = g[r.parceiro_id] || (g[r.parceiro_id] = { v: 0, ls: [] }); y.v += o; y.ls.push({ destino: 'Acerto na aprovação (aprovado abaixo do calculado)', valor: o }); } });
-      const desc = l => { const t = [l.cliente, l.destino].filter(x => x && !/^outro$/i.test(x)).join(' · '); return `${esc(t || 'Serviço')} ${BRL(n(l.valor))}`; };
-      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, det: y.ls.sort((a, b) => Math.abs(n(b.valor)) - Math.abs(n(a.valor))).slice(0, 8).map(desc).join(' · ') + (y.ls.length > 8 ? ` · +${y.ls.length - 8}` : '') })), 'Parceiro',
+      const desc = l => [l.cliente, l.destino].filter(x => x && !/^outro$/i.test(x)).join(' · ') || 'Serviço';
+      tabela(box, Object.entries(g).map(([pid, y]) => ({ k: nomeP(pid), v: y.v, itens: y.ls.map(l => ({ d: desc(l), v: l.valor, x: [l.cidade, l.data ? fmtD(l.data) : ''].filter(Boolean).join(' · ') })) })), 'Parceiro',
         pos ? 'Lançados pelo parceiro no envio (ou pela GSM) e aceitos no fechamento.' : 'Não são descontos nem economia: só acertam o valor do mês com o que o parceiro faturou ou já recebeu.');
     })(); return;
   }
