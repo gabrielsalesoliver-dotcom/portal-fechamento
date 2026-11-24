@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1100';
+const VERSAO = '2026.11.24-1105';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1373,8 +1373,8 @@ async function vAcessos() {
   const abaixo = (tr, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="6" style="background:var(--field)">${html}</td>`; tr.after(l); return l; };
   const falha = (alvo, e) => { (alvo.querySelector('.am') || alvo).insertAdjacentHTML('beforeend', `<div class="msg erro" style="margin-top:6px">${esc(e.message)}</div>`); };
   const mostrarCodigo = (alvo, email, cod) => {
-    const link = location.origin + location.pathname;
-    const texto = `Portal de Fechamento GSM\n${link}\nPrimeiro acesso: e-mail ${email} e código ${cod}`;
+    const link = location.origin + location.pathname + '?acesso=primeiro';
+    const texto = `Portal de Fechamento GSM\n${link}\nPrimeiro acesso (aba "Primeiro acesso"): e-mail ${email} e código ${cod}. Depois escolha a sua senha.`;
     alvo.innerHTML = `<div class="confirma" style="margin-top:8px"><b>Código de ${esc(email)}: <span class="num" style="font-size:18px;letter-spacing:.12em">${esc(cod)}</span></b>
       <span>Ele aparece só agora. Copie e envie ao destinatário.</span>
       <textarea readonly style="font:inherit;font-size:13px;min-height:70px;padding:8px;border:1px solid var(--rule);border-radius:6px">${esc(texto)}</textarea>
