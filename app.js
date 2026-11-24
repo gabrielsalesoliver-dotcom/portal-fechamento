@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1445';
+const VERSAO = '2026.11.24-1450';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -2122,8 +2122,8 @@ async function secaoAdiantamento(c) {
     catch (e) { b.disabled = false; $('#adi-m').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; }
   };
   box.querySelectorAll('[data-nfad]').forEach(b => b.onclick = () => { const a = ads.find(x => x.id === b.dataset.nfad); const z = $('#adinf');
-    z.innerHTML = `<div class="confirma"><b>NF do adiantamento de ${BRL2(a.valor)}</b><span class="nota">Emita a NF pelo valor liberado (${BRL2(a.valor)}), com a GSM como tomadora.</span>${zonaArquivo('arqnfad', 'Arraste a NF aqui ou clique para escolher', 'PDF da NF (ou foto JPG/PNG). O portal lê número, emissão, CNPJ e valor.', '.pdf,.jpg,.jpeg,.png')}<div id="nfadform"></div></div>`;
-    ligarZona('arqnfad', f => formNFAdi(f, c, a)); z.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
+    z.innerHTML = `<div class="confirma"><b>NF do adiantamento de ${BRL2(a.valor)}</b><span class="nota">Emita a NF pelo valor liberado (${BRL2(a.valor)}), com a GSM como tomadora.</span>${zonaArquivo('arqnfad', 'Arraste a NF (ou fatura) e o boleto aqui, ou clique para escolher', 'Pode mandar mais de um arquivo de uma vez: a NF/fatura e, se tiver, o boleto e outros comprovantes. PDF ou foto JPG/PNG. O portal lê número, emissão, CNPJ e valor da NF.', '.pdf,.jpg,.jpeg,.png', true)}<div id="nfadform"></div></div>`;
+    ligarZona('arqnfad', (f, fs) => { const lst = (fs && fs.length ? fs : [f]); const nf = lst.find(x => !/boleto|comprovante|recibo/i.test(x.name)) || lst[0]; formNFAdi(nf, c, a, lst.filter(x => x !== nf)); }); z.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
   const ba = $('#ant-ok');
   if (ba) ba.onclick = async () => {
     ba.disabled = true;
@@ -2798,7 +2798,8 @@ async function secaoNF(c) {
 }
 
 // NF do adiantamento: lê o arquivo, confere com o valor liberado e registra
-async function formNFAdi(file, c, a) {
+async function formNFAdi(file, c, a, anx = []) {
+  const tipoAnx = n => /boleto/i.test(n) ? 'Boleto' : /fatura|duplicata/i.test(n) ? 'Fatura' : 'Anexo';
   const box = $('#nfadform');
   if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) { box.innerHTML = '<div class="msg erro">Envie a NF em PDF (ou foto JPG/PNG).</div>'; return; }
   box.innerHTML = '<div class="carregando" style="padding:10px 0" id="nfad-lendo">Lendo a NF…</div>';
@@ -2813,14 +2814,18 @@ async function formNFAdi(file, c, a) {
       <label class="campo">CNPJ emitente<input class="peq" id="na-cnpj" value="${esc(fmtCNPJ(lido.cnpj || cad))}" style="width:190px"></label>
       <label class="campo">Valor (R$)<input class="peq" id="na-val" value="${lido.valor != null ? lido.valor.toFixed(2).replace('.', ',') : String(esperado.toFixed(2)).replace('.', ',')}" style="width:130px"></label>
       <button class="btn marca" id="na-env">Enviar NF do adiantamento</button></div>
+    <div class="nota" style="margin-top:6px">NF lida de <b>${esc(file.name)}</b>${anx.length ? ` · vai junto como anexo: ${anx.map(x => `<b>${esc(x.name)}</b>`).join(', ')}` : ''}.</div>
     <div class="nota" style="margin-top:6px">${lido.texto ? `Dados lidos da NF${ocr ? ' (pela imagem)' : ''}; confira e corrija se a leitura errou.` : 'Não foi possível ler a NF: preencha os dados.'} ${lido.valor != null && !valOk ? `<b>Valor lido (${BRL2(lido.valor)}) diferente do liberado (${BRL2(esperado)}).</b>` : ''}</div><div id="na-msg"></div>`;
   $('#na-env').onclick = async () => { const b = $('#na-env'); const v = numBR($('#na-val').value);
     if (v == null || Number.isNaN(v)) { $('#na-msg').innerHTML = '<div class="msg erro">Valor inválido.</div>'; return; }
     b.disabled = true; b.textContent = 'Enviando…';
     try { const path = `${S.parc.id}/${c.mes.slice(0, 7)}/nf_adiantamento/${Date.now()}_${safeName(file.name)}`;
       const up = await sb.storage.from('envios').upload(path, file); if (up.error) throw new Error('Falha ao guardar o arquivo: ' + up.error.message);
-      await q(sb.rpc('registrar_nf_adiantamento', { p_adiant: a.id, p_arquivo: path, p_numero: $('#na-num').value.trim(), p_cnpj: digitos($('#na-cnpj').value), p_valor: v, p_data: $('#na-dt').value || null,
+      const reg = await q(sb.rpc('registrar_nf_adiantamento', { p_adiant: a.id, p_arquivo: path, p_numero: $('#na-num').value.trim(), p_cnpj: digitos($('#na-cnpj').value), p_valor: v, p_data: $('#na-dt').value || null,
         p_checagens: { texto: !!lido.texto, ocr, cnpj_no_pdf: !!lido.cnpj_parceiro_no_pdf, tomador_gsm: !!lido.tomador_gsm, numero_lido: lido.numero || null, valor_lido: lido.valor ?? null }, p_parceiro: S.previa ? S.parc.id : null }));
+      if (anx.length) { b.textContent = 'Enviando anexos…'; const lista = [];
+        for (const x of anx) { const p2 = `${S.parc.id}/${c.mes.slice(0, 7)}/nf_adiantamento/${Date.now()}_${safeName(x.name)}`; const u = await sb.storage.from('envios').upload(p2, x); if (u.error) throw new Error(`Falha ao guardar ${x.name}: ${u.error.message}`); lista.push({ path: p2, nome: x.name, tipo: tipoAnx(x.name) }); }
+        const nid = reg?.id || (await q(sb.from('notas_fiscais').select('id').eq('arquivo_path', path).limit(1)))[0]?.id; if (nid) await q(sb.rpc('anexar_nf', { p_nf: nid, p_anexos: lista })); }
       secaoAdiantamento(c);
     } catch (e) { $('#na-msg').innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; b.disabled = false; b.textContent = 'Enviar NF do adiantamento'; } };
 }
