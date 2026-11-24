@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-0835';
+const VERSAO = '2026.11.24-1100';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -151,7 +151,7 @@ function telaLogin(aba = 'entrar', msg = '') {
         if (!r.ok) return erro(j.erro || 'Não foi possível criar o acesso.');
       }
       const { error } = await sb.auth.signInWithPassword({ email, password: senha });
-      if (error) return erro(error.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos.' : error.message);
+      if (error) return erro(error.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos. É o seu primeiro acesso? Use a aba "Primeiro acesso" com o e-mail e o código que a GSM enviou para criar a sua senha.' : error.message);
       try { localStorage.setItem('gsm-ult-uso', String(Date.now())); } catch (e) {}
       iniciar();
     } catch (e) { erro('Falha de conexão: ' + e.message); }
