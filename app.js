@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1340';
+const VERSAO = '2026.11.24-1445';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1314,6 +1314,7 @@ async function gravarPontos() {
 }
 
 // ---------- Acessos e convites ----------
+const diasDesde = iso => { const d = Math.floor((Date.now() - new Date(iso)) / 86400000); return d <= 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`; };
 const PAPEIS = { admin: 'Administrador', diretoria: 'Diretoria', financeiro: 'Financeiro', parceiro: 'Parceiro' };
 const ST_AC = { ativo: ['Ativo', 'escuro'], bloqueado: ['Bloqueado', 'marca'], excluido: ['Excluído', ''], convite: ['Convite pendente', 'alerta'], cancelado: ['Convite cancelado', ''] };
 async function vAcessos() {
@@ -1348,13 +1349,14 @@ async function vAcessos() {
       .map(([k, n, q]) => `<button class="btn ${S.acSit === k ? '' : 'sec'} peq" data-sit="${k}">${n} (${q})</button>`).join('')}</div>
     <div class="linha" style="gap:8px;align-items:center"><span class="nota" style="margin:0">Setor:</span><div role="group" aria-label="Filtrar por setor" style="display:inline-flex;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
       ${[['todos', 'Todos'], ['parceiro', 'Parceiros'], ['financeiro', 'Financeiro'], ['diretoria', 'Diretoria'], ['admin', 'Administradores']].map(([k, n]) => `<button type="button" data-setor="${k}" aria-pressed="${S.acSetor === k}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${S.acSetor === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n} (${lista.filter(l => naSit(l) && (k === 'todos' || l.papel === k)).length})</button>`).join('')}</div></div>
-    <div class="tabela"><table id="actab"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead><tbody>
+    <div class="tabela"><table id="actab"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th><th>Convite gerado</th><th>Último acesso</th><th></th></tr></thead><tbody>
     ${vis.map(l => { const [rot, cls] = ST_AC[l.situacao] || [l.situacao, '']; const eu = l.user_id === S.user.id;
       return `<tr data-row="${l.user_id || esc(l.email)}"><td><b>${esc(l.email)}</b>${eu ? ' <span class="pill">você</span>' : ''}</td><td>${esc(l.nome || '')}</td>
       <td>${esc(PAPEIS[l.papel] || l.papel)}${l.parceiro_id ? `<br><span style="font-size:12px;color:var(--muted)">${esc(pNome(l.parceiro_id))}</span>` : ''}</td>
       <td><span class="pill ${cls}">${rot}</span>${l.tentativas ? ` <span class="nota">${l.tentativas} tentativa(s) errada(s)</span>` : ''}</td>
+      <td style="font-size:13px;white-space:nowrap">${l.convite_em ? `${fmtDH(l.convite_em)}${l.situacao === 'convite' ? `<br><span class="nota">${diasDesde(l.convite_em)}</span>` : l.convite_usado_em ? `<br><span class="nota">usado ${fmtDH(l.convite_usado_em)}</span>` : ''}` : '—'}</td>
       <td style="font-size:13px">${l.ultimo_acesso ? fmtDH(l.ultimo_acesso) : '—'}</td>
-      <td style="white-space:nowrap">${eu ? `<button class="btn sec peq" data-ed="${l.user_id}">Alterar</button> <button class="btn sec peq" data-senha="${esc(l.email)}">Nova senha</button>` : acoes(l)}</td></tr>`; }).join('') || '<tr><td colspan="6" class="nota">Nada encontrado.</td></tr>'}
+      <td style="white-space:nowrap">${eu ? `<button class="btn sec peq" data-ed="${l.user_id}">Alterar</button> <button class="btn sec peq" data-senha="${esc(l.email)}">Nova senha</button>` : acoes(l)}</td></tr>`; }).join('') || '<tr><td colspan="7" class="nota">Nada encontrado.</td></tr>'}
     </tbody></table></div></section>
   <section class="bloco"><h2>Novo acesso</h2>
     <p class="sub">O convidado entra em "Primeiro acesso" com o e-mail e o código e escolhe a senha. O código vale uma vez e trava após 5 tentativas erradas.</p>
@@ -1372,7 +1374,7 @@ async function vAcessos() {
   ${logs.length ? `<section class="bloco"><h2>Histórico de alterações</h2><div class="tabela"><table><tbody>${logs.map(g => `<tr><td style="font-size:13px;white-space:nowrap">${fmtDH(g.feito_em)}</td><td>${esc(g.alvo_email || '')}</td><td>${esc(g.acao)}</td><td style="font-size:13px;color:var(--muted)">${esc(g.detalhe || '')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
 
   const tab = $('#actab');
-  const abaixo = (tr, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="6" style="background:var(--field)">${html}</td>`; tr.after(l); return l; };
+  const abaixo = (tr, html) => { tab.querySelectorAll('tr.extra').forEach(x => x.remove()); const l = document.createElement('tr'); l.className = 'extra'; l.innerHTML = `<td colspan="7" style="background:var(--field)">${html}</td>`; tr.after(l); return l; };
   const falha = (alvo, e) => { (alvo.querySelector('.am') || alvo).insertAdjacentHTML('beforeend', `<div class="msg erro" style="margin-top:6px">${esc(e.message)}</div>`); };
   const mostrarCodigo = (alvo, email, cod) => {
     const link = location.origin + location.pathname + '?acesso=primeiro';
