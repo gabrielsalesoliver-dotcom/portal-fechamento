@@ -335,7 +335,6 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .tv-escala[data-sl="geral"] #gresdet,.tv-escala[data-sl="geral"] #gevol{display:none!important}
 .tv-escala[data-sl="variacao"] table,.tv-escala[data-sl="variacao"] .tabela,.tv-escala[data-sl="evolucao"] table,.tv-escala[data-sl="evolucao"] .tabela,.tv-escala[data-sl="evolucao"] input,
 .tv-escala[data-sl="previsto"] #tv-tprev{display:none!important}
-.tv-escala[data-sl="geral"]{width:2100px}
 .tv-escala[data-sl="geral"] .ggrid{grid-template-columns:repeat(4,minmax(0,1fr))}
 .tv-escala[data-sl="geral"] .gtiles{grid-template-columns:repeat(4,minmax(0,1fr))}
 

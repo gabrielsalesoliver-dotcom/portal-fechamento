@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1450';
+const VERSAO = '2026.11.24-1650';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -5167,7 +5167,7 @@ async function avisoExtrasParceiro(m, c, p) {
 
 // ================= Torre de controle · modo TV (tela cheia para monitor/TV) =================
 const TV_META = 0.95;
-function pararTv() { clearInterval(S.tvRelogio); clearInterval(S.tvDados); clearInterval(S.tvPagina); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); S.tvRelogio = S.tvDados = S.tvPagina = S.tvTroca = null; }
+function pararTv() { clearInterval(S.tvRelogio); clearInterval(S.tvDados); clearInterval(S.tvPagina); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); clearTimeout(S.tvRolar); S.tvRelogio = S.tvDados = S.tvPagina = S.tvTroca = null; }
 // carrossel geral: operação (TV_GERAL_OP_SEG) → todas as lâminas da diretoria → operação…
 const TV_GERAL_OP_SEG = 90;
 function tvGeralSelo(fase) {
@@ -5176,7 +5176,7 @@ function tvGeralSelo(fase) {
   if (top) top.style.position = 'relative';
 }
 function tvGeralOp() {
-  if (!S.tvGeral) return; tvGeralSelo('op'); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); const t0 = Date.now();
+  if (!S.tvGeral) return; tvGeralSelo('op'); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); clearTimeout(S.tvRolar); const t0 = Date.now();
   S.tvBarraT = setInterval(() => { const b = $('#tv-gbar'); if (b) b.style.width = Math.min(100, (Date.now() - t0) / (TV_GERAL_OP_SEG * 10)) + '%'; }, 1000);
   S.tvTroca = setTimeout(() => { if (S.tvGeral && S.view === 'tv') { S.tvSl = 0; vTvDir(); } }, TV_GERAL_OP_SEG * 1000);
 }
@@ -5560,12 +5560,22 @@ function tvSlide(i) {
   tvEncaixar();
 }
 // escala o conteúdo do slide para caber inteiro no palco (o portal é desenhado com 1500 px de largura)
+// Todas as telas da TV na MESMA escala (largura fixa de 1600 px → letra do mesmo tamanho em todas).
+// O que não cabe na altura rola devagar durante a tela, em vez de encolher.
+const TV_LARG = 1600;
 function tvEncaixar() {
   const palco = $('#tv-palco'), box = $('#tv-esc'); if (!palco || !box) return;
-  const fit = () => { if (!box.isConnected) return; box.style.transform = 'none'; const w = palco.clientWidth, h = palco.clientHeight, ih = box.scrollHeight || 1;
-    const bw = box.offsetWidth || 1500; const k = Math.min(w / bw, h / ih, 1.35); box.style.transform = `scale(${k})`; box.style.left = Math.max(0, (w - bw * k) / 2) + 'px'; };
+  let chave = '';
+  const fit = () => { if (!box.isConnected) return;
+    const w = palco.clientWidth, h = palco.clientHeight; const k = Math.min(w / TV_LARG, 1.25); const ih = box.scrollHeight || 1;
+    const ck = `${w}x${h}x${Math.round(ih / 20)}`; if (ck === chave) return; chave = ck;
+    clearTimeout(S.tvRolar); box.style.transition = 'none'; box.style.width = TV_LARG + 'px';
+    box.style.left = Math.max(0, (w - TV_LARG * k) / 2) + 'px'; box.style.transform = `scale(${k})`;
+    const sobra = ih * k - h + 16;
+    if (sobra > 8 && !S.tvPausa) { const dur = Math.max(6, TV_SLIDE_SEG - 10);
+      S.tvRolar = setTimeout(() => { box.style.transition = `transform ${dur}s linear`; box.style.transform = `translateY(${-sobra}px) scale(${k})`; }, 4000); } };
   fit(); if (S.tvRO) S.tvRO.disconnect(); if (window.ResizeObserver) { S.tvRO = new ResizeObserver(() => fit()); S.tvRO.observe(box); S.tvRO.observe(palco); }
-  [400, 1500, 4000].forEach(ms => setTimeout(fit, ms));
+  [400, 1500, 3500].forEach(ms => setTimeout(fit, ms));
 }
 function tvRodar() { clearInterval(S.tvPagina); if (S.tvPausa) return;
   const b = $('#tv-gbar'); if (S.tvGeral && b) { const tot = TV_SLIDES.length; b.style.width = (100 * (S.tvSl || 0) / tot) + '%'; }
