@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1330';
+const VERSAO = '2026.11.24-1340';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -465,8 +465,10 @@ async function vVerParceiro() {
 function rotear() {
   const v = (location.hash || '#pendencias').slice(1);
   S.previa = false; pararTv();
+  S.tvGeral = v === 'tvgeral';
   if (v === 'tv') { S.view = 'tv'; return vTv(); }
   if (v === 'tvdir') { S.view = 'tv'; return vTvDir(); }
+  if (v === 'tvgeral') { S.view = 'tv'; S.tvSl = 0; return vTv(); }
   S.view = VIEWS[v] ? v : 'pendencias';
   casca();
   VIEWS[S.view]();
@@ -3279,7 +3281,7 @@ function desenharDiretoria(el) {
   el.innerHTML = `
   <div class="topo"><div><h1>Fechamento de ${nomeMes(c.mes)}</h1><p>${c.status === 'fechada' ? 'Competência fechada.' : 'Competência em andamento: os valores mudam até o fechamento.'} ${(D.aba === 'geral' || D.aba === 'executivo') ? 'Valores totais, já com descontos.' : `Valores por parceiro${op === 'tudo' ? ', já com descontos' : ''}.`}</p></div>
     <div class="linha">
-      ${(D.aba === 'geral' || D.aba === 'executivo') ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}<button class="btn marca peq" id="dtv" style="min-height:44px">Modo TV</button>
+      ${(D.aba === 'geral' || D.aba === 'executivo') ? '<button class="btn sec peq" id="dprint" style="min-height:44px">Imprimir / PDF</button>' : ''}<button class="btn marca peq" id="dtv" style="min-height:44px">Modo TV</button><button class="btn sec peq" id="dtvg" style="min-height:44px" title="Alterna a operação ao vivo com as telas da diretoria">TV carrossel</button>
       <div class="alterna" role="group" aria-label="Operação" style="display:${(D.aba === 'geral' || D.aba === 'executivo') ? 'none' : 'inline-flex'};border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${Object.entries(OPS).map(([k, n]) => `<button type="button" data-op="${k}" style="font:inherit;font-size:14px;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;${k === op ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}
       </div>
@@ -3367,6 +3369,7 @@ function desenharDiretoria(el) {
   $('#dcomp').onchange = e => { D.compId = e.target.value; desenharDiretoria(el); };
   const pr = $('#dprint'); if (pr) pr.onclick = () => window.print();
   const dtv = $('#dtv'); if (dtv) dtv.onclick = () => { if (S.perfil.papel === 'admin') location.hash = '#tvdir'; else vTvDir(); };
+  const dtvg = $('#dtvg'); if (dtvg) dtvg.onclick = () => { if (S.perfil.papel === 'admin') location.hash = '#tvgeral'; else { S.tvGeral = true; S.view = 'tv'; S.tvSl = 0; vTv(); } };
   el.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => { const k = th.dataset.sort; D.sort = [k, D.sort[0] === k ? -D.sort[1] : (k === 'regiao' || k === 'dia' || k === 'status' ? 1 : -1)]; desenharDiretoria(el); });
   $('#dfiltro').oninput = e => { D.filtro = e.target.value; clearTimeout(D.t); D.t = setTimeout(() => { desenharDiretoria(el); const i = $('#dfiltro'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 350); };
   $('#dcsv').onclick = () => {
@@ -4955,10 +4958,11 @@ const emTxt = d => { if (!d) return '—'; const m = Math.round((d - Date.now())
 async function vTorre() {
   const m = $('#main'); clearInterval(S.torreTimer);
   if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Todos os robôs agendados no Supabase: se estão rodando, quando rodaram, quanto demoraram e se alguma execução falhou. A tela se atualiza sozinha a cada minuto.</p></div>
-    <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Modo TV · operação</button><button class="btn marca peq" id="tr-tvd" style="min-height:44px">Modo TV · diretoria</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
+    <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Modo TV · operação</button><button class="btn marca peq" id="tr-tvd" style="min-height:44px">Modo TV · diretoria</button><button class="btn marca peq" id="tr-tvg" style="min-height:44px">Modo TV · carrossel geral</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
   $('#tr-atu').onclick = () => vTorre();
   $('#tr-tv').onclick = () => { location.hash = '#tv'; };
   $('#tr-tvd').onclick = () => { location.hash = '#tvdir'; };
+  $('#tr-tvg').onclick = () => { location.hash = '#tvgeral'; };
   let T; try { T = await q(sb.rpc('torre_robos')); } catch (e) { $('#torre').innerHTML = `<div class="msg alerta">Não foi possível ler os robôs: ${esc(e.message)}</div>`; return; }
   S.torre = T; desenharTorre();
   S.torreTimer = setInterval(() => { if (S.view !== 'torre' || !document.body.contains($('#torre'))) { clearInterval(S.torreTimer); return; } vTorre(); }, 60000);
@@ -5156,8 +5160,20 @@ async function avisoExtrasParceiro(m, c, p) {
 
 // ================= Torre de controle · modo TV (tela cheia para monitor/TV) =================
 const TV_META = 0.95;
-function pararTv() { clearInterval(S.tvRelogio); clearInterval(S.tvDados); clearInterval(S.tvPagina); S.tvRelogio = S.tvDados = S.tvPagina = null; }
-function tvSair() { pararTv(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+function pararTv() { clearInterval(S.tvRelogio); clearInterval(S.tvDados); clearInterval(S.tvPagina); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); S.tvRelogio = S.tvDados = S.tvPagina = S.tvTroca = null; }
+// carrossel geral: operação (TV_GERAL_OP_SEG) → todas as lâminas da diretoria → operação…
+const TV_GERAL_OP_SEG = 90;
+function tvGeralSelo(fase) {
+  if (!S.tvGeral) return; const m = document.querySelector('.tv-marca span'); if (m) m.innerHTML = `Carrossel geral · <b style="color:var(--tv-marca,#E8435F)">${fase === 'op' ? 'operação' : 'diretoria'}</b> → ${fase === 'op' ? 'diretoria' : 'operação'}`;
+  const top = document.querySelector('.tv-top'); if (top && !$('#tv-gbar')) top.insertAdjacentHTML('beforeend', '<div id="tv-gbar" style="position:absolute;left:0;bottom:0;height:3px;background:var(--tv-marca,#E8435F);width:0;transition:width 1s linear"></div>');
+  if (top) top.style.position = 'relative';
+}
+function tvGeralOp() {
+  if (!S.tvGeral) return; tvGeralSelo('op'); clearTimeout(S.tvTroca); clearInterval(S.tvBarraT); const t0 = Date.now();
+  S.tvBarraT = setInterval(() => { const b = $('#tv-gbar'); if (b) b.style.width = Math.min(100, (Date.now() - t0) / (TV_GERAL_OP_SEG * 10)) + '%'; }, 1000);
+  S.tvTroca = setTimeout(() => { if (S.tvGeral && S.view === 'tv') { S.tvSl = 0; vTvDir(); } }, TV_GERAL_OP_SEG * 1000);
+}
+function tvSair() { pararTv(); S.tvGeral = false; if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   if (S.perfil.papel === 'admin') location.hash = '#torre'; else location.reload(); }
 async function vTv() {
   pararTv();
@@ -5181,8 +5197,10 @@ async function vTv() {
   $('#tv-full').onclick = () => { const t = $('#tv'); document.fullscreenElement ? document.exitFullscreen() : (t.requestFullscreen && t.requestFullscreen().catch(() => {})); };
   document.onkeydown = ev => { if (S.view === 'tv' && ev.key === 'Escape' && !document.fullscreenElement) tvSair(); };
   let rz; window.onresize = () => { if (S.view !== 'tv' && !$('#tv')) return; clearTimeout(rz); rz = setTimeout(() => { if (S.tvD && $('#tv')) tvDesenhar(); }, 250); };
+  tvGeralSelo('op');
   await tvCarregar();
   S.tvDados = setInterval(tvCarregar, 5 * 60000);
+  tvGeralOp();
 }
 async function tvCarregar() {
   const hoje = isoDia(new Date()); const on = new Date(); on.setDate(on.getDate() - 1); const ontem = isoDia(on);
@@ -5499,6 +5517,7 @@ async function vTvDir() {
   $('#tv-full').onclick = () => { const t = $('#tv'); document.fullscreenElement ? document.exitFullscreen() : (t.requestFullscreen && t.requestFullscreen().catch(() => {})); };
   document.onkeydown = ev => { if (S.view === 'tv' && ev.key === 'Escape' && !document.fullscreenElement) tvSair(); };
   let rz; window.onresize = () => { clearTimeout(rz); rz = setTimeout(() => { if (S.tvDir && $('#tv')) tvDirDesenhar(); }, 250); };
+  tvGeralSelo('dir');
   await tvDirCarregar();
   S.tvDados = setInterval(tvDirCarregar, 10 * 60000);
 }
@@ -5541,7 +5560,11 @@ function tvEncaixar() {
   fit(); if (S.tvRO) S.tvRO.disconnect(); if (window.ResizeObserver) { S.tvRO = new ResizeObserver(() => fit()); S.tvRO.observe(box); S.tvRO.observe(palco); }
   [400, 1500, 4000].forEach(ms => setTimeout(fit, ms));
 }
-function tvRodar() { clearInterval(S.tvPagina); if (S.tvPausa) return; S.tvPagina = setInterval(() => tvSlide((S.tvSl || 0) + 1), TV_SLIDE_SEG * 1000); }
+function tvRodar() { clearInterval(S.tvPagina); if (S.tvPausa) return;
+  const b = $('#tv-gbar'); if (S.tvGeral && b) { const tot = TV_SLIDES.length; b.style.width = (100 * (S.tvSl || 0) / tot) + '%'; }
+  S.tvPagina = setInterval(() => { const prox = (S.tvSl || 0) + 1;
+    if (S.tvGeral && prox >= TV_SLIDES.length) { clearInterval(S.tvPagina); S.tvSl = 0; return vTv(); }
+    tvSlide(prox); const g = $('#tv-gbar'); if (S.tvGeral && g) g.style.width = (100 * prox / TV_SLIDES.length) + '%'; }, TV_SLIDE_SEG * 1000); }
 async function tvDirCarregar() {
   try {
     const ok = await carregarDiretoria(); if (!$('#tv')) return;
