@@ -397,3 +397,4 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .rx-meses button:hover{background:var(--field)}
 .rx-meses button:hover i{background:var(--brand-deep)}
 .rx button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.tv-escala[data-sl="executivo"] .rx-fonte,.tv-escala[data-sl="executivo"] .rx-ir,.tv-escala[data-sl="executivo"] .rx-meses+.nota{display:none!important}

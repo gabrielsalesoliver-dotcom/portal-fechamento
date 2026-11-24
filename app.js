@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1105';
+const VERSAO = '2026.11.24-1330';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -5244,8 +5244,10 @@ function tvDesenhar() {
   $('#tv-rodape').innerHTML = [
     ['ok', `${n0(tm.real)} realizados no mês`], ['neutro', `${n0(tm.prev)} previstos no mês`], ['critico', `${n0(tm.sem_atend)} pontos sem atendimento no mês`],
     ['atencao', `${n0(tm.oc)} ocorrências no mês`], ['atencao', `${n0(tm.fora)} atendimentos fora da carteira`],
-    ['neutro', `Umov atualizado ${PA.atualizado ? fmtDH(PA.atualizado) : '—'} · tela atualiza a cada 5 min`]].map(([c, t]) => `<span class="${c}"><i></i>${t}</span>`).join('');
+    ['neutro', `Umov lido ${PA.atualizado ? fmtDH(PA.atualizado) : '—'} · próxima leitura ${proxLeituraUmov()} · tela atualiza a cada 5 min`]].map(([c, t]) => `<span class="${c}"><i></i>${t}</span>`).join('');
 }
+// leitura do Umov: a cada 2 horas, aos 5 minutos (horário de Brasília, jobs em UTC pares → horas ímpares em BRT)
+function proxLeituraUmov() { const d = new Date(); const x = new Date(d); x.setMinutes(5, 0, 0); while (x <= d || x.getUTCHours() % 2) x.setHours(x.getHours() + 1); return x.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
 function tvTabela() {
   const box = $('#tv-tabela'); if (!box) return pararTv(); const L = S.tvLinhas || [];
   const porPag = Math.max(5, Math.floor((box.clientHeight || 360) / 38) - 1); const pags = Math.max(1, Math.ceil(L.length / porPag)); const pg = S.tvPag % pags;
@@ -5502,8 +5504,8 @@ async function vTvDir() {
 }
 // slides com os gráficos do portal (mesmas funções da visão da diretoria), girando sozinhos
 const TV_SLIDES = [
-  ['geral', 'Visão geral do mês'], ['variacao', 'O que mudou sobre o mês anterior'], ['mapa', 'Mapa de custos'], ['evolucao', 'Evolução por praça'],
-  ['previsto', 'Previsto (calendarizado) × realizado · malote'], ['ano', 'Resumo do ano'], ['pagamentos', 'Pagamentos e praças com maior variação']];
+  ['executivo', 'Resumo executivo'], ['geral', 'Visão geral do mês'], ['variacao', 'O que mudou sobre o mês anterior'], ['mapa', 'Mapa de custos'], ['evolucao', 'Evolução por praça'],
+  ['previsto', 'Previsto pelo contrato × realizado · malote'], ['ano', 'Resumo do ano'], ['pagamentos', 'Pagamentos e praças com maior variação']];
 const TV_SLIDE_SEG = 30;
 function tvSlide(i) {
   const palco = $('#tv-palco'); if (!palco || !S.tvDir) return; const D = S.dir, c = S.tvDir.c; const idx = D.comps.findIndex(x => x.id === c.id); const ant = D.comps[idx - 1];
@@ -5514,9 +5516,10 @@ function tvSlide(i) {
   $('#tv-snav').querySelectorAll('[data-tvi]').forEach(b => b.onclick = () => { tvSlide(Number(b.dataset.tvi)); tvRodar(); });
   $('#tv-pausa').onclick = () => { S.tvPausa = !S.tvPausa; tvRodar(); tvSlide(S.tvSl); };
   palco.innerHTML = `<div class="tv-escala" id="tv-esc" data-sl="${k}"></div>`; const box = $('#tv-esc');
-  D.compId = c.id; D.aba = k === 'geral' ? 'geral' : D.aba; D.op = 'tudo';
+  D.compId = c.id; D.aba = k === 'geral' || k === 'executivo' ? k : D.aba; D.op = 'tudo';
   try {
-    if (k === 'geral') visaoGeral(box, D, c, ant);
+    if (k === 'executivo') resumoExecutivo(box, D, c, ant);
+    else if (k === 'geral') visaoGeral(box, D, c, ant);
     else if (k === 'variacao') { box.innerHTML = '<section class="bloco"><div id="tv-ponte" style="position:relative"></div></section>'; ponte($('#tv-ponte'), D, c, ant); }
     else if (k === 'mapa') { box.innerHTML = '<div id="tv-mapa"></div>'; mapaCustos($('#tv-mapa'), D, c); }
     else if (k === 'evolucao') { box.innerHTML = '<section class="gcard" id="tv-evol"></section>'; evolucaoPracas($('#tv-evol'), D, c); }
@@ -5566,8 +5569,10 @@ function tvDirDesenhar() {
   const custoAno = doAno.reduce((a, x) => a + doMes(x.id).reduce((s, r) => s + valor(r), 0), 0); const mesesAno = doAno.filter(x => doMes(x.id).length).length;
   const g = ganhosMes(D, c.id); const gAno = doAno.reduce((a, x) => a + ganhosMes(D, x.id).total, 0);
   const ader = prevTot ? malote / prevTot : null;
+  const atendDe = id => (D.efic || []).filter(e => e.competencia_id === id).reduce((a, e) => a + n(e.atend_umov), 0);
+  const atM = atendDe(c.id), atA = ant ? atendDe(ant.id) : 0; const cpa = atM ? total / atM : null, cpaAnt = atA && totAnt ? totAnt / atA : null;
   $('#tv-ad').className = 'tv-aderencia ' + (varM == null ? 'neutro' : varM > 0.02 ? 'critico' : varM < 0 ? 'ok' : 'atencao');
-  $('#tv-ad').innerHTML = `<b>${BRL(total)}</b> em ${nomeMes(c.mes)}${varM != null ? ` · ${pctTxt(varM)} sobre ${nomeMes(ant.mes)}` : ''}`;
+  $('#tv-ad').innerHTML = `<b>${BRL(total)}</b> em ${nomeMes(c.mes)}${varM != null ? ` · ${pctTxt(varM)} sobre ${nomeMes(ant.mes)}` : ''} · ${c.status === 'fechada' ? 'mês fechado' : 'mês em andamento'}`;
   const kpi = (cls, tit, val, sub, extra = '') => `<div class="tv-kpi ${cls}"><small>${tit}</small><b>${val}</b><span>${sub}</span>${extra}</div>`;
   const bar = p => `<div class="tv-barra"><i style="width:${Math.max(0, Math.min(100, p))}%"></i></div>`;
   const nfConf = T.nfs ? new Set(T.nfs.filter(x => !x.adiantamento_id && x.status === 'conferida').map(x => x.parceiro_id)) : null;
@@ -5578,7 +5583,7 @@ function tvDirDesenhar() {
     kpi('ok', 'Economia gerada', BRLk(g.total), `no mês · ${BRLk(gAno)} no ano`) +
     kpi(aprov < parcsMes.size ? 'atencao' : 'ok', 'Fechamento', `${aprov} de ${parcsMes.size}`, `${Math.round(100 * aprov / Math.max(1, parcsMes.size))}% dos parceiros aprovados`, bar(100 * aprov / Math.max(1, parcsMes.size))) +
     kpi(pago >= total - 1 ? 'ok' : 'atencao', 'Pagamento', BRLk(pago), `pago · ${BRLk(emLote)} em lote${semLote ? ` · ${BRLk(semLote)} sem lote` : ''}${semNf ? ` · ${semNf} sem NF` : ''}`, bar(total ? 100 * pago / total : 0)) +
-    kpi('neutro', `Custo no ano · ${ano}`, BRLk(custoAno), `média ${BRLk(custoAno / Math.max(1, mesesAno))} por mês · ${mesesAno} meses`);
+    kpi(cpa == null ? 'neutro' : cpaAnt && cpa > cpaAnt * 1.02 ? 'critico' : 'ok', 'Custo por atendimento', cpa == null ? '—' : cpa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), cpa == null ? 'sem a contagem de atendimentos' : `${atM.toLocaleString('pt-BR')} atendimentos${cpaAnt ? ` · ${pctTxt(cpa / cpaAnt - 1)} sobre ${nomeMes(ant.mes)}` : ''}`);
   // dados da lâmina de pagamentos e praças
   const pm = Object.fromEntries(D.parcs.map(p => [p.id, p])); const antPor = ant ? Object.fromEntries(doMes(ant.id).map(r => [r.parceiro_id, valor(r)])) : {};
   const prevPor = Object.fromEntries(prevMes(c.id).map(r => [r.parceiro_id, n(r.previsto)]));
@@ -5586,9 +5591,9 @@ function tvDirDesenhar() {
     .filter(x => x.p).sort((x, y) => Math.abs(y.d ?? y.v) - Math.abs(x.d ?? x.v));
   S.tvSemLote = semLote; S.tvLotesMes = L;
   tvSlide(S.tvSl || 0); tvRodar();
-  const desc = L.reduce((a, r) => a + n(r.descontos), 0); const kits = L.reduce((a, r) => a + n(r.kits), 0);
-  $('#tv-rodape').innerHTML = [['neutro', `Malote ${BRL(malote)}`], ['atencao', `Kits/Spot ${BRL(kits)}`], ['ok', `Descontos ${BRL(desc)}`], ['ok', `Economia no ano ${BRL(gAno)}`],
-    ['neutro', `${parcsMes.size} parceiros no mês`], ['neutro', `Atualiza a cada 10 min · ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`]].map(([cl, t]) => `<span class="${cl}"><i></i>${t}</span>`).join('');
+  const desc = L.reduce((a, r) => a + n(r.descontos), 0); const kits = L.reduce((a, r) => a + n(r.kits), 0); const extras = L.reduce((a, r) => a + Math.max(0, n(r.fora_umov)), 0);
+  $('#tv-rodape').innerHTML = [['neutro', `Malote ${BRLk(malote)}`], ['atencao', `Entregas avulsas (kits) ${BRLk(kits)}`], ['atencao', `Serviços extras ${BRLk(extras)}`], ['ok', `Descontos ${BRLk(Math.abs(desc))}`],
+    ['neutro', `Custo no ano ${BRLk(custoAno)} · média ${BRLk(custoAno / Math.max(1, mesesAno))}/mês`], ['ok', `Economia no ano ${BRLk(gAno)}`], ['neutro', `Atualiza a cada 10 min · ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`]].map(([cl, t]) => `<span class="${cl}"><i></i>${t}</span>`).join('');
 }
 function tvDirPagamentos() {
   const T = S.tvDir, L = S.tvLotesMes || []; const n = v => Number(v) || 0; const hoje = isoDia(new Date());
