@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.23-1720';
+const VERSAO = '2026.11.24-0835';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1327,8 +1327,9 @@ async function vAcessos() {
   const comLogin = new Set(lista.filter(l => l.user_id && l.situacao !== 'excluido' && l.parceiro_id).map(l => l.parceiro_id));
   const comConvite = new Set(lista.filter(l => l.situacao === 'convite' && l.parceiro_id).map(l => l.parceiro_id));
   const semAcesso = parcs.filter(p => p.ativo !== false && !comLogin.has(p.id));
-  S.acFiltro = S.acFiltro ?? ''; S.acSit = S.acSit || 'todos';
-  const filtrar = l => (S.acSit === 'todos' ? l.situacao !== 'excluido' : l.situacao === S.acSit)
+  S.acFiltro = S.acFiltro ?? ''; S.acSit = S.acSit || 'todos'; S.acSetor = S.acSetor || 'todos';
+  const naSit = l => S.acSit === 'todos' ? l.situacao !== 'excluido' : l.situacao === S.acSit;
+  const filtrar = l => naSit(l) && (S.acSetor === 'todos' || l.papel === S.acSetor)
     && (!S.acFiltro || norm(`${l.email} ${l.nome || ''} ${pNome(l.parceiro_id)} ${PAPEIS[l.papel] || ''}`).includes(norm(S.acFiltro)));
   const vis = lista.filter(filtrar).sort((a, b) => (a.papel === 'parceiro') - (b.papel === 'parceiro') || a.email.localeCompare(b.email));
   const cont = k => lista.filter(l => l.situacao === k).length;
@@ -1343,6 +1344,8 @@ async function vAcessos() {
       <input id="acf" class="peq" placeholder="Buscar e-mail, nome ou parceiro" value="${esc(S.acFiltro)}" style="min-width:260px"></div>
     <div class="linha">${[['todos', 'Todos', lista.length - cont('excluido')], ['ativo', 'Ativos', cont('ativo')], ['bloqueado', 'Bloqueados', cont('bloqueado')], ['convite', 'Convites pendentes', cont('convite')], ['excluido', 'Excluídos', cont('excluido')], ['cancelado', 'Convites cancelados', cont('cancelado')]]
       .map(([k, n, q]) => `<button class="btn ${S.acSit === k ? '' : 'sec'} peq" data-sit="${k}">${n} (${q})</button>`).join('')}</div>
+    <div class="linha" style="gap:8px;align-items:center"><span class="nota" style="margin:0">Setor:</span><div role="group" aria-label="Filtrar por setor" style="display:inline-flex;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
+      ${[['todos', 'Todos'], ['parceiro', 'Parceiros'], ['financeiro', 'Financeiro'], ['diretoria', 'Diretoria'], ['admin', 'Administradores']].map(([k, n]) => `<button type="button" data-setor="${k}" aria-pressed="${S.acSetor === k}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${S.acSetor === k ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n} (${lista.filter(l => naSit(l) && (k === 'todos' || l.papel === k)).length})</button>`).join('')}</div></div>
     <div class="tabela"><table id="actab"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead><tbody>
     ${vis.map(l => { const [rot, cls] = ST_AC[l.situacao] || [l.situacao, '']; const eu = l.user_id === S.user.id;
       return `<tr data-row="${l.user_id || esc(l.email)}"><td><b>${esc(l.email)}</b>${eu ? ' <span class="pill">você</span>' : ''}</td><td>${esc(l.nome || '')}</td>
@@ -1380,6 +1383,7 @@ async function vAcessos() {
   };
   $('#acf').oninput = e => { S.acFiltro = e.target.value; clearTimeout(S.acT); S.acT = setTimeout(() => { vAcessos().then(() => { const i = $('#acf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 400); };
   m.querySelectorAll('[data-sit]').forEach(b => b.onclick = () => { S.acSit = b.dataset.sit; vAcessos(); });
+  m.querySelectorAll('[data-setor]').forEach(b => b.onclick = () => { S.acSetor = b.dataset.setor; vAcessos(); });
   const papelSel = $('#int-papel'); const parcSel = $('#int-parc');
   const ajusta = () => { parcSel.style.display = papelSel.value === 'parceiro' ? '' : 'none'; }; papelSel.onchange = ajusta; ajusta();
   $('#int-gerar').onclick = async () => {
