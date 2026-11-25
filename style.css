@@ -458,3 +458,6 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .tr-umov-graf .det{width:100%;min-height:2px}
 .tr-umov-graf small{font-size:11px;color:var(--muted)}
 @media (max-width:760px){.tr-lanes{--tr-nome:120px}.tr-lane-nome{font-size:12px}.tr-hero{gap:16px}.tr-hero-txt h2{font-size:21px}.tr-grid{grid-template-columns:1fr}}
+
+.fiscal-box{border:1px solid var(--rule);border-radius:8px;padding:8px 12px 12px;margin:0}
+.fiscal-box legend{font-size:13px;font-weight:600;padding:0 6px}

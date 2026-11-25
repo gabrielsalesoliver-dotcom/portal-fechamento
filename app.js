@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1015';
+const VERSAO = '2026.11.25-1035';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1939,6 +1939,14 @@ async function vCadastro() {
   return cadHistorico(parcs);
 }
 
+const REGIMES = ['MEI', 'Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'Híbrido', 'Pessoa física'];
+const ST_MUD = { solicitada: ['Solicitada', 'alerta'], em_andamento: ['Em andamento', 'marca'], concluida: ['Concluída', 'escuro'], recusada: ['Não vai mudar', ''] };
+function fiscalHtml(p) {
+  const antt = p.antt === 'sim' ? `<span class="pill escuro" title="${esc(p.antt_rntrc ? 'RNTRC ' + p.antt_rntrc : 'Tem ANTT')}">ANTT ✓</span>` : p.antt === 'nao' ? '<span class="pill marca">Sem ANTT</span>' : '<span class="pill">ANTT ?</span>';
+  const reg = p.regime_tributario ? `<span style="font-size:12px">${esc(p.regime_tributario)}</span>` : '<span class="nota">regime ?</span>';
+  const mud = p.mudanca_regime ? `<br><span class="pill ${(ST_MUD[p.mudanca_status] || [])[1] || ''}" title="${esc((p.mudanca_solicitada_em ? 'Pedido em ' + fmtD(p.mudanca_solicitada_em) : '') + (p.mudanca_obs ? ' · ' + p.mudanca_obs : ''))}">→ ${esc(p.mudanca_regime)} · ${(ST_MUD[p.mudanca_status] || [p.mudanca_status])[0]}</span>` : '';
+  return `${antt} ${reg}${mud}`;
+}
 function formParceiro(p = {}, fixo) {
   return `<div style="display:flex;flex-direction:column;gap:10px">
     <div class="linha" style="align-items:flex-end">
@@ -1964,6 +1972,15 @@ function formParceiro(p = {}, fixo) {
       <datalist id="l-doc"><option>NF</option><option>NF/FATURA</option><option>NF/BOLETO</option><option>FATURA/BOLETO</option><option>CT-e</option><option>BOLETO</option><option>SEM NF</option></datalist>
       <datalist id="l-emp"><option>GROUP</option><option>LOG</option></datalist><datalist id="l-forma"><option>PIX</option><option>BOLETO</option><option>TED</option></datalist><datalist id="l-mod"><option>Parceiro</option><option>Adiantamento</option></datalist>
     </div>
+    <fieldset class="fiscal-box"><legend>Fiscal e ANTT</legend><div class="linha" style="align-items:flex-end">
+      <label class="campo">Tem ANTT?<select class="peq" id="f-antt"><option value="">Não informado</option><option value="sim" ${p.antt === 'sim' ? 'selected' : ''}>Sim</option><option value="nao" ${p.antt === 'nao' ? 'selected' : ''}>Não</option></select></label>
+      <label class="campo">RNTRC (nº da ANTT)<input class="peq" id="f-rntrc" value="${esc(p.antt_rntrc || '')}" placeholder="opcional" style="width:140px"></label>
+      <label class="campo">Regime tributário atual<select class="peq" id="f-regime"><option value="">Não informado</option>${REGIMES.map(r => `<option ${p.regime_tributario === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <label class="campo">Mudança solicitada para<select class="peq" id="f-mud"><option value="">Nenhuma</option>${['Lucro Presumido', 'Híbrido'].map(r => `<option ${p.mudanca_regime === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <label class="campo">Situação da mudança<select class="peq" id="f-mudst">${Object.entries(ST_MUD).map(([k, [t]]) => `<option value="${k}" ${(p.mudanca_status || 'solicitada') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="campo">Pedido em<input class="peq" id="f-mudem" type="date" value="${p.mudanca_solicitada_em || ''}"></label>
+      <label class="campo" style="flex:1 1 220px">Observação<input class="peq" id="f-mudobs" value="${esc(p.mudanca_obs || '')}" placeholder="ex.: contador vai mudar em jan/27"></label>
+    </div></fieldset>
     <div class="linha" style="align-items:flex-end">
       <label class="campo">Valor fixo mensal (R$)<input class="peq" id="f-fixo" value="${fixo != null ? String(fixo).replace('.', ',') : ''}" placeholder="vazio = sem fixo" style="width:150px"></label>
       <label class="campo">Vale a partir de<input class="peq" id="f-ini" type="month" value="${new Date().toISOString().slice(0, 7)}"></label>
@@ -1976,25 +1993,29 @@ function formParceiro(p = {}, fixo) {
 function cadParceiros(parcs, contr) {
   const box = $('#cad'); S.cadFiltro = S.cadFiltro ?? ''; S.cadSit = S.cadSit || 'ativos';
   const fixoAtual = id => { const hoje = new Date().toISOString().slice(0, 10); const c = contr.find(k => k.parceiro_id === id && k.inicio <= hoje && (!k.fim || k.fim >= hoje)); return c ? Number(c.valor_fixo) : null; };
-  const vis = parcs.filter(p => (S.cadSit === 'todos' || (S.cadSit === 'ativos' ? p.ativo !== false : p.ativo === false))
+  S.cadFisc = S.cadFisc || '';
+  const FISC = { '': ['Fiscal: todos', () => true], antt_sim: ['Com ANTT', p => p.antt === 'sim'], antt_nao: ['Sem ANTT', p => p.antt === 'nao'], antt_ni: ['ANTT não informada', p => !p.antt], reg_ni: ['Regime não informado', p => !p.regime_tributario], simples: ['Simples Nacional / MEI', p => ['Simples Nacional', 'MEI'].includes(p.regime_tributario)], mud: ['Mudança de regime em aberto', p => p.mudanca_regime && ['solicitada', 'em_andamento'].includes(p.mudanca_status)], mud_ok: ['Mudança concluída', p => p.mudanca_status === 'concluida'] };
+  const vis = parcs.filter(p => (FISC[S.cadFisc] || FISC[''])[1](p) && (S.cadSit === 'todos' || (S.cadSit === 'ativos' ? p.ativo !== false : p.ativo === false))
     && (!S.cadFiltro || norm(`${p.codigo} ${p.regiao} ${p.nome} ${p.razao_social || ''} ${p.cnpj || ''}`).includes(norm(S.cadFiltro))));
   box.className = '';
   box.innerHTML = `<section class="bloco">
     <div class="linha" style="justify-content:space-between"><div class="linha">${[['ativos', 'Ativos', parcs.filter(p => p.ativo !== false).length], ['inativos', 'Inativos', parcs.filter(p => p.ativo === false).length], ['todos', 'Todos', parcs.length]].map(([k, n, qq]) => `<button class="btn ${S.cadSit === k ? '' : 'sec'} peq" data-cs="${k}">${n} (${qq})</button>`).join('')}</div>
-      <div class="linha"><input id="cadf" class="peq" placeholder="Buscar região, nome, CNPJ" value="${esc(S.cadFiltro)}" style="min-width:240px"><button class="btn marca peq" id="novo">+ Novo parceiro</button></div></div>
+      <div class="linha"><select id="cadfisc" class="peq">${Object.entries(FISC).map(([k, [t, f]]) => `<option value="${k}" ${S.cadFisc === k ? 'selected' : ''}>${t}${k ? ` (${parcs.filter(p => p.ativo !== false && f(p)).length})` : ''}</option>`).join('')}</select><button class="btn sec peq" id="cadxls">Baixar Excel</button><input id="cadf" class="peq" placeholder="Buscar região, nome, CNPJ" value="${esc(S.cadFiltro)}" style="min-width:240px"><button class="btn marca peq" id="novo">+ Novo parceiro</button></div></div>
     <div id="novobox"></div>
-    <div class="tabela"><table id="cadtab"><thead><tr><th>Código</th><th>Região / rota</th><th>Razão social · CNPJ</th><th>Contrato</th><th class="n">Fixo vigente</th><th class="n">Ticket kit</th><th>Pagamento</th><th></th></tr></thead><tbody>
+    <div class="tabela"><table id="cadtab"><thead><tr><th>Código</th><th>Região / rota</th><th>Razão social · CNPJ</th><th>Contrato</th><th>Fiscal · ANTT</th><th class="n">Fixo vigente</th><th class="n">Ticket kit</th><th>Pagamento</th><th></th></tr></thead><tbody>
     ${vis.map(p => `<tr data-id="${p.id}" style="${p.ativo === false ? 'opacity:.55' : ''}"><td class="num">${esc(p.codigo)}</td><td><b>${esc(p.regiao)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(p.nome)}</span></td>
-      <td style="font-size:13px">${esc(p.razao_social || '—')}<br><span class="num" style="color:var(--muted)">${esc(fmtCNPJ(p.cnpj) || 'sem CNPJ')}</span></td><td>${esc(p.tipo || '—')}</td><td class="n">${fixoAtual(p.id) != null ? BRL2(fixoAtual(p.id)) : '—'}</td><td class="n">${p.ticket_kit != null ? BRL2(p.ticket_kit) : '<span class="pill alerta">definir</span>'}</td><td>${esc(p.dia_pagamento || '—')}${pillQ(p)}</td>
-      <td style="white-space:nowrap"><button class="btn sec peq" data-alt="${p.id}">Alterar</button> ${p.ativo === false ? `<button class="btn peq" data-at="${p.id}" data-v="1">Reativar</button>` : `<button class="btn sec peq" data-at="${p.id}" data-v="0">Inativar</button>`}</td></tr>`).join('') || '<tr><td colspan="8" class="nota">Nada encontrado.</td></tr>'}
+      <td style="font-size:13px">${esc(p.razao_social || '—')}<br><span class="num" style="color:var(--muted)">${esc(fmtCNPJ(p.cnpj) || 'sem CNPJ')}</span></td><td>${esc(p.tipo || '—')}</td><td style="min-width:170px">${fiscalHtml(p)}</td><td class="n">${fixoAtual(p.id) != null ? BRL2(fixoAtual(p.id)) : '—'}</td><td class="n">${p.ticket_kit != null ? BRL2(p.ticket_kit) : '<span class="pill alerta">definir</span>'}</td><td>${esc(p.dia_pagamento || '—')}${pillQ(p)}</td>
+      <td style="white-space:nowrap"><button class="btn sec peq" data-alt="${p.id}">Alterar</button> ${p.ativo === false ? `<button class="btn peq" data-at="${p.id}" data-v="1">Reativar</button>` : `<button class="btn sec peq" data-at="${p.id}" data-v="0">Inativar</button>`}</td></tr>`).join('') || '<tr><td colspan="9" class="nota">Nada encontrado.</td></tr>'}
     </tbody></table></div></section>`;
   box.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => { S.cadSit = b.dataset.cs; cadParceiros(parcs, contr); });
+  $('#cadfisc').onchange = e => { S.cadFisc = e.target.value; cadParceiros(parcs, contr); };
+  $('#cadxls').onclick = () => baixarXlsx('Parceiros_fiscal_ANTT.xlsx', { titulo: 'Parceiros · fiscal e ANTT', sub: (FISC[S.cadFisc] || FISC[''])[0], abas: [{ nome: 'Parceiros', linhas: vis.map(p => ({ 'Código': p.codigo, 'Região': p.regiao, 'Parceiro': p.nome, 'Razão social': p.razao_social || '', 'CNPJ': fmtCNPJ(p.cnpj || ''), 'Contrato': p.tipo || '', 'Ativo': p.ativo === false ? 'Não' : 'Sim', 'Tem ANTT': p.antt === 'sim' ? 'Sim' : p.antt === 'nao' ? 'Não' : 'Não informado', 'RNTRC': p.antt_rntrc || '', 'Regime tributário': p.regime_tributario || 'Não informado', 'Mudança solicitada para': p.mudanca_regime || '', 'Situação da mudança': p.mudanca_regime ? (ST_MUD[p.mudanca_status] || [''])[0] : '', 'Pedido em': p.mudanca_solicitada_em ? fmtD(p.mudanca_solicitada_em) : '', 'Observação': p.mudanca_obs || '' })) }] });
   $('#cadf').oninput = e => { S.cadFiltro = e.target.value; clearTimeout(S.cadT); S.cadT = setTimeout(() => { cadParceiros(parcs, contr); const i = $('#cadf'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
   const ligarForm = (alvo, p) => {
     alvo.querySelector('#f-cancelar').onclick = () => { alvo.closest('tr.extra') ? alvo.closest('tr.extra').remove() : (alvo.innerHTML = ''); };
     alvo.querySelector('#f-salvar').onclick = async ev => {
       const b = ev.currentTarget; const g = id => alvo.querySelector(id).value;
-      const dados = { id: p?.id || null, regiao: g('#f-regiao'), nome: g('#f-nome'), razao_social: g('#f-razao'), cnpj: g('#f-cnpj'), tipo: g('#f-tipo'), dia_pagamento: g('#f-dia'), limita_previsto: g('#f-lim'), fluxo: g('#f-fluxo'), email_contato: g('#f-email'), tipo_documento: g('#f-doc'), empresa_gsm: g('#f-emp'), forma_pagamento: g('#f-forma'), dados_pagamento: g('#f-dados'), modelo_capa: g('#f-mod'), quinzenal: alvo.querySelector('#f-quinz').checked };
+      const dados = { id: p?.id || null, regiao: g('#f-regiao'), nome: g('#f-nome'), razao_social: g('#f-razao'), cnpj: g('#f-cnpj'), tipo: g('#f-tipo'), dia_pagamento: g('#f-dia'), limita_previsto: g('#f-lim'), fluxo: g('#f-fluxo'), email_contato: g('#f-email'), tipo_documento: g('#f-doc'), empresa_gsm: g('#f-emp'), forma_pagamento: g('#f-forma'), dados_pagamento: g('#f-dados'), modelo_capa: g('#f-mod'), quinzenal: alvo.querySelector('#f-quinz').checked, antt: g('#f-antt'), antt_rntrc: g('#f-rntrc'), regime_tributario: g('#f-regime'), mudanca_regime: g('#f-mud'), mudanca_status: g('#f-mudst'), mudanca_solicitada_em: g('#f-mudem'), mudanca_obs: g('#f-mudobs') };
       const fixoTxt = g('#f-fixo').trim(); const fixo = fixoTxt === '' ? null : numBR(fixoTxt);
       if (fixo != null && (Number.isNaN(fixo) || fixo < 0)) { alvo.querySelector('#f-msg').innerHTML = '<div class="msg erro">Valor fixo inválido.</div>'; return; }
       b.disabled = true;
@@ -2061,7 +2082,7 @@ async function cadHistorico(parcs) {
   const box = $('#cad'); box.className = '';
   const log = await q(sb.from('cadastro_log').select('*').order('feito_em', { ascending: false }).limit(150));
   const pm = Object.fromEntries(parcs.map(p => [p.id, p]));
-  const CAMPOS = { regiao: 'Região', nome: 'Nome', razao_social: 'Razão social', cnpj: 'CNPJ', tipo: 'Tipo', fluxo: 'Fluxo', limita_previsto: 'Limita previsto', dia_pagamento: 'Pagamento', email_contato: 'E-mail', ativo: 'Ativo', valor_fixo: 'Valor fixo', inicio: 'Início', fim: 'Fim', parceiro_id: 'Parceiro', base_propria: 'Base própria', confirmado: 'Confirmada' };
+  const CAMPOS = { regiao: 'Região', nome: 'Nome', razao_social: 'Razão social', cnpj: 'CNPJ', tipo: 'Tipo', fluxo: 'Fluxo', limita_previsto: 'Limita previsto', dia_pagamento: 'Pagamento', email_contato: 'E-mail', ativo: 'Ativo', valor_fixo: 'Valor fixo', inicio: 'Início', fim: 'Fim', parceiro_id: 'Parceiro', base_propria: 'Base própria', confirmado: 'Confirmada', antt: 'ANTT', antt_rntrc: 'RNTRC', regime_tributario: 'Regime tributário', mudanca_regime: 'Mudança de regime', mudanca_status: 'Situação da mudança', mudanca_solicitada_em: 'Mudança pedida em', mudanca_obs: 'Obs. da mudança' };
   const val = (k, v) => v == null ? '—' : k === 'parceiro_id' ? (pm[v]?.regiao || v) : typeof v === 'boolean' ? (v ? 'sim' : 'não') : String(v);
   const desc = g => {
     const alvo = g.tabela === 'parceiros' ? (g.depois?.regiao || g.antes?.regiao) : g.tabela === 'contratos' ? `Contrato de ${pm[(g.depois || g.antes)?.parceiro_id]?.regiao || '—'}` : `Rota ${g.chave}`;
