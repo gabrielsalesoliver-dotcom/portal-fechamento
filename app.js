@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-0950';
+const VERSAO = '2026.11.25-1005';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3428,11 +3428,13 @@ function projecaoCEO(box, D, proj, valorOp) {
   const fechadas = D.comps.filter(c => c.status === 'fechada' && D.fech.some(f => f.competencia_id === c.id));
   // Kits/Spot por parceiro: média dos últimos 3 meses fechados
   const ult3 = fechadas.slice(-3); const kitsP = {};
-  ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + (n(f.kits) + n(f.fora_umov) + n(f.atend_extra)) / ult3.length; }));
+  ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + n(f.kits) / ult3.length; }));
+  // Fora do Umov e atendimentos extras: média dos últimos 3 meses só do que foi cobrado (+); ajustes de fatura e adiantamento já pago (−) não se repetem
+  const outMed = ult3.length ? ult3.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + Math.max(0, n(f.fora_umov)) + n(f.atend_extra), 0), 0) / ult3.length : 0;
   const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
   // Crescimento de Kits/Spot: tendência linear do ano (R$ a mais por mês, pelos meses fechados do ano) ou % ao mês escolhido
   const fAno = fechadas.filter(c => c.mes.startsWith(String(ano)));
-  const serieK = fAno.map(c => D.fech.filter(f => f.competencia_id === c.id).reduce((a, f) => a + n(f.kits) + n(f.fora_umov) + n(f.atend_extra), 0));
+  const serieK = fAno.map(c => D.fech.filter(f => f.competencia_id === c.id).reduce((a, f) => a + n(f.kits), 0));
   const nk = serieK.length, xm = (nk - 1) / 2, ym = serieK.reduce((a, v) => a + v, 0) / (nk || 1);
   const slope = nk > 2 ? serieK.reduce((a, v, i) => a + (i - xm) * (v - ym), 0) / serieK.reduce((a, _, i) => a + (i - xm) ** 2, 0) : 0;
   const gSel = D.kitsG === undefined ? 'trend' : D.kitsG;
@@ -3452,28 +3454,28 @@ function projecaoCEO(box, D, proj, valorOp) {
     const mes = `${ano}-${String(m).padStart(2, '0')}-01`; const comp = D.comps.find(c => c.mes === mes);
     if (comp && comp.status === 'fechada' && D.fech.some(f => f.competencia_id === comp.id)) {
       const fe = D.fech.filter(f => f.competencia_id === comp.id);
-      linhas.push({ mes, origem: 'Realizado', fixo: null, varv: fe.reduce((a, f) => a + n(f.malote), 0), kits: fe.reduce((a, f) => a + n(f.kits) + n(f.fora_umov) + n(f.atend_extra), 0), desc: fe.reduce((a, f) => a + n(f.descontos), 0), total: fe.reduce((a, f) => a + valorOp(f, 'tudo'), 0) });
+      linhas.push({ mes, origem: 'Realizado', fixo: null, varv: fe.reduce((a, f) => a + n(f.malote), 0), kits: fe.reduce((a, f) => a + n(f.kits), 0), outros: fe.reduce((a, f) => a + n(valorOp(f, 'tudo')) - n(f.malote) - n(f.kits) - n(f.descontos), 0), desc: fe.reduce((a, f) => a + n(f.descontos), 0), total: fe.reduce((a, f) => a + valorOp(f, 'tudo'), 0) });
     } else if (comp && D.fech.some(f => f.competencia_id === comp.id)) {
       // mês em andamento: parceiros já fechados pelo valor do fechamento; os demais pelo último mês fechado
       const fe = Object.fromEntries(D.fech.filter(f => f.competencia_id === comp.id).map(f => [f.parceiro_id, f]));
       const ultC = fechadas.slice(-1)[0]; const ultF = ultC ? D.fech.filter(f => f.competencia_id === ultC.id) : [];
       const ids = new Set([...Object.keys(fe), ...ultF.map(f => f.parceiro_id)]);
-      let mal = 0, kt = 0, ds = 0, tt = 0, nF = 0;
-      ids.forEach(id => { const f = fe[id] || ultF.find(x => x.parceiro_id === id); if (!f) return; if (fe[id]) nF++; mal += n(f.malote); kt += n(f.kits) + n(f.fora_umov) + n(f.atend_extra); ds += n(f.descontos); tt += valorOp(f, 'tudo'); });
-      linhas.push({ mes, origem: `Em andamento (${nF} fechados)`, fixo: null, varv: mal, kits: kt, desc: ds, total: tt });
+      let mal = 0, kt = 0, ot = 0, ds = 0, tt = 0, nF = 0;
+      ids.forEach(id => { const f = fe[id] || ultF.find(x => x.parceiro_id === id); if (!f) return; if (fe[id]) nF++; mal += n(f.malote); kt += n(f.kits); ds += n(f.descontos); tt += valorOp(f, 'tudo'); ot += valorOp(f, 'tudo') - n(f.malote) - n(f.kits) - n(f.descontos); });
+      linhas.push({ mes, origem: `Em andamento (${nF} fechados)`, fixo: null, varv: mal, kits: kt, outros: ot, desc: ds, total: tt });
     } else if (comp && D.prev.some(x => x.competencia_id === comp.id && x.previsto != null)) {
       const pv = D.prev.filter(x => x.competencia_id === comp.id && x.previsto != null).reduce((a, x) => a + n(x.previsto), 0) * exec;
-      linhas.push({ mes, origem: 'Previsto (base do mês)', fixo: null, varv: pv, kits: kitsMes(mes), desc: descMed, total: pv + kitsMes(mes) + descMed });
+      linhas.push({ mes, origem: 'Previsto (base do mês)', fixo: null, varv: pv, kits: kitsMes(mes), outros: outMed, desc: descMed, total: pv + kitsMes(mes) + outMed + descMed });
     } else if (proj.some(r => r.mes === mes)) {
       const rs = proj.filter(r => r.mes === mes); const fx = rs.reduce((a, r) => a + n(r.valor_fixo), 0) * exec, cal = rs.reduce((a, r) => a + n(r.calendarizado), 0) * exec;
-      linhas.push({ mes, origem: 'Projeção', fixo: fx, varv: cal - fx, kits: kitsMes(mes), desc: descMed, total: cal + kitsMes(mes) + descMed });
+      linhas.push({ mes, origem: 'Projeção', fixo: fx, varv: cal - fx, kits: kitsMes(mes), outros: outMed, desc: descMed, total: cal + kitsMes(mes) + outMed + descMed });
     }
   }
   const lin2 = []; const porParc = {};
   for (let m = 1; m <= 12; m++) {
     const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const f = duBase ? diasUteis(mes) / duBase : 1;
     let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0 }); pp.fixo += a; pp.varv += b; pp.kits += (kitsP[r.parceiro_id] || 0) * fatorK(mes); });
-    lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsMes(mes), desc: descMed, total: fx + vv + kitsMes(mes) + descMed });
+    lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsMes(mes), outros: outMed, desc: descMed, total: fx + vv + kitsMes(mes) + outMed + descMed });
   }
   const sum = (ls, k) => ls.reduce((a, x) => a + n(x[k]), 0);
   const realAno = linhas.filter(x => x.origem === 'Realizado'), restAno = linhas.filter(x => x.origem !== 'Realizado');
@@ -3484,9 +3486,9 @@ function projecaoCEO(box, D, proj, valorOp) {
     return `<div title="${nomeMes(x.mes)}: ${BRL(x.total)} (${x.origem}) · malote ${pctS(pMal(x))} · kits/spot ${pctS(1 - pMal(x))}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0"><div style="width:100%;height:${h}px;display:flex;flex-direction:column;border-radius:4px 4px 0 0;overflow:hidden"><div style="height:${hk}px;background:var(--alert)"></div><div style="flex:1;background:${x.origem === 'Realizado' ? 'var(--ink)' : x.mes.startsWith(String(prox)) ? 'var(--num-light, #F0C2CC)' : 'var(--brand)'}"></div></div><span style="font-size:10px;color:var(--muted)">${MES3[+x.mes.slice(5, 7) - 1]}${x.mes.slice(5, 7) === '01' ? '/' + x.mes.slice(2, 4) : ''}</span></div>`; }).join('');
   const compo = (m, k) => { const b = m + k, p = b ? m / b : 0; return `<div style="display:flex;height:8px;border-radius:99px;overflow:hidden;background:var(--rule);min-width:90px"><span style="width:${(p * 100).toFixed(1)}%;background:var(--ink)"></span><span style="flex:1;background:var(--alert)"></span></div><span style="font-size:12px;white-space:nowrap">malote <b>${pctS(p)}</b> · spot <b>${pctS(1 - p)}</b></span>`; };
   const kpi = (r, v, s) => `<div style="flex:1;min-width:170px;border:1px solid var(--rule);border-radius:10px;padding:12px 14px;background:var(--surface)"><span style="font-size:12px;color:var(--muted)">${r}</span><b style="display:block;font-size:22px">${v}</b><span style="font-size:12px;color:var(--muted)">${s}</span></div>`;
-  const tab = (ls) => `<div class="tabela"><table><thead><tr><th>Mês</th><th>Origem</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Descontos</th><th class="n">Total</th><th>Malote × Spot</th></tr></thead><tbody>
-    ${ls.map(x => `<tr><td><b>${nomeMes(x.mes)}</b>${x.du ? `<br><span class="nota">${x.du} dias úteis</span>` : ''}</td><td><span class="pill ${x.origem === 'Realizado' ? 'escuro' : ''}">${x.origem}</span></td><td class="n">${x.fixo == null ? '—' : BRL(x.fixo)}</td><td class="n">${x.fixo == null ? BRL(x.varv) + '<br><span class="nota">malote total</span>' : BRL(x.varv)}</td><td class="n">${BRL(x.kits)}</td><td class="n">${BRL(x.desc)}</td><td class="n"><b>${BRL(x.total)}</b></td><td>${compo(malX(x), n(x.kits))}</td></tr>`).join('')}
-    </tbody><tfoot><tr><td colspan="2"><b>Total</b></td><td class="n"><b>${BRL(sum(ls, 'fixo'))}</b></td><td class="n"><b>${BRL(sum(ls, 'varv'))}</b><br><span class="nota">malote total ${BRL(sum(ls, 'fixo') + sum(ls, 'varv'))}</span></td><td class="n"><b>${BRL(sum(ls, 'kits'))}</b><br><span class="nota">${sum(ls, 'total') ? pctS(sum(ls, 'kits') / sum(ls, 'total')) : '—'} do total</span></td><td class="n"><b>${BRL(sum(ls, 'desc'))}</b></td><td class="n"><b>${BRL(sum(ls, 'total'))}</b></td><td>${compo(sum(ls, 'fixo') + sum(ls, 'varv'), sum(ls, 'kits'))}</td></tr></tfoot></table></div>`;
+  const tab = (ls) => `<div class="tabela"><table><thead><tr><th>Mês</th><th>Origem</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Fora do Umov, extras e ajustes</th><th class="n">Descontos</th><th class="n">Total</th><th>Malote × Spot</th></tr></thead><tbody>
+    ${ls.map(x => `<tr><td><b>${nomeMes(x.mes)}</b>${x.du ? `<br><span class="nota">${x.du} dias úteis</span>` : ''}</td><td><span class="pill ${x.origem === 'Realizado' ? 'escuro' : ''}">${x.origem}</span></td><td class="n">${x.fixo == null ? '—' : BRL(x.fixo)}</td><td class="n">${x.fixo == null ? BRL(x.varv) + '<br><span class="nota">malote total</span>' : BRL(x.varv)}</td><td class="n">${BRL(x.kits)}</td><td class="n">${BRL(x.outros)}</td><td class="n">${BRL(x.desc)}</td><td class="n"><b>${BRL(x.total)}</b></td><td>${compo(malX(x), n(x.kits))}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td colspan="2"><b>Total</b></td><td class="n"><b>${BRL(sum(ls, 'fixo'))}</b></td><td class="n"><b>${BRL(sum(ls, 'varv'))}</b><br><span class="nota">malote total ${BRL(sum(ls, 'fixo') + sum(ls, 'varv'))}</span></td><td class="n"><b>${BRL(sum(ls, 'kits'))}</b><br><span class="nota">${sum(ls, 'total') ? pctS(sum(ls, 'kits') / sum(ls, 'total')) : '—'} do total</span></td><td class="n"><b>${BRL(sum(ls, 'outros'))}</b></td><td class="n"><b>${BRL(sum(ls, 'desc'))}</b></td><td class="n"><b>${BRL(sum(ls, 'total'))}</b></td><td>${compo(sum(ls, 'fixo') + sum(ls, 'varv'), sum(ls, 'kits'))}</td></tr></tfoot></table></div>`;
   box.innerHTML = `<div class="linha" style="gap:10px;flex-wrap:wrap">
       ${kpi(`${ano} fechado (realizado + projeção)`, BRL(tot26), `${realAno.length} meses realizados · ${restAno.length} projetados`)}
       ${kpi(`Restante de ${ano}`, BRL(sum(restAno, 'total')), restAno.map(x => MES3[+x.mes.slice(5, 7) - 1]).join(', ') || '—')}
@@ -3496,15 +3498,15 @@ function projecaoCEO(box, D, proj, valorOp) {
       <div class="alterna" role="group" aria-label="Crescimento de Kits/Spot" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['trend', `Tendência ${ano} (+${BRL(Math.max(0, slope))}/mês)`], ['0', 'Sem crescimento'], ['0.01', '1%/mês'], ['0.02', '2%/mês'], ['0.03', '3%/mês'], ['0.05', '5%/mês']].map(([v, t]) => `<button type="button" class="btn ${String(gSel) === v ? '' : 'sec'} peq" data-kg="${v}">${t}</button>`).join('')}</div>
       <span class="nota">Kits/Spot em ${ano}: ${serieK.map((v, i) => `${MES3[+fAno[i].mes.slice(5, 7) - 1]} ${BRL(v)}`).join(' · ')}. Com a opção escolhida, Dez/${String(prox).slice(2)} fica em ${BRL(kitsMes(`${prox}-12-01`))}/mês.</span></div>
     <div style="display:flex;align-items:flex-end;gap:4px;height:180px;margin:18px 0 6px">${barras}</div>
-    <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox} · amarelo no topo de cada barra: parte de Kits/Spot. O percentual de malote e spot é sobre malote + kits/spot, antes dos descontos.</p>
+    <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox} · amarelo no topo de cada barra: parte de Kits/Spot. O percentual de malote e spot é sobre malote + kits/spot, sem fora do Umov, ajustes e descontos.</p>
     <details open><summary style="cursor:pointer;font-weight:600;margin:10px 0">${ano} mês a mês</summary>${tab(linhas)}</details>
     <details><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} mês a mês</summary>${tab(lin2)}</details>
     <div class="linha" style="margin-top:10px"><button class="btn sec peq" id="pceox">Baixar Excel</button></div>
-    <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot: parte da média dos últimos 3 meses fechados (${BRL(kitsTot)}/mês) e cresce ${gSel === 'trend' ? `${BRL(Math.max(0, slope))} por mês (tendência linear dos meses fechados de ${ano})` : `${pctS(Number(gSel))} ao mês (percentual escolhido)`}. Descontos: média dos últimos 3 meses (${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
+    <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot: parte da média dos últimos 3 meses fechados (${BRL(kitsTot)}/mês) e cresce ${gSel === 'trend' ? `${BRL(Math.max(0, slope))} por mês (tendência linear dos meses fechados de ${ano})` : `${pctS(Number(gSel))} ao mês (percentual escolhido)`}. Kits/Spot é o mesmo valor da Visão geral (só kits e spot). Fora do Umov, extras e ajustes: no realizado, o que foi lançado (serviços fora do Umov, atendimentos extras, ajustes de fatura e adiantamento já pago); nos meses projetados, a média dos últimos 3 meses só do que foi cobrado (${BRL(outMed)}/mês). Descontos: média dos últimos 3 meses (${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
   box.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { D.kitsG = b.dataset.kg; projecaoCEO(box, D, proj, valorOp); });
   $('#pceox').onclick = () => {
     const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
-    const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100, '% Malote': Math.round(pMal(x) * 1000) / 10, '% Kits/Spot': Math.round((1 - pMal(x)) * 1000) / 10 });
+    const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov, extras e ajustes': Math.round(n(x.outros) * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100, '% Malote': Math.round(pMal(x) * 1000) / 10, '% Kits/Spot': Math.round((1 - pMal(x)) * 1000) / 10 });
     baixarXlsx(`Projecao_${ano}_${prox}.xlsx`, { titulo: `Projeção de custo ${ano} e ${prox}`, sub: 'Última milha · parceiros', abas: [
       { nome: `${ano}`, linhas: linhas.map(mesL) }, { nome: `${prox}`, linhas: lin2.map(mesL) },
       { nome: `${prox} por parceiro`, linhas: Object.entries(porParc).map(([id, x]) => ({ 'Parceiro': pm[id]?.nome || '', 'Região': pm[id]?.regiao || '', 'Tipo': pm[id]?.tipo || '', 'Fixo no ano': Math.round(x.fixo * 100) / 100, 'Variável no ano': Math.round(x.varv * 100) / 100, 'Kits/Spot no ano (média)': Math.round(x.kits * 100) / 100, 'Total no ano': Math.round((x.fixo + x.varv + x.kits) * 100) / 100 })).sort((a, b) => b['Total no ano'] - a['Total no ano']) }] });
