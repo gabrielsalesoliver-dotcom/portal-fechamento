@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1120';
+const VERSAO = '2026.11.25-1600';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3458,6 +3458,7 @@ function projecaoCEO(box, D, proj, valorOp) {
   ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { kitsP[f.parceiro_id] = (kitsP[f.parceiro_id] || 0) + n(f.kits) / ult3.length; }));
   // Fora do Umov e atendimentos extras: média dos últimos 3 meses só do que foi cobrado (+); ajustes de fatura e adiantamento já pago (−) não se repetem
   const outMed = ult3.length ? ult3.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + Math.max(0, n(f.fora_umov)) + n(f.atend_extra), 0), 0) / ult3.length : 0;
+  const outP = {}; ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { outP[f.parceiro_id] = (outP[f.parceiro_id] || 0) + (Math.max(0, n(f.fora_umov)) + n(f.atend_extra)) / ult3.length; }));
   const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
   // Crescimento de Kits/Spot: tendência linear do ano (R$ a mais por mês, pelos meses fechados do ano) ou % ao mês escolhido
   const fAno = fechadas.filter(c => c.mes.startsWith(String(ano)));
@@ -3501,9 +3502,12 @@ function projecaoCEO(box, D, proj, valorOp) {
   const lin2 = []; const porParc = {};
   for (let m = 1; m <= 12; m++) {
     const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const f = duBase ? diasUteis(mes) / duBase : 1;
-    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0 }); pp.fixo += a; pp.varv += b; pp.kits += (kitsP[r.parceiro_id] || 0) * fatorK(mes); });
+    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0, outros: 0, meses: [] }); const kk = (kitsP[r.parceiro_id] || 0) * fatorK(mes), oo = outP[r.parceiro_id] || 0; pp.fixo += a; pp.varv += b; pp.kits += kk; pp.outros += oo; pp.meses.push({ mes, fixo: a, varv: b, kits: kk, outros: oo }); });
     lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsMes(mes), outros: outMed, desc: descMed, total: fx + vv + kitsMes(mes) + outMed + descMed });
   }
+  // parceiros só com Kits/Spot ou fora do Umov (sem pontos na carteira)
+  Object.keys({ ...kitsP, ...outP }).filter(id => !porParc[id] && ((kitsP[id] || 0) + (outP[id] || 0)) > 0).forEach(id => { const pp = porParc[id] = { fixo: 0, varv: 0, kits: 0, outros: 0, meses: [] };
+    for (let m = 1; m <= 12; m++) { const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const kk = (kitsP[id] || 0) * fatorK(mes), oo = outP[id] || 0; pp.kits += kk; pp.outros += oo; pp.meses.push({ mes, fixo: 0, varv: 0, kits: kk, outros: oo }); } });
   const sum = (ls, k) => ls.reduce((a, x) => a + n(x[k]), 0);
   const realAno = linhas.filter(x => x.origem === 'Realizado'), restAno = linhas.filter(x => x.origem !== 'Realizado');
   const tot26 = sum(linhas, 'total'), tot27 = sum(lin2, 'total');
@@ -3528,15 +3532,39 @@ function projecaoCEO(box, D, proj, valorOp) {
     <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox} · amarelo no topo de cada barra: parte de Kits/Spot. O percentual de malote e spot é sobre malote + kits/spot, sem fora do Umov, ajustes e descontos.</p>
     <details open><summary style="cursor:pointer;font-weight:600;margin:10px 0">${ano} mês a mês</summary>${tab(linhas)}</details>
     <details><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} mês a mês</summary>${tab(lin2)}</details>
+    <details id="pp27"${D.ppAberto ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} por parceiro</summary><div id="pp27box"></div></details>
     <div class="linha" style="margin-top:10px"><button class="btn sec peq" id="pceox">Baixar Excel</button></div>
     <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot: parte da média dos últimos 3 meses fechados (${BRL(kitsTot)}/mês) e cresce ${gSel === 'trend' ? `${BRL(Math.max(0, slope))} por mês (tendência linear dos meses fechados de ${ano})` : `${pctS(Number(gSel))} ao mês (percentual escolhido)`}. Kits/Spot é o mesmo valor da Visão geral (só kits e spot). Fora do Umov, extras e ajustes: no realizado, o que foi lançado (serviços fora do Umov, atendimentos extras, ajustes de fatura e adiantamento já pago); nos meses projetados, a média dos últimos 3 meses só do que foi cobrado (${BRL(outMed)}/mês). Descontos: média dos últimos 3 meses (${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
   box.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { D.kitsG = b.dataset.kg; projecaoCEO(box, D, proj, valorOp); });
+  // ---- projeção do próximo ano por parceiro ----
+  const pmP = Object.fromEntries(D.parcs.map(p => [p.id, p]));
+  const PP = Object.entries(porParc).map(([id, x]) => { const mal = x.fixo + x.varv, tot = mal + x.kits + x.outros; return { id, p: pmP[id] || {}, ...x, mal, tot, pm: mal + x.kits ? mal / (mal + x.kits) : 1 }; });
+  const totPP = PP.reduce((s, x) => s + x.tot, 0);
+  const ppDesenhar = () => {
+    const el = box.querySelector('#pp27box'); if (!el) return;
+    D.ppSort = D.ppSort || ['tot', -1]; const [sk, sd] = D.ppSort; const f = (D.ppBusca || '').toLowerCase();
+    const vis = PP.filter(x => !f || `${x.p.regiao} ${x.p.nome}`.toLowerCase().includes(f)).sort((a, b) => sk === 'regiao' ? sd * String(a.p.regiao || '').localeCompare(String(b.p.regiao || '')) : sd * (a[sk] - b[sk]));
+    const th = (k, t, c = 'n') => `<th class="${c}" data-pps="${k}" style="cursor:pointer;white-space:nowrap">${t}${sk === k ? (sd < 0 ? ' ↓' : ' ↑') : ''}</th>`;
+    const sumV = k => vis.reduce((s, x) => s + x[k], 0);
+    el.innerHTML = `<div class="linha" style="justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px"><input id="ppbusca" class="peq" placeholder="Buscar parceiro" value="${esc(D.ppBusca || '')}" style="min-width:220px"><span class="nota">${vis.length} parceiros · clique na linha para ver mês a mês · Kits/Spot segue a opção de crescimento escolhida acima</span></div>
+      <div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${th('fixo', 'Malote fixo')}${th('varv', 'Malote variável')}${th('kits', 'Kits/Spot')}${th('outros', 'Fora do Umov e extras')}${th('tot', `Total ${prox}`)}<th class="n">Média/mês</th><th class="n">% do total</th><th>Malote × Spot</th></tr></thead><tbody>
+      ${vis.map(x => `<tr data-ppid="${x.id}" style="cursor:pointer"><td><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.fixo ? BRL(x.fixo) : '—'}</td><td class="n">${x.varv ? BRL(x.varv) : '—'}</td><td class="n">${x.kits ? BRL(x.kits) : '—'}</td><td class="n">${x.outros ? BRL(x.outros) : '—'}</td><td class="n"><b>${BRL(x.tot)}</b></td><td class="n">${BRL(x.tot / 12)}</td><td class="n">${totPP ? pctS(x.tot / totPP) : '—'}</td><td>${compo(x.mal, x.kits)}</td></tr>
+        ${D.ppAb === x.id ? `<tr><td colspan="9" style="background:var(--paper)"><div class="tabela" style="margin:4px 0"><table><thead><tr><th>Mês</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Fora do Umov e extras</th><th class="n">Total</th></tr></thead><tbody>${x.meses.map(m => `<tr><td>${nomeMes(m.mes)}</td><td class="n">${BRL(m.fixo)}</td><td class="n">${BRL(m.varv)}</td><td class="n">${BRL(m.kits)}</td><td class="n">${BRL(m.outros)}</td><td class="n"><b>${BRL(m.fixo + m.varv + m.kits + m.outros)}</b></td></tr>`).join('')}</tbody></table></div></td></tr>` : ''}`).join('')}
+      </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(sumV('fixo'))}</b></td><td class="n"><b>${BRL(sumV('varv'))}</b></td><td class="n"><b>${BRL(sumV('kits'))}</b></td><td class="n"><b>${BRL(sumV('outros'))}</b></td><td class="n"><b>${BRL(sumV('tot'))}</b></td><td class="n"><b>${BRL(sumV('tot') / 12)}</b></td><td class="n">${totPP ? pctS(sumV('tot') / totPP) : '—'}</td><td>${compo(sumV('mal'), sumV('kits'))}</td></tr></tfoot></table></div>
+      <p class="nota">Por parceiro: malote pela carteira de ${nomeMes(ultP)} (fixo do contrato + pontos × frequência × dias úteis), Kits/Spot e fora do Umov pela média dos últimos 3 meses fechados de cada parceiro. Descontos e ajustes de fatura não entram, por isso o total fica um pouco acima do total do quadro mensal.</p>`;
+    el.querySelectorAll('[data-pps]').forEach(t => t.onclick = () => { const k = t.dataset.pps; D.ppSort = [k, D.ppSort[0] === k ? -D.ppSort[1] : (k === 'regiao' ? 1 : -1)]; ppDesenhar(); });
+    el.querySelectorAll('[data-ppid]').forEach(t => t.onclick = () => { D.ppAb = D.ppAb === t.dataset.ppid ? null : t.dataset.ppid; ppDesenhar(); });
+    const bi = el.querySelector('#ppbusca'); bi.oninput = () => { D.ppBusca = bi.value; const pos = bi.selectionStart; ppDesenhar(); const nb = el.querySelector('#ppbusca'); nb.focus(); nb.setSelectionRange(pos, pos); };
+  };
+  ppDesenhar();
+  const dpp = box.querySelector('#pp27'); if (dpp) dpp.ontoggle = () => { D.ppAberto = dpp.open; };
   $('#pceox').onclick = () => {
     const pm = Object.fromEntries(D.parcs.map(p => [p.id, p]));
     const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov, extras e ajustes': Math.round(n(x.outros) * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100, '% Malote': Math.round(pMal(x) * 1000) / 10, '% Kits/Spot': Math.round((1 - pMal(x)) * 1000) / 10 });
     baixarXlsx(`Projecao_${ano}_${prox}.xlsx`, { titulo: `Projeção de custo ${ano} e ${prox}`, sub: 'Última milha · parceiros', abas: [
       { nome: `${ano}`, linhas: linhas.map(mesL) }, { nome: `${prox}`, linhas: lin2.map(mesL) },
-      { nome: `${prox} por parceiro`, linhas: Object.entries(porParc).map(([id, x]) => ({ 'Parceiro': pm[id]?.nome || '', 'Região': pm[id]?.regiao || '', 'Tipo': pm[id]?.tipo || '', 'Fixo no ano': Math.round(x.fixo * 100) / 100, 'Variável no ano': Math.round(x.varv * 100) / 100, 'Kits/Spot no ano (média)': Math.round(x.kits * 100) / 100, 'Total no ano': Math.round((x.fixo + x.varv + x.kits) * 100) / 100 })).sort((a, b) => b['Total no ano'] - a['Total no ano']) }] });
+      { nome: `${prox} por parceiro`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => ({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '', 'Tipo': x.p.tipo || '', 'Malote fixo': Math.round(x.fixo * 100) / 100, 'Malote variável': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov e extras': Math.round(x.outros * 100) / 100, [`Total ${prox}`]: Math.round(x.tot * 100) / 100, 'Média/mês': Math.round(x.tot / 12 * 100) / 100, '% do total': totPP ? Math.round(x.tot / totPP * 1000) / 10 : 0, '% Malote': Math.round(x.pm * 1000) / 10, '% Kits/Spot': Math.round((1 - x.pm) * 1000) / 10 })) },
+      { nome: `${prox} parceiro x mês`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => Object.assign({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '' }, Object.fromEntries(x.meses.map(m => [MES3[+m.mes.slice(5, 7) - 1] + '/' + m.mes.slice(2, 4), Math.round((m.fixo + m.varv + m.kits + m.outros) * 100) / 100])), { [`Total ${prox}`]: Math.round(x.tot * 100) / 100 })) }] });
   };
 }
 
