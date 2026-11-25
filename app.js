@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1612';
+const VERSAO = '2026.11.25-1625';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -576,7 +576,7 @@ async function vPainel() {
   const id = S.compId;
   const [imp, cart, base, envs, divs, fech, nfr, adis, lotes, cad] = await Promise.all([
     q(sb.from('umov_importacoes').select('linhas,malote,kits,sem_parceiro,importado_em').eq('competencia_id', id).eq('status', 'ativa').limit(1)).then(r => r[0]),
-    q(sb.from('carteira_importacoes').select('importado_em,linhas_gravadas').order('importado_em', { ascending: false }).limit(1)).then(r => r[0]),
+    q(sb.rpc('carteira_fonte_info')).catch(() => null),
     q(sb.from('pontos_importacoes').select('importado_em,linhas_lidas,sem_parceiro').eq('competencia_id', id).eq('status', 'ativa').limit(1)).then(r => r[0]),
     todas(() => sb.from('envios').select('id,parceiro_id,status,versao').eq('competencia_id', id).neq('status', 'substituido')),
     todas(() => sb.from('divergencias').select('envio_id,parceiro_id,situacao').eq('competencia_id', id).in('situacao', ['precisa_acao', 'em_analise'])),
@@ -624,7 +624,7 @@ async function vPainel() {
   }
 
   const etapas = [
-    ['Inclusão e cancelamento', !!cart, cart ? `última em ${fmtD(cart.importado_em)}` : 'não importada', '#carteira'],
+    ['Inclusão e cancelamento', !!(cart && cart.ultimo_ok && !cart.ultimo_erro && !cart.pendente), cart?.pendente ? 'cancelamentos esperando aprovação' : cart?.ultimo_erro ? 'robô com erro' : cart?.ultimo_ok ? `lida pelo robô em ${fmtDH(cart.ultimo_ok)}` : 'robô ainda não leu', '#carteira'],
     ['Base de pontos do mês', !!base, base ? `${fmtN(base.linhas_lidas)} pontos` : 'não gerada', '#competencias'],
     ['Liberar aos parceiros', !!c.liberada_parceiros, c.liberada_parceiros ? `desde ${fmtD(c.liberada_em)}` : 'não liberada', '#competencias'],
     ['Umov do mês', !!imp, imp ? `${fmtN(imp.linhas)} linhas` : 'entra no fim do mês', '#umov'],
@@ -914,14 +914,39 @@ function alertaTopo(t) { const d = document.createElement('div'); d.className = 
 async function vCarteira() {
   const m = $('#main');
   m.innerHTML = `
-    <div class="topo"><div><h1>Inclusão e cancelamento</h1><p>Suba a planilha geral de inclusão e cancelamento. Se o mesmo ponto aparece mais de uma vez, vale a linha mais recente (data efetiva, depois data de solicitação). Linhas repetidas de outras abas ou de meses anteriores não são gravadas de novo.</p></div></div>
+    <div class="topo"><div><h1>Inclusão e cancelamento</h1><p>O <b>Robô Leitor da Carteira</b> lê a planilha de Inclusão e Cancelamento direto no Google três vezes por dia e atualiza a carteira de pontos. Se o mesmo ponto aparece mais de uma vez, vale a linha mais recente (data efetiva, depois data de solicitação).</p></div></div>
+    <div id="robo-cart"></div>
     <div id="resumo"></div>
-    ${zonaArquivo('arqc', 'Arraste a planilha de Inclusão e Cancelamento ou clique para escolher', 'Excel (.xlsx), com todas as abas', '.xlsx,.xls')}
+    <details style="margin:4px 0 8px"><summary class="nota" style="cursor:pointer">Importar um arquivo manualmente (só se o robô estiver fora do ar)</summary>
+    ${zonaArquivo('arqc', 'Arraste a planilha de Inclusão e Cancelamento ou clique para escolher', 'Excel (.xlsx), com todas as abas', '.xlsx,.xls')}</details>
     <div id="prevc"></div>
     <div id="histc"></div>`;
   ligarZona('arqc', previaCarteira);
+  roboCarteira();
   await carteiraResumo();
   if (S.cartPrev) desenharPreviaCarteira();
+}
+
+async function roboCarteira(msg) {
+  const box = $('#robo-cart'); if (!box) return;
+  let f = null; try { f = await q(sb.rpc('carteira_fonte_info')); } catch (e) { box.innerHTML = `<div class="msg erro">${esc(e.message)}</div>`; return; }
+  if (!f) { box.innerHTML = ''; return; }
+  const r = f.ultimo_resultado || {}; const p = f.pendente;
+  box.innerHTML = `<section class="bloco" style="border-left:5px solid ${f.ultimo_erro ? 'var(--brand)' : p ? 'var(--alert)' : 'var(--eco)'}">
+    <div class="linha" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0">Robô Leitor da Carteira</h2>
+      <p class="sub" style="margin:4px 0 0">Fonte: Google Planilhas · aba <b>${esc(f.aba)}</b> · lê às 06:08, 12:08 e 18:08 · última leitura ${f.ultima_leitura ? fmtDH(f.ultima_leitura) : '—'}${f.ultimo_ok ? ` · último sucesso ${fmtDH(f.ultimo_ok)}` : ''}</p></div>
+      <button class="btn sec" id="cart-ler">Ler a planilha agora</button></div>
+    ${f.ultimo_erro ? `<div class="msg erro" style="margin-top:10px"><b>O robô não conseguiu ler a planilha:</b> ${esc(f.ultimo_erro)}</div>` : ''}
+    ${p ? `<div class="msg alerta" style="margin-top:10px"><b>${fmtN(p.cancelamentos)} cancelamentos ou suspensões novos</b> (de ${fmtN(p.novos)} movimentos) chegaram de uma vez e estão esperando a sua aprovação antes de mexer na carteira.${(p.clientes || []).length ? `<br><span style="font-size:13px">${p.clientes.map(c => `${esc(c.cliente || '—')} (${fmtN(c.n)})`).join(' · ')}</span>` : ''}<div class="linha" style="margin-top:8px"><button class="btn" id="cart-aprovar">Aprovar e aplicar na carteira</button></div></div>` : ''}
+    ${r.em ? `<p class="nota" style="margin:10px 0 0">Última atualização da carteira: ${fmtDH(r.em)} · ${fmtN(r.novos)} movimento(s) novo(s)${r.carteira ? ` · ${fmtN(r.carteira.novos)} ponto(s) novo(s), ${fmtN(r.carteira.situacao)} mudança(s) de situação, ${fmtN(r.carteira.frequencia)} de frequência` : ''}.</p>` : ''}
+    ${msg ? `<div class="msg ok" style="margin-top:10px">${msg}</div>` : ''}</section>`;
+  const ler = async aprovar => { const b = $(aprovar ? '#cart-aprovar' : '#cart-ler'); if (b) { b.disabled = true; b.textContent = 'Lendo a planilha…'; }
+    try { const x = await q(sb.rpc('carteira_ler_agora', { p_aprovar: !!aprovar }));
+      const t = { sem_mudanca: 'A planilha não mudou desde a última leitura.', nada_novo: 'Planilha lida: nenhum movimento novo.', aguardando_aprovacao: `Chegaram ${fmtN(x.cancelamentos)} cancelamentos de uma vez: esperando a sua aprovação.`, aplicado: `Planilha lida: ${fmtN(x.novos)} movimento(s) novo(s) aplicados na carteira.`, erro: 'Erro na leitura.' }[x.status] || x.status;
+      await carteiraResumo(); roboCarteira(t); atualizarBadges && atualizarBadges(true);
+    } catch (e) { alertaTopo(e.message); roboCarteira(); } };
+  $('#cart-ler').onclick = () => ler(false);
+  const ap = $('#cart-aprovar'); if (ap) ap.onclick = () => { if (confirm('Aplicar todos esses cancelamentos e suspensões na carteira de pontos?')) ler(true); };
 }
 
 async function carteiraResumo() {
@@ -938,7 +963,7 @@ async function carteiraResumo() {
       <div class="kpi neutro"><small>Suspensos</small><b>${fmtN(g('Suspenso'))}</b><span></span></div>
       <div class="kpi ${g('Sem status') ? 'alerta' : 'neutro'}"><small>Sem status</small><b>${fmtN(g('Sem status'))}</b><span>só alteração cadastral ou de frequência</span></div>
     </div>` : '<div class="msg alerta">Nenhuma base de inclusão e cancelamento importada ainda.</div>';
-  $('#histc').innerHTML = hist.length ? `<section class="bloco"><h2>Importações anteriores</h2><div class="tabela"><table>
+  $('#histc').innerHTML = hist.length ? `<section class="bloco"><h2>Leituras e importações</h2><div class="tabela"><table>
     <thead><tr><th>Arquivo</th><th>Importado em</th><th class="n">Lidas</th><th class="n">Novas</th><th class="n">Com alerta</th></tr></thead>
     <tbody>${hist.map(h => `<tr><td>${esc(h.arquivo)}</td><td>${fmtDH(h.importado_em)}</td><td class="n">${fmtN(h.linhas_lidas)}</td><td class="n">${fmtN(h.linhas_novas ?? h.linhas_gravadas)}</td><td class="n">${fmtN(h.linhas_com_alerta)}</td></tr>`).join('')}</tbody></table></div></section>` : '';
 }
