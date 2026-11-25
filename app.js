@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1610';
+const VERSAO = '2026.11.25-1612';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3532,7 +3532,7 @@ function projecaoCEO(box, D, proj, valorOp) {
     <p class="nota">Escuro: realizado · vermelho: projeção ${ano} · rosa: projeção ${prox} · amarelo no topo de cada barra: parte de Kits/Spot. O percentual de malote e spot é sobre malote + kits/spot, sem fora do Umov, ajustes e descontos.</p>
     <details open><summary style="cursor:pointer;font-weight:600;margin:10px 0">${ano} mês a mês</summary>${tab(linhas)}</details>
     <details><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} mês a mês</summary>${tab(lin2)}</details>
-    <details id="pp27"${D.ppAberto ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} por parceiro</summary><div id="pp27box"></div></details>
+    <details id="pp27"${D.ppAberto !== false ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;margin:10px 0">${prox} por parceiro</summary><div id="pp27box"></div></details>
     <div class="linha" style="margin-top:10px"><button class="btn sec peq" id="pceox">Baixar Excel</button></div>
     <p class="nota">Como é calculado: meses fechados usam o realizado. Meses com base gerada usam o previsto do portal. Os demais usam a projeção da carteira de hoje (frequência de cada ponto × dias úteis × valor unitário, mais o fixo de cada contrato). ${prox}: a carteira de ${nomeMes(ultP)} repetida, com a parte variável ajustada pelos dias úteis de cada mês (feriados nacionais) e o fixo constante. Malote projetado × ${(exec * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% (o que foi pago de malote em relação ao calendarizado nos últimos 3 meses fechados). Kits/Spot: parte da média dos últimos 3 meses fechados (${BRL(kitsTot)}/mês) e cresce ${gSel === 'trend' ? `${BRL(Math.max(0, slope))} por mês (tendência linear dos meses fechados de ${ano})` : `${pctS(Number(gSel))} ao mês (percentual escolhido)`}. Kits/Spot é o mesmo valor da Visão geral (só kits e spot). Fora do Umov, extras e ajustes: no realizado, o que foi lançado (serviços fora do Umov, atendimentos extras, ajustes de fatura e adiantamento já pago); nos meses projetados, a média dos últimos 3 meses só do que foi cobrado (${BRL(outMed)}/mês). Descontos: média dos últimos 3 meses (${BRL(descMed)}/mês). Não considera reajustes, novos clientes, cancelamentos futuros ainda não cadastrados nem as reduções de "Onde negociar".</p>`;
   box.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { D.kitsG = b.dataset.kg; projecaoCEO(box, D, proj, valorOp); });
