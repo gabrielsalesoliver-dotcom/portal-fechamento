@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1110';
+const VERSAO = '2026.11.25-1120';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -1939,14 +1939,14 @@ async function vCadastro() {
   return cadHistorico(parcs);
 }
 
-const REGIMES = ['MEI', 'Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'Híbrido', 'Pessoa física'];
+const REGIMES = ['MEI', 'Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'Híbrido', 'Pessoa física', 'Fora do Simples'];
 const ANTT_ST = { ativo: ['Ativa', 'escuro', 'ANTT ✓'], suspenso: ['Suspensa', 'marca', 'ANTT suspensa'], pendente: ['Pendente', 'alerta', 'ANTT pendente'], nao: ['Sem cadastro', 'marca', 'Sem ANTT'] };
 const ST_MUD = { solicitada: ['Solicitada', 'alerta'], em_andamento: ['Em andamento', 'marca'], concluida: ['Concluída', 'escuro'], recusada: ['Não vai mudar', ''] };
 function fiscalHtml(p) {
   const tt = esc([p.antt_rntrc ? 'RNTRC ' + p.antt_rntrc : '', p.antt_pef === true ? 'Pagamento Eletrônico de Frete obrigatório (art. 5-A)' : p.antt_pef === false ? 'Sem obrigação de Pagamento Eletrônico de Frete' : '', p.antt_obs || ''].filter(Boolean).join(' · '));
   const antt = (ANTT_ST[p.antt] ? `<span class="pill ${ANTT_ST[p.antt][1]}" title="${tt}">${ANTT_ST[p.antt][2]}</span>` : '<span class="pill">ANTT ?</span>') + (p.antt_pef ? ' <span class="pill alerta" title="Pagamento Eletrônico de Frete obrigatório (art. 5-A da Lei 11.442/2007)">PEF</span>' : '');
   const sai = /EXCLUS[ÃA]O (DO SIMPLES )?PREVISTA/i.test(p.regime_obs || '') ? ` <span class="pill alerta" title="${esc(p.regime_obs)}">sai do ${p.regime_tributario === 'MEI' ? 'MEI' : 'Simples'} em 31/12/26</span>` : '';
-  const reg = (p.regime_tributario ? `<span style="font-size:12px" title="${esc(p.regime_obs || '')}">${esc(p.regime_tributario)}</span>` : `<span class="nota" title="${esc(p.regime_obs || '')}">regime ?</span>`) + sai;
+  const reg = (p.regime_tributario === 'Fora do Simples' ? `<span style="font-size:12px" title="${esc(p.regime_obs || '')}">Fora do Simples</span> <span class="pill alerta" title="${esc(p.regime_obs || '')}">confirmar Presumido/Real</span>` : p.regime_tributario ? `<span style="font-size:12px" title="${esc(p.regime_obs || '')}">${esc(p.regime_tributario)}</span>` : `<span class="nota" title="${esc(p.regime_obs || '')}">regime ?</span>`) + sai;
   const mud = p.mudanca_regime ? `<br><span class="pill ${(ST_MUD[p.mudanca_status] || [])[1] || ''}" title="${esc((p.mudanca_solicitada_em ? 'Pedido em ' + fmtD(p.mudanca_solicitada_em) : '') + (p.mudanca_obs ? ' · ' + p.mudanca_obs : ''))}">→ ${esc(p.mudanca_regime)} · ${(ST_MUD[p.mudanca_status] || [p.mudanca_status])[0]}</span>` : '';
   return `${antt} ${reg}${mud}`;
 }
