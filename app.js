@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-0800';
+const VERSAO = '2026.11.25-0915';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -4964,7 +4964,7 @@ const haTxt = iso => { if (!iso) return '—'; const m = Math.round((Date.now() 
 const emTxt = d => { if (!d) return '—'; const m = Math.round((d - Date.now()) / 60000); return m < 1 ? 'em instantes' : m < 60 ? `em ${m} min` : m < 1440 ? `em ${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + ' min' : ''}` : `em ${Math.floor(m / 1440)} dia(s)`; };
 async function vTorre() {
   const m = $('#main'); clearInterval(S.torreTimer);
-  if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Todos os robôs agendados no Supabase: se estão rodando, quando rodaram, quanto demoraram e se alguma execução falhou. A tela se atualiza sozinha a cada minuto.</p></div>
+  if (!m.querySelector('#torre')) m.innerHTML = `<div class="topo"><div><h1>Torre de controle</h1><p>Os robôs que trabalham sozinhos no portal: o que está funcionando, o que rodou nas últimas 24 horas e o que vem a seguir.</p></div>
     <div class="linha"><button class="btn marca peq" id="tr-tv" style="min-height:44px">Modo TV · operação</button><button class="btn marca peq" id="tr-tvd" style="min-height:44px">Modo TV · diretoria</button><button class="btn marca peq" id="tr-tvg" style="min-height:44px">Modo TV · carrossel geral</button><button class="btn sec peq" id="tr-atu" style="min-height:44px">Atualizar agora</button></div></div><div id="torre"><div class="carregando">Carregando…</div></div>`;
   $('#tr-atu').onclick = () => vTorre();
   $('#tr-tv').onclick = () => { location.hash = '#tv'; };
@@ -5001,50 +5001,106 @@ async function avisoMemoria() {
   const nv = memNivel(S.mem); const m = $('#main'); if (!m || nv === 'ok' || S.view === 'torre' || $('#mem-aviso')) return;
   const d = S.mem.dias_ate_limite_db; m.insertAdjacentHTML('afterbegin', `<div id="mem-aviso" class="msg ${nv === 'critico' ? 'erro' : 'alerta'}" style="margin-bottom:14px">Memória do banco: <b>${Math.round(100 * S.mem.db_bytes / S.mem.db_limite)}%</b> usada${d != null ? `, limite em cerca de ${d} dias` : ''}. <a href="#torre">Ver na Torre de controle</a></div>`);
 }
+// ---------- Torre de controle: visual (painel, linha do tempo de 24 h, cartões e desligados) ----------
+const COR_ST = { ok: 'var(--eco)', rodando: 'var(--off2)', falha: 'var(--brand)', atrasado: 'var(--alert)', interrompido: 'var(--alert)', aguardando: 'var(--muted)', pausado: 'var(--off)', concluido: 'var(--eco)' };
+const COR_EXEC = ['var(--eco)', 'var(--brand)', 'var(--alert)', 'var(--off2)'];
+const ICO_ROBO = j => /^uso-banco/.test(j) ? '<path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'
+  : /^anonimizar/.test(j) ? '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/>'
+  : /base/.test(j) ? '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>'
+  : /locais/.test(j) ? '<path d="M12 21s-7-6.2-7-11a7 7 0 0114 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>'
+  : '<path d="M20 12a8 8 0 01-14.3 4.9M4 12A8 8 0 0118.3 7.1"/><path d="M18 3v4.5h-4.5M6 21v-4.5h4.5"/>';
+const icoRobo = (j, cor) => `<span class="tr-ico" style="color:${cor}"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICO_ROBO(j)}</svg></span>`;
+const hhmm = d => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function anelTorre(ok, total, cor) {
+  const r = 52, c = 2 * Math.PI * r, f = total ? ok / total : 1;
+  return `<svg viewBox="0 0 130 130" width="130" height="130" role="img" aria-label="${ok} de ${total} robôs ativos funcionando">
+    <circle cx="65" cy="65" r="${r}" fill="none" stroke="var(--rule)" stroke-width="12"/>
+    <circle cx="65" cy="65" r="${r}" fill="none" stroke="${cor}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 65 65)"/>
+    <text x="65" y="64" text-anchor="middle" font-size="30" font-weight="700" fill="var(--ink)">${ok}/${total}</text>
+    <text x="65" y="86" text-anchor="middle" font-size="12" fill="var(--muted)">robôs ok</text></svg>`;
+}
+// linha do tempo: 24 h para trás + 6 h para frente, uma faixa por robô ativo
+function linhaTempoTorre(lista, agora) {
+  const W0 = agora - 24 * 3600e3, W1 = agora + 6 * 3600e3, sp = W1 - W0, x = t => Math.max(0, Math.min(100, (t - W0) / sp * 100));
+  const marcas = []; const h = new Date(W0); h.setMinutes(0, 0, 0); h.setHours(h.getHours() + 1);
+  for (; +h < W1; h.setHours(h.getHours() + 1)) if (h.getHours() % 3 === 0) marcas.push(+h);
+  const faixa = ({ r, s }) => {
+    const L = r.linha24 || []; let ex = '';
+    if (L.length > 150) { // robô de minuto em minuto: vira uma faixa contínua
+      ex = `<span class="tr-band" style="left:${x(L[0][0] * 1000)}%;width:${x(L[L.length - 1][0] * 1000) - x(L[0][0] * 1000)}%" title="${fmtN(L.length)} execuções nas últimas 24 h"></span>`
+        + L.filter(e => e[1] !== 0 && e[2] !== 0).map(e => `<span class="tr-ex" style="left:${x(e[0] * 1000)}%;background:${COR_EXEC[e[2]]}"></span>`).join('');
+    } else ex = L.map(e => { const t = e[0] * 1000, w = Math.max(.35, e[1] * 1000 / sp * 100);
+      return `<span class="tr-ex" style="left:${x(t)}%;width:${w}%;background:${COR_EXEC[e[2]]}" title="${esc(fmtDH(new Date(t).toISOString()) + ' · ' + ['ok', 'falhou', 'interrompida', 'rodando'][e[2]] + ' · ' + durTxt(e[1]))}"></span>`; }).join('');
+    // próximas execuções (contorno)
+    let fut = ''; if (r.active) { const P = []; let d = new Date(agora); for (let i = 0; i < 40; i++) { d = proximaCron(r.schedule, d); if (!d || +d > W1) break; P.push(+d); }
+      fut = P.length >= 40 ? `<span class="tr-band fut" style="left:${x(agora)}%;width:${100 - x(agora)}%" title="roda a cada minuto"></span>` : P.map(t => `<span class="tr-fut" style="left:${x(t)}%" title="${esc('previsto ' + fmtDH(new Date(t).toISOString()))}"></span>`).join(''); }
+    return `<div class="tr-lane"><div class="tr-lane-nome"><i class="tr-dot ${s[0]}" style="background:${s[2]}"></i><span title="${esc(r.titulo)}">${esc(r.titulo.replace(/^Umov · /, ''))}</span></div>
+      <div class="tr-lane-trilho">${marcas.map(t => `<span class="tr-grade" style="left:${x(t)}%"></span>`).join('')}${ex}${fut}</div></div>`;
+  };
+  return `<section class="bloco tr-linha"><div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Últimas 24 horas</h2>
+      <div class="tr-leg"><span><i style="background:var(--eco)"></i>ok</span><span><i style="background:var(--brand)"></i>falhou</span><span><i style="background:var(--alert)"></i>interrompida</span><span><i class="vazado"></i>próximas</span></div></div>
+    <div class="tr-lanes">${lista.map(faixa).join('')}
+      <div class="tr-lane tr-eixo"><div class="tr-lane-nome"></div><div class="tr-lane-trilho">${marcas.map(t => `<span class="tr-hora" style="left:${x(t)}%">${hhmm(t).slice(0, 2)}h</span>`).join('')}<span class="tr-agora-txt" style="left:${x(agora)}%">agora</span></div></div>
+      <span class="tr-agora" style="left:calc(var(--tr-nome) + (100% - var(--tr-nome)) * ${(x(agora) / 100).toFixed(4)})"></span></div></section>`;
+}
+function cartaoRobo({ r, s }, agora) {
+  const u = r.ultima || {}, prox = r.active ? proximaCron(r.schedule) : null, aberto = S.abertoRobo[r.jobid];
+  const ini = u.inicio ? +new Date(u.inicio) : null, frac = ini && prox ? Math.max(0, Math.min(1, (agora - ini) / (+prox - ini))) : 0;
+  const H = (r.historico || []).slice().reverse(), dmax = Math.max(1, ...H.map(h => h.fim ? (new Date(h.fim) - new Date(h.inicio)) / 1000 : 0));
+  const barras = H.map(h => { const d = h.fim ? (new Date(h.fim) - new Date(h.inicio)) / 1000 : (agora - new Date(h.inicio)) / 1000; const it = h.status === 'failed' && RX_INTERROMPIDO.test(h.msg || '');
+    return `<span style="height:${Math.max(8, Math.min(100, d / dmax * 100)).toFixed(0)}%;background:${h.status === 'succeeded' ? 'var(--eco)' : it ? 'var(--alert)' : h.status === 'failed' ? 'var(--brand)' : 'var(--off2)'}" title="${esc(fmtDH(h.inicio) + ' · ' + durTxt(d) + (h.status === 'failed' && h.msg ? ' · ' + h.msg : ''))}"></span>`; }).join('');
+  return `<article class="tr-card${aberto ? ' aberto' : ''}" style="--st:${s[2]}">
+    <header>${icoRobo(r.jobname, s[2])}<div style="flex:1;min-width:0"><h3>${esc(r.titulo)}</h3><span class="tr-st"><i class="tr-dot ${s[0]}" style="background:${s[2]}"></i>${s[1]}</span></div></header>
+    <p class="tr-desc">${esc(r.descricao || '')}</p><p class="tr-freq">⏱ ${esc(r.frequencia || r.schedule)}</p>
+    <div class="tr-prox"><div class="linha" style="justify-content:space-between;gap:8px"><small>Próxima execução</small><b>${s[0] === 'rodando' ? 'rodando há ' + durTxt((agora - ini) / 1000) : emTxt(prox)}</b></div>
+      <div class="tr-barra"><span style="width:${(frac * 100).toFixed(1)}%"></span></div>
+      <div class="tr-meta"><span>última ${ini ? hhmm(ini) : '—'}</span><span>${prox ? 'próxima ' + (prox - agora > 864e5 ? fmtDH(prox.toISOString()) : hhmm(prox)) : ''}</span></div></div>
+    ${H.length ? `<div class="tr-mini" aria-label="Duração das últimas execuções">${barras}</div><div class="tr-meta" style="margin-top:-6px"><span>duração das últimas ${H.length} execuções</span><span>média ${durTxt(r.duracao_media_s)}</span></div>` : `<div class="tr-mini vazio">ainda não rodou</div>`}
+    <div class="tr-nums"><div><b class="eco">${fmtN(r.ok_24h)}</b><small>ok em 24 h</small></div><div><b style="${r.falhas_24h ? 'color:var(--brand)' : ''}">${r.falhas_24h}</b><small>falha(s)</small></div><div><b>${haTxt(r.ultimo_ok)}</b><small>último sucesso</small></div></div>
+    ${u.status === 'failed' ? (RX_INTERROMPIDO.test(u.msg || '') ? `<div class="msg alerta" style="margin:0">Última execução interrompida manualmente (para aplicar uma mudança). Não é falha; a próxima retoma de onde parou.</div>` : `<div class="msg erro" style="margin:0"><b>Erro:</b> ${esc(u.msg || 'sem mensagem')}</div>`) : ''}
+    <footer><button class="btn sec peq" data-trh="${r.jobid}">${aberto ? 'Fechar histórico' : 'Histórico'}</button><button class="btn sec peq" data-tra="${r.jobid}" data-on="0">Pausar</button></footer>
+    ${aberto ? `<div class="tabela"><table><thead><tr><th>Início</th><th class="n">Duração</th><th>Resultado</th><th>Mensagem</th></tr></thead><tbody>${(r.historico || []).map(h => { const it = h.status === 'failed' && RX_INTERROMPIDO.test(h.msg || '');
+      return `<tr><td style="white-space:nowrap">${fmtDH(h.inicio)}</td><td class="n">${h.fim ? durTxt((new Date(h.fim) - new Date(h.inicio)) / 1000) : '—'}</td><td><span class="pill ${it ? 'alerta' : h.status === 'failed' ? 'marca' : h.status === 'succeeded' ? '' : 'alerta'}">${h.status === 'succeeded' ? 'OK' : it ? 'Interrompido' : h.status === 'failed' ? 'Falhou' : 'Rodando'}</span></td><td style="font-size:13px;max-width:460px;word-break:break-word">${esc(h.msg || '')}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
+  </article>`;
+}
 function desenharTorre() {
-  const T = S.torre, box = $('#torre'); if (!box) return; const R = T.robos || [];
+  const T = S.torre, box = $('#torre'); if (!box) return; const R = T.robos || [], agora = Date.now();
   const st = R.map(r => ({ r, s: statusRobo(r) })); const cont = k => st.filter(x => x.s[0] === k).length;
+  const ativos = st.filter(x => x.r.active), off = st.filter(x => !x.r.active);
   const prob = cont('falha') + cont('atrasado'); S.abertoRobo = S.abertoRobo || {};
+  const okA = ativos.filter(x => ['ok', 'rodando', 'aguardando', 'interrompido'].includes(x.s[0])).length;
+  const corG = cont('falha') ? 'var(--brand)' : cont('atrasado') ? 'var(--alert)' : 'var(--eco)';
+  const fila = ativos.map(x => ({ x, p: proximaCron(x.r.schedule) })).filter(o => o.p && !/\* \* \* \* \*/.test(o.x.r.schedule)).sort((a, b) => a.p - b.p)[0];
   const U = T.umov || {}; const ul = (U.logs || [])[0];
+  const chip = (k, n, t) => `<span class="tr-chip${n ? '' : ' zero'}"><i style="background:${COR_ST[k]}"></i><b>${n}</b> ${t}</span>`;
   box.innerHTML = `
-  <div class="kpis">
-    <div class="kpi ${prob ? '' : 'eco'}"><small>Situação geral</small><b style="${prob ? 'color:var(--brand)' : ''}">${prob ? `${prob} com problema` : 'Tudo certo'}</b><span>verificado ${fmtDH(T.agora)}</span></div>
-    <div class="kpi eco"><small>Funcionando</small><b>${cont('ok') + cont('rodando')}</b><span>${cont('rodando') ? cont('rodando') + ' rodando agora' : 'de ' + R.filter(r => r.active).length + ' ativos'}</span></div>
-    <div class="kpi ${cont('falha') ? '' : 'neutro'}"><small>Com falha</small><b style="${cont('falha') ? 'color:var(--brand)' : ''}">${cont('falha')}</b><span>${R.reduce((a, r) => a + (+r.falhas_24h || 0), 0)} falha(s) nas últimas 24 h</span></div>
-    <div class="kpi ${cont('atrasado') ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${cont('atrasado')}</b><span>sem rodar no prazo</span></div>
-    <div class="kpi neutro"><small>Pausados</small><b>${cont('pausado')}</b><span>${cont('concluido') ? cont('concluido') + ' concluído(s) · ' : ''}${cont('aguardando') ? cont('aguardando') + ' aguardando 1ª execução' : 'desligados'}</span></div>
-  </div>
+  <section class="bloco tr-hero" style="--st:${corG}">
+    ${anelTorre(okA, ativos.length, corG)}
+    <div class="tr-hero-txt"><small class="eyebrow" style="color:var(--muted)">Situação dos robôs</small>
+      <h2>${prob ? (prob > 1 ? `${prob} robôs precisam de atenção` : '1 robô precisa de atenção') : 'Tudo funcionando'}</h2>
+      <p class="sub" style="margin:2px 0 10px">Verificado às ${hhmm(T.agora)} · a tela se atualiza sozinha a cada minuto${fila ? ` · próximo a rodar: <b>${esc(fila.x.r.titulo.replace(/^Umov · /, ''))}</b> ${emTxt(fila.p)}` : ''}</p>
+      <div class="tr-chips">${chip('ok', cont('ok'), 'funcionando')}${chip('rodando', cont('rodando'), 'rodando agora')}${chip('falha', cont('falha'), 'com falha')}${chip('atrasado', cont('atrasado'), 'atrasado(s)')}${chip('pausado', off.length, 'desligado(s)')}</div></div>
+    <div class="tr-hero-umov"><small>Umov · última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${fmtN(U.total)} atendimentos lidos · fila ${fmtN(U.fila)}</span></div>
+  </section>
+  ${linhaTempoTorre(ativos, agora)}
+  <div class="tr-grid">${ativos.map(o => cartaoRobo(o, agora)).join('')}</div>
+  ${off.length ? `<details class="bloco tr-off"${S.trOffAberto ? ' open' : ''}><summary><h2 style="display:inline;margin:0">Robôs desligados</h2> <span class="nota">${off.length} · cargas que já terminaram ou robôs pausados</span></summary>
+    <div class="tr-off-lista">${off.map(({ r, s }) => `<div class="tr-off-item">${icoRobo(r.jobname, s[2])}<div style="flex:1;min-width:0"><b>${esc(r.titulo)}</b><div class="nota">${s[1]} · última execução ${r.ultima ? haTxt(r.ultima.inicio) : '—'}</div></div><button class="btn sec peq" data-tra="${r.jobid}" data-on="1">Ativar</button></div>`).join('')}</div></details>` : ''}
   <div id="tr-mem">${S.mem ? memoriaHtml(S.mem, true) : ''}</div>
-  <div style="display:flex;flex-direction:column;gap:14px">${st.map(({ r, s }) => { const u = r.ultima || {}; const prox = r.active ? proximaCron(r.schedule) : null;
-    const dur = u.fim && u.inicio ? (new Date(u.fim) - new Date(u.inicio)) / 1000 : null; const H = (r.historico || []).slice().reverse();
-    return `<section class="bloco" style="border-left:5px solid ${s[2]};margin:0">
-      <div class="linha" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
-        <div style="flex:1;min-width:260px"><div class="linha" style="gap:10px;flex-wrap:wrap"><h2 style="margin:0">${esc(r.titulo)}</h2>
-          <span class="pill" style="background:${s[2]};color:#fff;font-weight:600">${s[0] === 'rodando' ? '● ' : ''}${s[1]}</span></div>
-          <p class="sub" style="margin:6px 0 0">${esc(r.descricao || '')}</p><p class="nota" style="margin:4px 0 0">${esc(r.frequencia || r.schedule)} · <code>${esc(r.jobname)}</code></p></div>
-        <div class="linha" style="gap:8px"><button class="btn sec peq" data-trh="${r.jobid}">${S.abertoRobo[r.jobid] ? 'Fechar histórico' : 'Histórico'}</button>
-          <button class="btn sec peq" data-tra="${r.jobid}" data-on="${r.active ? 0 : 1}">${r.active ? 'Pausar' : 'Ativar'}</button></div></div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px;font-size:14px">
-        <div><small class="nota">Última execução</small><br><b>${u.inicio ? haTxt(u.inicio) : '—'}</b><br><span class="nota">${u.inicio ? fmtDH(u.inicio) : ''}</span></div>
-        <div><small class="nota">Duração</small><br><b>${u.status === 'running' ? 'rodando há ' + durTxt((Date.now() - new Date(u.inicio)) / 1000) : durTxt(dur)}</b><br><span class="nota">média ${durTxt(r.duracao_media_s)}</span></div>
-        <div><small class="nota">Próxima execução</small><br><b>${r.active ? emTxt(prox) : 'pausado'}</b><br><span class="nota">${prox ? fmtDH(prox.toISOString()) : ''}</span></div>
-        <div><small class="nota">Últimas 24 h</small><br><b class="eco">${r.ok_24h} ok</b> · <b style="${r.falhas_24h ? 'color:var(--brand)' : ''}">${r.falhas_24h} falha(s)</b>${r.interrompidos_24h ? ` · ${r.interrompidos_24h} interrompida(s)` : ''}<br><span class="nota">último sucesso ${haTxt(r.ultimo_ok)}</span></div>
-      </div>
-      ${H.length ? `<div style="display:flex;gap:3px;margin-top:12px;align-items:center" aria-label="Últimas execuções">${H.map(h => `<span title="${esc(fmtDH(h.inicio) + ' · ' + (h.status === 'succeeded' ? 'ok' : h.status === 'failed' ? 'falhou' : h.status) + (h.status === 'failed' && h.msg ? ' · ' + h.msg : ''))}" style="width:14px;height:22px;border-radius:3px;background:${h.status === 'succeeded' ? 'var(--eco)' : h.status === 'failed' && !RX_INTERROMPIDO.test(h.msg || '') ? 'var(--brand)' : 'var(--alert)'}"></span>`).join('')}<span class="nota" style="margin-left:6px">últimas ${H.length} execuções (mais recente à direita)</span></div>` : ''}
-      ${u.status === 'failed' ? (RX_INTERROMPIDO.test(u.msg || '') ? `<div class="msg alerta" style="margin-top:12px"><b>Última execução interrompida manualmente</b> (cancelada para aplicar uma mudança). Não é falha do robô; a próxima execução retoma de onde parou.</div>` : `<div class="msg erro" style="margin-top:12px"><b>Erro da última execução:</b> ${esc(u.msg || 'sem mensagem')}</div>`) : ''}
-      ${S.abertoRobo[r.jobid] ? `<div class="tabela" style="margin-top:12px"><table><thead><tr><th>Início</th><th>Fim</th><th class="n">Duração</th><th>Resultado</th><th>Mensagem</th></tr></thead><tbody>${(r.historico || []).map(h => `<tr><td style="white-space:nowrap">${fmtDH(h.inicio)}</td><td style="white-space:nowrap">${h.fim ? fmtDH(h.fim) : '—'}</td><td class="n">${h.fim ? durTxt((new Date(h.fim) - new Date(h.inicio)) / 1000) : '—'}</td>
-        <td>${(() => { const it = h.status === 'failed' && RX_INTERROMPIDO.test(h.msg || ''); return `<span class="pill ${it ? 'alerta' : h.status === 'failed' ? 'marca' : h.status === 'succeeded' ? '' : 'alerta'}">${h.status === 'succeeded' ? 'OK' : it ? 'Interrompido' : h.status === 'failed' ? 'Falhou' : 'Rodando'}</span>`; })()}</td><td style="font-size:13px;max-width:460px;word-break:break-word">${esc(h.msg || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}
-    </section>`; }).join('')}</div>
   <section class="bloco"><h2>Umov · o que o robô já trouxe</h2>
     <div class="kpis" style="margin-top:8px">
       <div class="kpi neutro"><small>Atendimentos lidos</small><b>${fmtN(U.total)}</b><span>${fmtN(U.dias)} dia(s) com detalhe</span></div>
       <div class="kpi ${U.fila > 3000 ? 'alerta' : 'neutro'}"><small>Fila para detalhar</small><b>${fmtN(U.fila)}</b><span>${U.fila ? 'vão entrar nas próximas execuções' : 'em dia'}</span></div>
       <div class="kpi ${U.sem_parceiro ? 'alerta' : 'neutro'}"><small>Sem parceiro</small><b>${fmtN(U.sem_parceiro)}</b><span>ponto fora da carteira e agente sem vínculo</span></div>
       <div class="kpi neutro"><small>Última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${ul ? `${fmtN(ul.chamadas)} consultas ao Umov` : ''}</span></div></div>
-    ${(U.logs || []).length ? `<div class="tabela" style="margin-top:10px"><table><thead><tr><th>Execução</th><th>Datas lidas</th><th class="n">Duração</th><th class="n">Consultas</th><th class="n">Listados</th><th class="n">Detalhados</th><th>Erros</th></tr></thead><tbody>
-      ${U.logs.map(l => `<tr><td style="white-space:nowrap">${fmtDH(l.inicio)}</td><td>${esc(l.datas || '')}</td><td class="n">${l.fim ? durTxt((new Date(l.fim) - new Date(l.inicio)) / 1000) : '—'}</td><td class="n">${fmtN(l.chamadas)}</td><td class="n">${fmtN(l.listados)}</td><td class="n">${fmtN(l.detalhes)}</td><td style="font-size:13px">${l.erros ? `<span style="color:var(--brand)">${esc(l.erros)}</span>` : '<span class="eco">sem erros</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${(U.logs || []).length ? (() => { const L = U.logs.slice().reverse(), mx = Math.max(1, ...L.map(l => +l.listados || 0));
+      return `<div class="tr-umov-graf">${L.map(l => `<div title="${esc(fmtDH(l.inicio) + ' · ' + fmtN(l.listados) + ' listados · ' + fmtN(l.detalhes) + ' detalhados' + (l.erros ? ' · erro: ' + l.erros : ''))}"><span class="lst" style="height:${(100 * (+l.listados || 0) / mx).toFixed(0)}%"><span class="det" style="height:${l.listados ? (100 * (+l.detalhes || 0) / l.listados).toFixed(0) : 0}%;background:${l.erros ? 'var(--brand)' : 'var(--eco)'}"></span></span><small>${hhmm(l.inicio)}</small></div>`).join('')}</div>
+      <div class="tr-leg" style="margin-top:6px"><span><i style="background:var(--rule)"></i>atendimentos listados na leitura</span><span><i style="background:var(--eco)"></i>detalhados (novos ou alterados)</span><span><i style="background:var(--brand)"></i>leitura com erro</span></div>
+      <details style="margin-top:10px"><summary class="nota" style="cursor:pointer">Ver tabela das leituras</summary><div class="tabela" style="margin-top:8px"><table><thead><tr><th>Execução</th><th>Datas lidas</th><th class="n">Duração</th><th class="n">Consultas</th><th class="n">Listados</th><th class="n">Detalhados</th><th>Erros</th></tr></thead><tbody>
+      ${U.logs.map(l => `<tr><td style="white-space:nowrap">${fmtDH(l.inicio)}</td><td>${esc(l.datas || '')}</td><td class="n">${l.fim ? durTxt((new Date(l.fim) - new Date(l.inicio)) / 1000) : '—'}</td><td class="n">${fmtN(l.chamadas)}</td><td class="n">${fmtN(l.listados)}</td><td class="n">${fmtN(l.detalhes)}</td><td style="font-size:13px">${l.erros ? `<span style="color:var(--brand)">${esc(l.erros)}</span>` : '<span class="eco">sem erros</span>'}</td></tr>`).join('')}</tbody></table></div></details>`; })() : ''}
   </section>`;
   box.querySelectorAll('[data-trh]').forEach(b => b.onclick = () => { S.abertoRobo[b.dataset.trh] = !S.abertoRobo[b.dataset.trh]; desenharTorre(); });
+  const dt = box.querySelector('.tr-off'); if (dt) dt.ontoggle = () => { S.trOffAberto = dt.open; };
   box.querySelectorAll('[data-tra]').forEach(b => b.onclick = async () => { const on = b.dataset.on === '1';
     if (!on && !confirm('Pausar este robô? Ele para de rodar até ser ativado de novo.')) return; b.disabled = true;
     try { await q(sb.rpc('robo_ativar', { p_jobid: +b.dataset.tra, p_ativo: on })); vTorre(); atualizarBadges(true); } catch (e) { b.disabled = false; alertaTopo(e.message); } });
