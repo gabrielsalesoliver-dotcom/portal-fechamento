@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1005';
+const VERSAO = '2026.11.25-1015';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -5077,19 +5077,19 @@ function desenharTorre() {
   const corG = cont('falha') ? 'var(--brand)' : cont('atrasado') ? 'var(--alert)' : 'var(--eco)';
   const fila = ativos.map(x => ({ x, p: proximaCron(x.r.schedule) })).filter(o => o.p && !/\* \* \* \* \*/.test(o.x.r.schedule)).sort((a, b) => a.p - b.p)[0];
   const U = T.umov || {}; const ul = (U.logs || [])[0];
-  const chip = (k, n, t) => `<span class="tr-chip${n ? '' : ' zero'}"><i style="background:${COR_ST[k]}"></i><b>${n}</b> ${t}</span>`;
+  const chip = (k, n, t, alvo) => `<${alvo && n ? `button type="button" data-trir="${alvo}"` : 'span'} class="tr-chip${n ? '' : ' zero'}${alvo && n ? ' link' : ''}"><i style="background:${COR_ST[k]}"></i><b>${n}</b> ${t}${alvo && n ? ' ↓' : ''}</${alvo && n ? 'button' : 'span'}>`;
   box.innerHTML = `
   <section class="bloco tr-hero" style="--st:${corG}">
     ${anelTorre(okA, ativos.length, corG)}
     <div class="tr-hero-txt"><small class="eyebrow" style="color:var(--muted)">Situação dos robôs</small>
       <h2>${prob ? (prob > 1 ? `${prob} robôs precisam de atenção` : '1 robô precisa de atenção') : 'Tudo funcionando'}</h2>
       <p class="sub" style="margin:2px 0 10px">Verificado às ${hhmm(T.agora)} · a tela se atualiza sozinha a cada minuto${fila ? ` · próximo a rodar: <b>${esc(fila.x.r.titulo.replace(/^Umov · /, ''))}</b> ${emTxt(fila.p)}` : ''}</p>
-      <div class="tr-chips">${chip('ok', cont('ok'), 'funcionando')}${chip('rodando', cont('rodando'), 'rodando agora')}${chip('falha', cont('falha'), 'com falha')}${chip('atrasado', cont('atrasado'), 'atrasado(s)')}${chip('pausado', off.length, 'desligado(s)')}</div></div>
+      <div class="tr-chips">${chip('ok', cont('ok'), 'funcionando')}${chip('rodando', cont('rodando'), 'rodando agora')}${chip('falha', cont('falha'), 'com falha')}${chip('atrasado', cont('atrasado'), 'atrasado(s)')}${chip('pausado', off.length, 'desligado(s)', 'off')}</div></div>
     <div class="tr-hero-umov"><small>Robô Leitor do Umov · última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${fmtN(U.total)} atendimentos lidos · fila ${fmtN(U.fila)}</span></div>
   </section>
   ${linhaTempoTorre(ativos, agora)}
   <div class="tr-grid">${ativos.map(o => cartaoRobo(o, agora)).join('')}</div>
-  ${off.length ? `<details class="bloco tr-off"${S.trOffAberto ? ' open' : ''}><summary><h2 style="display:inline;margin:0">Robôs desligados</h2> <span class="nota">${off.length} · cargas que já terminaram ou robôs pausados</span></summary>
+  ${off.length ? `<details class="bloco tr-off" id="tr-off"${S.trOffAberto ? ' open' : ''}><summary><h2 style="display:inline;margin:0">Robôs desligados (${off.length})</h2> <span class="nota">cargas que já terminaram ou robôs pausados · clique para ver</span></summary>
     <div class="tr-off-lista">${off.map(({ r, s }) => `<div class="tr-off-item">${icoRobo(r.jobname, s[2])}<div style="flex:1;min-width:0"><b>${esc(r.titulo)}</b><div class="nota">${s[1]} · última execução ${r.ultima ? haTxt(r.ultima.inicio) : '—'}</div></div><button class="btn sec peq" data-tra="${r.jobid}" data-on="1">Ativar</button></div>`).join('')}</div></details>` : ''}
   <div id="tr-mem">${S.mem ? memoriaHtml(S.mem, true) : ''}</div>
   <section class="bloco"><h2>Robô Leitor do Umov · o que já trouxe</h2>
@@ -5106,6 +5106,7 @@ function desenharTorre() {
   </section>`;
   box.querySelectorAll('[data-trh]').forEach(b => b.onclick = () => { S.abertoRobo[b.dataset.trh] = !S.abertoRobo[b.dataset.trh]; desenharTorre(); });
   const dt = box.querySelector('.tr-off'); if (dt) dt.ontoggle = () => { S.trOffAberto = dt.open; };
+  box.querySelectorAll('[data-trir]').forEach(b => b.onclick = () => { if (dt) { dt.open = true; S.trOffAberto = true; dt.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
   box.querySelectorAll('[data-tra]').forEach(b => b.onclick = async () => { const on = b.dataset.on === '1';
     if (!on && !confirm('Pausar este robô? Ele para de rodar até ser ativado de novo.')) return; b.disabled = true;
     try { await q(sb.rpc('robo_ativar', { p_jobid: +b.dataset.tra, p_ativo: on })); vTorre(); atualizarBadges(true); } catch (e) { b.disabled = false; alertaTopo(e.message); } });

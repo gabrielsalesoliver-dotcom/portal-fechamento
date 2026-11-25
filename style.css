@@ -406,7 +406,8 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .tr-hero-umov small{color:var(--muted);font-size:12px}.tr-hero-umov b{font-size:22px}.tr-hero-umov span{font-size:12px;color:var(--muted)}
 .tr-chips{display:flex;flex-wrap:wrap;gap:8px}
 .tr-chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:5px 12px;border-radius:999px;border:1px solid var(--rule);background:var(--surface)}
-.tr-chip i{width:9px;height:9px;border-radius:50%}.tr-chip.zero{opacity:.5}
+.tr-chip i{width:9px;height:9px;border-radius:50%}
+.tr-chip.link{font:inherit;font-size:13px;color:inherit;cursor:pointer}.tr-chip.link:hover{border-color:var(--ink)}.tr-chip.zero{opacity:.5}
 .tr-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .tr-dot.rodando{animation:trPulso 1.2s ease-in-out infinite}
 .tr-dot.falha,.tr-dot.atrasado{box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 25%,transparent)}
