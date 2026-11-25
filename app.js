@@ -3567,7 +3567,7 @@ function resumoAno(box, pts, kitsDe, projPronta) {
       <div class="kpi neutro"><small>Previsto ${abertos.length ? mesesTxt(abertos[0], ultAb) : '—'}</small><b>${abertos.length ? BRL(resto) : '—'}</b><span>${mResto != null ? `média ${BRL(mResto)}/mês; com a execução do ano, ${BRL(mResto * exec)} (${pct(varMedia)} sobre a média realizada)` : projPronta ? 'nenhum mês em aberto' : 'calculando a projeção…'}</span></div>
       <div class="kpi"><small>Ano ${ano} · realizado + previsto</small><b>${BRL(estimado)}</b><span>previsto do ano todo ${BRL(prevAno)} (${pct(estimado / prevAno - 1)})</span></div>
       <div class="kpi ${exec < 1 ? '' : 'alerta'}"><small>Se mantiver a execução do ano (${pct(exec - 1)})</small><b>${BRL(ajustado)}</b><span>${BRL(ajustado - prevAno)} contra o previsto do ano</span></div>
-      <div class="kpi neutro"><small>Custo total estimado do ano</small><b>${BRL(totalAno)}</b><span>malote ajustado + Kits/Spot (${BRL(kitsReal)} realizado + média ${BRL(kitsMedia)}/mês)</span></div>
+      <div class="kpi neutro"><small>Custo total estimado do ano</small><b>${BRL(totalAno)}</b><span>malote ajustado + Kits/Spot, fora do Umov, extras e ajustes (${BRL(kitsReal)} realizado + média ${BRL(kitsMedia)}/mês)</span></div>
     </div>
     <p class="nota" style="margin:0 0 12px">${leitura} Execução do ano = malote realizado ÷ previsto nos meses fechados; aplicada aos meses em aberto, dá o valor provável até dezembro.</p>`;
 }
