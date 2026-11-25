@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1625';
+const VERSAO = '2026.11.25-1700';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3484,6 +3484,7 @@ function projecaoCEO(box, D, proj, valorOp) {
   // Fora do Umov e atendimentos extras: média dos últimos 3 meses só do que foi cobrado (+); ajustes de fatura e adiantamento já pago (−) não se repetem
   const outMed = ult3.length ? ult3.reduce((a, c) => a + D.fech.filter(f => f.competencia_id === c.id).reduce((b, f) => b + Math.max(0, n(f.fora_umov)) + n(f.atend_extra), 0), 0) / ult3.length : 0;
   const outP = {}; ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { outP[f.parceiro_id] = (outP[f.parceiro_id] || 0) + (Math.max(0, n(f.fora_umov)) + n(f.atend_extra)) / ult3.length; }));
+  const descP = {}; ult3.forEach(c => D.fech.filter(f => f.competencia_id === c.id).forEach(f => { if (n(f.descontos)) descP[f.parceiro_id] = (descP[f.parceiro_id] || 0) + n(f.descontos) / ult3.length; }));
   const kitsTot = Object.values(kitsP).reduce((a, x) => a + x, 0);
   // Crescimento de Kits/Spot: tendência linear do ano (R$ a mais por mês, pelos meses fechados do ano) ou % ao mês escolhido
   const fAno = fechadas.filter(c => c.mes.startsWith(String(ano)));
@@ -3527,12 +3528,12 @@ function projecaoCEO(box, D, proj, valorOp) {
   const lin2 = []; const porParc = {};
   for (let m = 1; m <= 12; m++) {
     const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const f = duBase ? diasUteis(mes) / duBase : 1;
-    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0, outros: 0, meses: [] }); const kk = (kitsP[r.parceiro_id] || 0) * fatorK(mes), oo = outP[r.parceiro_id] || 0; pp.fixo += a; pp.varv += b; pp.kits += kk; pp.outros += oo; pp.meses.push({ mes, fixo: a, varv: b, kits: kk, outros: oo }); });
+    let fx = 0, vv = 0; base.forEach(r => { const a = n(r.valor_fixo) * exec, b = (n(r.calendarizado) - n(r.valor_fixo)) * f * exec; fx += a; vv += b; const pp = porParc[r.parceiro_id] || (porParc[r.parceiro_id] = { fixo: 0, varv: 0, kits: 0, outros: 0, desc: 0, meses: [] }); let pm = pp.meses.find(x => x.mes === mes); if (!pm) { pm = { mes, fixo: 0, varv: 0, kits: (kitsP[r.parceiro_id] || 0) * fatorK(mes), outros: outP[r.parceiro_id] || 0, desc: descP[r.parceiro_id] || 0 }; pp.meses.push(pm); pp.kits += pm.kits; pp.outros += pm.outros; pp.desc += pm.desc; } pp.fixo += a; pp.varv += b; pm.fixo += a; pm.varv += b; });
     lin2.push({ mes, origem: 'Projeção', du: diasUteis(mes), fixo: fx, varv: vv, kits: kitsMes(mes), outros: outMed, desc: descMed, total: fx + vv + kitsMes(mes) + outMed + descMed });
   }
   // parceiros só com Kits/Spot ou fora do Umov (sem pontos na carteira)
-  Object.keys({ ...kitsP, ...outP }).filter(id => !porParc[id] && ((kitsP[id] || 0) + (outP[id] || 0)) > 0).forEach(id => { const pp = porParc[id] = { fixo: 0, varv: 0, kits: 0, outros: 0, meses: [] };
-    for (let m = 1; m <= 12; m++) { const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const kk = (kitsP[id] || 0) * fatorK(mes), oo = outP[id] || 0; pp.kits += kk; pp.outros += oo; pp.meses.push({ mes, fixo: 0, varv: 0, kits: kk, outros: oo }); } });
+  Object.keys({ ...kitsP, ...outP, ...descP }).filter(id => !porParc[id] && ((kitsP[id] || 0) + (outP[id] || 0) || descP[id])).forEach(id => { const pp = porParc[id] = { fixo: 0, varv: 0, kits: 0, outros: 0, desc: 0, meses: [] };
+    for (let m = 1; m <= 12; m++) { const mes = `${prox}-${String(m).padStart(2, '0')}-01`; const kk = (kitsP[id] || 0) * fatorK(mes), oo = outP[id] || 0, dd = descP[id] || 0; pp.kits += kk; pp.outros += oo; pp.desc += dd; pp.meses.push({ mes, fixo: 0, varv: 0, kits: kk, outros: oo, desc: dd }); } });
   const sum = (ls, k) => ls.reduce((a, x) => a + n(x[k]), 0);
   const realAno = linhas.filter(x => x.origem === 'Realizado'), restAno = linhas.filter(x => x.origem !== 'Realizado');
   const tot26 = sum(linhas, 'total'), tot27 = sum(lin2, 'total');
@@ -3563,7 +3564,7 @@ function projecaoCEO(box, D, proj, valorOp) {
   box.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { D.kitsG = b.dataset.kg; projecaoCEO(box, D, proj, valorOp); });
   // ---- projeção do próximo ano por parceiro ----
   const pmP = Object.fromEntries(D.parcs.map(p => [p.id, p]));
-  const PP = Object.entries(porParc).map(([id, x]) => { const mal = x.fixo + x.varv, tot = mal + x.kits + x.outros; return { id, p: pmP[id] || {}, ...x, mal, tot, pm: mal + x.kits ? mal / (mal + x.kits) : 1 }; });
+  const PP = Object.entries(porParc).map(([id, x]) => { const mal = x.fixo + x.varv, tot = mal + x.kits + x.outros + x.desc; return { id, p: pmP[id] || {}, ...x, mal, tot, pm: mal + x.kits ? mal / (mal + x.kits) : 1 }; });
   const totPP = PP.reduce((s, x) => s + x.tot, 0);
   const ppDesenhar = () => {
     const el = box.querySelector('#pp27box'); if (!el) return;
@@ -3580,21 +3581,21 @@ function projecaoCEO(box, D, proj, valorOp) {
       const bi = el.querySelector('#ppbusca'); bi.oninput = () => { D.ppBusca = bi.value; const pos = bi.selectionStart; ppDesenhar(); const nb = el.querySelector('#ppbusca'); nb.focus(); nb.setSelectionRange(pos, pos); };
     };
     if (modo === 'meses') {
-      const mt = m => m.fixo + m.varv + m.kits + m.outros;
-      const totM = i => vis.reduce((s, x) => s + mt(x.meses[i] || { fixo: 0, varv: 0, kits: 0, outros: 0 }), 0);
+      const mt = m => m.fixo + m.varv + m.kits + m.outros + n(m.desc);
+      const totM = i => vis.reduce((s, x) => s + mt(x.meses[i] || { fixo: 0, varv: 0, kits: 0, outros: 0, desc: 0 }), 0);
       const meses12 = (vis[0] || PP[0] || { meses: [] }).meses.map(m => m.mes);
       el.innerHTML = topo + `<div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${meses12.map(m => `<th class="n">${MES3[+m.slice(5, 7) - 1]}/${m.slice(2, 4)}</th>`).join('')}${th('tot', `Total ${prox}`)}</tr></thead><tbody>
-        ${vis.map(x => `<tr><td style="white-space:nowrap"><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}</span></td>${x.meses.map(m => `<td class="n" title="${esc(`${nomeMes(m.mes)} · malote ${BRL(m.fixo + m.varv)} · kits/spot ${BRL(m.kits)} · fora do Umov e extras ${BRL(m.outros)}`)}">${BRL(mt(m))}</td>`).join('')}<td class="n"><b>${BRL(x.tot)}</b></td></tr>`).join('')}
+        ${vis.map(x => `<tr><td style="white-space:nowrap"><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}</span></td>${x.meses.map(m => `<td class="n" title="${esc(`${nomeMes(m.mes)} · malote ${BRL(m.fixo + m.varv)} · kits/spot ${BRL(m.kits)} · fora do Umov e extras ${BRL(m.outros)}${m.desc ? ` · descontos ${BRL(m.desc)}` : ''}`)}">${BRL(mt(m))}</td>`).join('')}<td class="n"><b>${BRL(x.tot)}</b></td></tr>`).join('')}
         </tbody><tfoot><tr><td><b>Total</b></td>${meses12.map((_, i) => `<td class="n"><b>${BRL(totM(i))}</b></td>`).join('')}<td class="n"><b>${BRL(sumV('tot'))}</b></td></tr></tfoot></table></div>
-        <p class="nota">Cada mês = malote (fixo + variável pelos dias úteis) + Kits/Spot + fora do Umov e extras. Passe o mouse no valor para ver a divisão. Descontos e ajustes de fatura não entram por parceiro.</p>`;
+        <p class="nota">Cada mês = malote (fixo + variável pelos dias úteis) + Kits/Spot + fora do Umov e extras + descontos (média dos últimos 3 meses fechados de cada parceiro). Passe o mouse no valor para ver a divisão. O total bate com o quadro ${prox} mês a mês.</p>`;
       ligar(); return;
     }
     el.innerHTML = topo + `
-      <div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${th('fixo', 'Malote fixo')}${th('varv', 'Malote variável')}${th('kits', 'Kits/Spot')}${th('outros', 'Fora do Umov e extras')}${th('tot', `Total ${prox}`)}<th class="n">Média/mês</th><th class="n">% do total</th><th>Malote × Spot</th></tr></thead><tbody>
-      ${vis.map(x => `<tr data-ppid="${x.id}" style="cursor:pointer"><td><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.fixo ? BRL(x.fixo) : '—'}</td><td class="n">${x.varv ? BRL(x.varv) : '—'}</td><td class="n">${x.kits ? BRL(x.kits) : '—'}</td><td class="n">${x.outros ? BRL(x.outros) : '—'}</td><td class="n"><b>${BRL(x.tot)}</b></td><td class="n">${BRL(x.tot / 12)}</td><td class="n">${totPP ? pctS(x.tot / totPP) : '—'}</td><td>${compo(x.mal, x.kits)}</td></tr>
-        ${D.ppAb === x.id ? `<tr><td colspan="9" style="background:var(--paper)"><div class="tabela" style="margin:4px 0"><table><thead><tr><th>Mês</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Fora do Umov e extras</th><th class="n">Total</th></tr></thead><tbody>${x.meses.map(m => `<tr><td>${nomeMes(m.mes)}</td><td class="n">${BRL(m.fixo)}</td><td class="n">${BRL(m.varv)}</td><td class="n">${BRL(m.kits)}</td><td class="n">${BRL(m.outros)}</td><td class="n"><b>${BRL(m.fixo + m.varv + m.kits + m.outros)}</b></td></tr>`).join('')}</tbody></table></div></td></tr>` : ''}`).join('')}
-      </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(sumV('fixo'))}</b></td><td class="n"><b>${BRL(sumV('varv'))}</b></td><td class="n"><b>${BRL(sumV('kits'))}</b></td><td class="n"><b>${BRL(sumV('outros'))}</b></td><td class="n"><b>${BRL(sumV('tot'))}</b></td><td class="n"><b>${BRL(sumV('tot') / 12)}</b></td><td class="n">${totPP ? pctS(sumV('tot') / totPP) : '—'}</td><td>${compo(sumV('mal'), sumV('kits'))}</td></tr></tfoot></table></div>
-      <p class="nota">Por parceiro: malote pela carteira de ${nomeMes(ultP)} (fixo do contrato + pontos × frequência × dias úteis), Kits/Spot e fora do Umov pela média dos últimos 3 meses fechados de cada parceiro. Descontos e ajustes de fatura não entram, por isso o total fica um pouco acima do total do quadro mensal.</p>`;
+      <div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${th('fixo', 'Malote fixo')}${th('varv', 'Malote variável')}${th('kits', 'Kits/Spot')}${th('outros', 'Fora do Umov e extras')}${th('desc', 'Descontos')}${th('tot', `Total ${prox}`)}<th class="n">Média/mês</th><th class="n">% do total</th><th>Malote × Spot</th></tr></thead><tbody>
+      ${vis.map(x => `<tr data-ppid="${x.id}" style="cursor:pointer"><td><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.fixo ? BRL(x.fixo) : '—'}</td><td class="n">${x.varv ? BRL(x.varv) : '—'}</td><td class="n">${x.kits ? BRL(x.kits) : '—'}</td><td class="n">${x.outros ? BRL(x.outros) : '—'}</td><td class="n">${x.desc ? BRL(x.desc) : '—'}</td><td class="n"><b>${BRL(x.tot)}</b></td><td class="n">${BRL(x.tot / 12)}</td><td class="n">${totPP ? pctS(x.tot / totPP) : '—'}</td><td>${compo(x.mal, x.kits)}</td></tr>
+        ${D.ppAb === x.id ? `<tr><td colspan="10" style="background:var(--paper)"><div class="tabela" style="margin:4px 0"><table><thead><tr><th>Mês</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Fora do Umov e extras</th><th class="n">Descontos</th><th class="n">Total</th></tr></thead><tbody>${x.meses.map(m => `<tr><td>${nomeMes(m.mes)}</td><td class="n">${BRL(m.fixo)}</td><td class="n">${BRL(m.varv)}</td><td class="n">${BRL(m.kits)}</td><td class="n">${BRL(m.outros)}</td><td class="n">${BRL(m.desc)}</td><td class="n"><b>${BRL(m.fixo + m.varv + m.kits + m.outros + m.desc)}</b></td></tr>`).join('')}</tbody></table></div></td></tr>` : ''}`).join('')}
+      </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(sumV('fixo'))}</b></td><td class="n"><b>${BRL(sumV('varv'))}</b></td><td class="n"><b>${BRL(sumV('kits'))}</b></td><td class="n"><b>${BRL(sumV('outros'))}</b></td><td class="n"><b>${BRL(sumV('desc'))}</b></td><td class="n"><b>${BRL(sumV('tot'))}</b></td><td class="n"><b>${BRL(sumV('tot') / 12)}</b></td><td class="n">${totPP ? pctS(sumV('tot') / totPP) : '—'}</td><td>${compo(sumV('mal'), sumV('kits'))}</td></tr></tfoot></table></div>
+      <p class="nota">Por parceiro: malote pela carteira de ${nomeMes(ultP)} (fixo do contrato + pontos × frequência × dias úteis), Kits/Spot e fora do Umov pela média dos últimos 3 meses fechados de cada parceiro. Descontos pela média dos últimos 3 meses fechados de cada parceiro. O total bate com o quadro ${prox} mês a mês.</p>`;
     ligar();
   };
   ppDesenhar();
@@ -3604,8 +3605,8 @@ function projecaoCEO(box, D, proj, valorOp) {
     const mesL = x => ({ 'Mês': nomeMes(x.mes), 'Origem': x.origem, 'Dias úteis': x.du || diasUteis(x.mes), 'Malote fixo': x.fixo == null ? '' : Math.round(x.fixo * 100) / 100, 'Malote variável (ou total no realizado)': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov, extras e ajustes': Math.round(n(x.outros) * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, 'Total': Math.round(x.total * 100) / 100, '% Malote': Math.round(pMal(x) * 1000) / 10, '% Kits/Spot': Math.round((1 - pMal(x)) * 1000) / 10 });
     baixarXlsx(`Projecao_${ano}_${prox}.xlsx`, { titulo: `Projeção de custo ${ano} e ${prox}`, sub: 'Última milha · parceiros', abas: [
       { nome: `${ano}`, linhas: linhas.map(mesL) }, { nome: `${prox}`, linhas: lin2.map(mesL) },
-      { nome: `${prox} por parceiro`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => ({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '', 'Tipo': x.p.tipo || '', 'Malote fixo': Math.round(x.fixo * 100) / 100, 'Malote variável': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov e extras': Math.round(x.outros * 100) / 100, [`Total ${prox}`]: Math.round(x.tot * 100) / 100, 'Média/mês': Math.round(x.tot / 12 * 100) / 100, '% do total': totPP ? Math.round(x.tot / totPP * 1000) / 10 : 0, '% Malote': Math.round(x.pm * 1000) / 10, '% Kits/Spot': Math.round((1 - x.pm) * 1000) / 10 })) },
-      { nome: `${prox} parceiro x mês`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => Object.assign({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '' }, Object.fromEntries(x.meses.map(m => [MES3[+m.mes.slice(5, 7) - 1] + '/' + m.mes.slice(2, 4), Math.round((m.fixo + m.varv + m.kits + m.outros) * 100) / 100])), { [`Total ${prox}`]: Math.round(x.tot * 100) / 100 })) }] });
+      { nome: `${prox} por parceiro`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => ({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '', 'Tipo': x.p.tipo || '', 'Malote fixo': Math.round(x.fixo * 100) / 100, 'Malote variável': Math.round(x.varv * 100) / 100, 'Kits/Spot': Math.round(x.kits * 100) / 100, 'Fora do Umov e extras': Math.round(x.outros * 100) / 100, 'Descontos': Math.round(x.desc * 100) / 100, [`Total ${prox}`]: Math.round(x.tot * 100) / 100, 'Média/mês': Math.round(x.tot / 12 * 100) / 100, '% do total': totPP ? Math.round(x.tot / totPP * 1000) / 10 : 0, '% Malote': Math.round(x.pm * 1000) / 10, '% Kits/Spot': Math.round((1 - x.pm) * 1000) / 10 })) },
+      { nome: `${prox} parceiro x mês`, linhas: PP.slice().sort((a, b) => b.tot - a.tot).map(x => Object.assign({ 'Região': x.p.regiao || '', 'Parceiro': x.p.nome || '' }, Object.fromEntries(x.meses.map(m => [MES3[+m.mes.slice(5, 7) - 1] + '/' + m.mes.slice(2, 4), Math.round((m.fixo + m.varv + m.kits + m.outros + m.desc) * 100) / 100])), { [`Total ${prox}`]: Math.round(x.tot * 100) / 100 })) }] });
   };
 }
 
