@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1600';
+const VERSAO = '2026.11.25-1610';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3546,15 +3546,31 @@ function projecaoCEO(box, D, proj, valorOp) {
     const vis = PP.filter(x => !f || `${x.p.regiao} ${x.p.nome}`.toLowerCase().includes(f)).sort((a, b) => sk === 'regiao' ? sd * String(a.p.regiao || '').localeCompare(String(b.p.regiao || '')) : sd * (a[sk] - b[sk]));
     const th = (k, t, c = 'n') => `<th class="${c}" data-pps="${k}" style="cursor:pointer;white-space:nowrap">${t}${sk === k ? (sd < 0 ? ' ↓' : ' ↑') : ''}</th>`;
     const sumV = k => vis.reduce((s, x) => s + x[k], 0);
-    el.innerHTML = `<div class="linha" style="justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px"><input id="ppbusca" class="peq" placeholder="Buscar parceiro" value="${esc(D.ppBusca || '')}" style="min-width:220px"><span class="nota">${vis.length} parceiros · clique na linha para ver mês a mês · Kits/Spot segue a opção de crescimento escolhida acima</span></div>
+    const modo = D.ppModo || 'meses';
+    const topo = `<div class="linha" style="justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px"><div class="linha" style="gap:8px"><div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px">${[['meses', 'Mês a mês'], ['resumo', 'Resumo do ano']].map(([k, t]) => `<button type="button" class="btn ${modo === k ? '' : 'sec'} peq" data-ppm="${k}">${t}</button>`).join('')}</div><input id="ppbusca" class="peq" placeholder="Buscar parceiro" value="${esc(D.ppBusca || '')}" style="min-width:220px"></div><span class="nota">${vis.length} parceiros · Kits/Spot segue a opção de crescimento escolhida acima</span></div>`;
+    const ligar = () => {
+      el.querySelectorAll('[data-pps]').forEach(t => t.onclick = () => { const k = t.dataset.pps; D.ppSort = [k, D.ppSort[0] === k ? -D.ppSort[1] : (k === 'regiao' ? 1 : -1)]; ppDesenhar(); });
+      el.querySelectorAll('[data-ppid]').forEach(t => t.onclick = () => { D.ppAb = D.ppAb === t.dataset.ppid ? null : t.dataset.ppid; ppDesenhar(); });
+      el.querySelectorAll('[data-ppm]').forEach(b => b.onclick = () => { D.ppModo = b.dataset.ppm; ppDesenhar(); });
+      const bi = el.querySelector('#ppbusca'); bi.oninput = () => { D.ppBusca = bi.value; const pos = bi.selectionStart; ppDesenhar(); const nb = el.querySelector('#ppbusca'); nb.focus(); nb.setSelectionRange(pos, pos); };
+    };
+    if (modo === 'meses') {
+      const mt = m => m.fixo + m.varv + m.kits + m.outros;
+      const totM = i => vis.reduce((s, x) => s + mt(x.meses[i] || { fixo: 0, varv: 0, kits: 0, outros: 0 }), 0);
+      const meses12 = (vis[0] || PP[0] || { meses: [] }).meses.map(m => m.mes);
+      el.innerHTML = topo + `<div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${meses12.map(m => `<th class="n">${MES3[+m.slice(5, 7) - 1]}/${m.slice(2, 4)}</th>`).join('')}${th('tot', `Total ${prox}`)}</tr></thead><tbody>
+        ${vis.map(x => `<tr><td style="white-space:nowrap"><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}</span></td>${x.meses.map(m => `<td class="n" title="${esc(`${nomeMes(m.mes)} · malote ${BRL(m.fixo + m.varv)} · kits/spot ${BRL(m.kits)} · fora do Umov e extras ${BRL(m.outros)}`)}">${BRL(mt(m))}</td>`).join('')}<td class="n"><b>${BRL(x.tot)}</b></td></tr>`).join('')}
+        </tbody><tfoot><tr><td><b>Total</b></td>${meses12.map((_, i) => `<td class="n"><b>${BRL(totM(i))}</b></td>`).join('')}<td class="n"><b>${BRL(sumV('tot'))}</b></td></tr></tfoot></table></div>
+        <p class="nota">Cada mês = malote (fixo + variável pelos dias úteis) + Kits/Spot + fora do Umov e extras. Passe o mouse no valor para ver a divisão. Descontos e ajustes de fatura não entram por parceiro.</p>`;
+      ligar(); return;
+    }
+    el.innerHTML = topo + `
       <div class="tabela"><table><thead><tr>${th('regiao', 'Parceiro', '')}${th('fixo', 'Malote fixo')}${th('varv', 'Malote variável')}${th('kits', 'Kits/Spot')}${th('outros', 'Fora do Umov e extras')}${th('tot', `Total ${prox}`)}<th class="n">Média/mês</th><th class="n">% do total</th><th>Malote × Spot</th></tr></thead><tbody>
       ${vis.map(x => `<tr data-ppid="${x.id}" style="cursor:pointer"><td><b>${esc(x.p.regiao || '—')}</b><br><span class="nota">${esc(x.p.nome || '')}${x.p.tipo ? ' · ' + esc(x.p.tipo) : ''}</span></td><td class="n">${x.fixo ? BRL(x.fixo) : '—'}</td><td class="n">${x.varv ? BRL(x.varv) : '—'}</td><td class="n">${x.kits ? BRL(x.kits) : '—'}</td><td class="n">${x.outros ? BRL(x.outros) : '—'}</td><td class="n"><b>${BRL(x.tot)}</b></td><td class="n">${BRL(x.tot / 12)}</td><td class="n">${totPP ? pctS(x.tot / totPP) : '—'}</td><td>${compo(x.mal, x.kits)}</td></tr>
         ${D.ppAb === x.id ? `<tr><td colspan="9" style="background:var(--paper)"><div class="tabela" style="margin:4px 0"><table><thead><tr><th>Mês</th><th class="n">Malote fixo</th><th class="n">Malote variável</th><th class="n">Kits/Spot</th><th class="n">Fora do Umov e extras</th><th class="n">Total</th></tr></thead><tbody>${x.meses.map(m => `<tr><td>${nomeMes(m.mes)}</td><td class="n">${BRL(m.fixo)}</td><td class="n">${BRL(m.varv)}</td><td class="n">${BRL(m.kits)}</td><td class="n">${BRL(m.outros)}</td><td class="n"><b>${BRL(m.fixo + m.varv + m.kits + m.outros)}</b></td></tr>`).join('')}</tbody></table></div></td></tr>` : ''}`).join('')}
       </tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${BRL(sumV('fixo'))}</b></td><td class="n"><b>${BRL(sumV('varv'))}</b></td><td class="n"><b>${BRL(sumV('kits'))}</b></td><td class="n"><b>${BRL(sumV('outros'))}</b></td><td class="n"><b>${BRL(sumV('tot'))}</b></td><td class="n"><b>${BRL(sumV('tot') / 12)}</b></td><td class="n">${totPP ? pctS(sumV('tot') / totPP) : '—'}</td><td>${compo(sumV('mal'), sumV('kits'))}</td></tr></tfoot></table></div>
       <p class="nota">Por parceiro: malote pela carteira de ${nomeMes(ultP)} (fixo do contrato + pontos × frequência × dias úteis), Kits/Spot e fora do Umov pela média dos últimos 3 meses fechados de cada parceiro. Descontos e ajustes de fatura não entram, por isso o total fica um pouco acima do total do quadro mensal.</p>`;
-    el.querySelectorAll('[data-pps]').forEach(t => t.onclick = () => { const k = t.dataset.pps; D.ppSort = [k, D.ppSort[0] === k ? -D.ppSort[1] : (k === 'regiao' ? 1 : -1)]; ppDesenhar(); });
-    el.querySelectorAll('[data-ppid]').forEach(t => t.onclick = () => { D.ppAb = D.ppAb === t.dataset.ppid ? null : t.dataset.ppid; ppDesenhar(); });
-    const bi = el.querySelector('#ppbusca'); bi.oninput = () => { D.ppBusca = bi.value; const pos = bi.selectionStart; ppDesenhar(); const nb = el.querySelector('#ppbusca'); nb.focus(); nb.setSelectionRange(pos, pos); };
+    ligar();
   };
   ppDesenhar();
   const dpp = box.querySelector('#pp27'); if (dpp) dpp.ontoggle = () => { D.ppAberto = dpp.open; };
