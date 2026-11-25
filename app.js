@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.24-1650';
+const VERSAO = '2026.11.25-0800';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -492,7 +492,7 @@ function casca() {
   </div>`;
   $('#sair').onclick = sair;
   $('#m-menu').onclick = () => { const sis = app.querySelector('.sistema'); const ab = sis.classList.toggle('menu-aberto'); $('#m-menu').setAttribute('aria-expanded', ab); $('#m-menu').firstChild.textContent = ab ? '✕ Fechar ' : '☰ Menu '; };
-  desenharBadges(); atualizarBadges();
+  desenharBadges(); atualizarBadges(); setTimeout(() => avisoMemoria().catch(() => {}), 800);
 }
 
 // Contadores no menu (competência aberta mais recente): o que está esperando ação
@@ -4970,9 +4970,36 @@ async function vTorre() {
   $('#tr-tv').onclick = () => { location.hash = '#tv'; };
   $('#tr-tvd').onclick = () => { location.hash = '#tvdir'; };
   $('#tr-tvg').onclick = () => { location.hash = '#tvgeral'; };
+  sb.rpc('uso_banco').then(r => { if (!r.error) { S.mem = r.data; const z = $('#tr-mem'); if (z) z.innerHTML = memoriaHtml(S.mem, true); } });
   let T; try { T = await q(sb.rpc('torre_robos')); } catch (e) { $('#torre').innerHTML = `<div class="msg alerta">Não foi possível ler os robôs: ${esc(e.message)}</div>`; return; }
   S.torre = T; desenharTorre();
   S.torreTimer = setInterval(() => { if (S.view !== 'torre' || !document.body.contains($('#torre'))) { clearInterval(S.torreTimer); return; } vTorre(); }, 60000);
+}
+// ---------- Memória do banco: alerta antes de chegar no limite do plano ----------
+const MB = b => b == null ? '—' : b >= 1073741824 ? (b / 1073741824).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' GB' : Math.round(b / 1048576).toLocaleString('pt-BR') + ' MB';
+function memNivel(M) { const p = Math.max(M.db_bytes / M.db_limite, M.storage_bytes / M.storage_limite) * 100; const d = M.dias_ate_limite_db;
+  return p >= M.critico_pct || (d != null && d <= 20) ? 'critico' : p >= M.alerta_pct || (d != null && d <= 60) ? 'alerta' : 'ok'; }
+function memoriaHtml(M, completo) {
+  const pdb = 100 * M.db_bytes / M.db_limite, pst = 100 * M.storage_bytes / M.storage_limite, nv = memNivel(M);
+  const cor = nv === 'critico' ? 'var(--brand)' : nv === 'alerta' ? 'var(--alert)' : 'var(--eco)';
+  const barra = (pc, t, u, l) => `<div style="flex:1 1 260px"><div class="linha" style="justify-content:space-between"><b>${t}</b><span>${MB(u)} de ${MB(l)} · <b>${Math.round(pc)}%</b></span></div>
+    <div style="height:10px;border-radius:99px;background:var(--rule);margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, pc).toFixed(1)}%;background:${pc >= M.critico_pct ? 'var(--brand)' : pc >= M.alerta_pct ? 'var(--alert)' : 'var(--eco)'}"></div></div></div>`;
+  const d = M.dias_ate_limite_db; const quando = d != null ? new Date(Date.now() + d * 86400000).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
+  return `<section class="bloco" style="border-left:5px solid ${cor};margin:0 0 14px">
+    <div class="linha" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h2 style="margin:0">Memória do banco</h2>
+      <span class="pill" style="background:${cor};color:#fff;font-weight:600">${nv === 'critico' ? 'Crítico' : nv === 'alerta' ? 'Atenção' : 'Tudo certo'}</span></div>
+    <div class="linha" style="gap:24px;flex-wrap:wrap;margin-top:12px">${barra(pdb, 'Banco de dados', M.db_bytes, M.db_limite)}${barra(pst, 'Arquivos (NFs, planilhas)', M.storage_bytes, M.storage_limite)}</div>
+    <p class="sub" style="margin:12px 0 0">${M.cresc_db_dia ? `O banco cresce cerca de <b>${MB(M.cresc_db_dia * 30)} por mês</b>${M.estimado ? ' (estimativa; com 7 dias de registro passa a usar o crescimento real)' : ''}.` : ''}
+      ${quando ? ` No ritmo atual, chega no limite por volta de <b>${quando}</b> (${d} dias).` : ''}
+      ${M.sobra && M.sobra.linhas ? ` Há <b>${M.sobra.linhas.toLocaleString('pt-BR')} linhas</b> de bases que falharam, foram substituídas ou de teste que podem ser apagadas.` : ''}</p>
+    ${completo ? `<p class="nota" style="margin:6px 0 0">Alerta amarelo a partir de ${M.alerta_pct}% ou 60 dias do limite; vermelho a partir de ${M.critico_pct}% ou 20 dias. No limite, o Supabase deixa o banco só para leitura: robôs param e ninguém envia base nem NF. Maiores tabelas: ${(M.maiores || []).map(t => `${esc(t.tabela)} (${MB(t.bytes)})`).join(', ')}.</p>` : ''}
+  </section>`;
+}
+async function avisoMemoria() {
+  if (!S.perfil || S.perfil.papel !== 'admin') return;
+  if (!S.mem || Date.now() - (S.memEm || 0) > 3600000) { const r = await sb.rpc('uso_banco'); if (r.error) return; S.mem = r.data; S.memEm = Date.now(); }
+  const nv = memNivel(S.mem); const m = $('#main'); if (!m || nv === 'ok' || S.view === 'torre' || $('#mem-aviso')) return;
+  const d = S.mem.dias_ate_limite_db; m.insertAdjacentHTML('afterbegin', `<div id="mem-aviso" class="msg ${nv === 'critico' ? 'erro' : 'alerta'}" style="margin-bottom:14px">Memória do banco: <b>${Math.round(100 * S.mem.db_bytes / S.mem.db_limite)}%</b> usada${d != null ? `, limite em cerca de ${d} dias` : ''}. <a href="#torre">Ver na Torre de controle</a></div>`);
 }
 function desenharTorre() {
   const T = S.torre, box = $('#torre'); if (!box) return; const R = T.robos || [];
@@ -4987,6 +5014,7 @@ function desenharTorre() {
     <div class="kpi ${cont('atrasado') ? 'alerta' : 'neutro'}"><small>Atrasados</small><b>${cont('atrasado')}</b><span>sem rodar no prazo</span></div>
     <div class="kpi neutro"><small>Pausados</small><b>${cont('pausado')}</b><span>${cont('concluido') ? cont('concluido') + ' concluído(s) · ' : ''}${cont('aguardando') ? cont('aguardando') + ' aguardando 1ª execução' : 'desligados'}</span></div>
   </div>
+  <div id="tr-mem">${S.mem ? memoriaHtml(S.mem, true) : ''}</div>
   <div style="display:flex;flex-direction:column;gap:14px">${st.map(({ r, s }) => { const u = r.ultima || {}; const prox = r.active ? proximaCron(r.schedule) : null;
     const dur = u.fim && u.inicio ? (new Date(u.fim) - new Date(u.inicio)) / 1000 : null; const H = (r.historico || []).slice().reverse();
     return `<section class="bloco" style="border-left:5px solid ${s[2]};margin:0">
