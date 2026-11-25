@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-0915';
+const VERSAO = '2026.11.25-0930';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -659,7 +659,7 @@ async function vPainel() {
 async function vUmov() {
   const m = $('#main');
   m.innerHTML = `
-    <div class="topo"><div><h1>Base do Umov (API)</h1><p>Os atendimentos do mês vêm direto da API do Umov: o robô traz as movimentações a cada 2 horas e a base do fechamento é montada sozinha às 6h, 12h e 18h. O que é “KIT …” no grupo cliente vira Kits/Spot; o resto é Malote. Não é preciso subir planilha.</p></div>${seletorComp()}</div>
+    <div class="topo"><div><h1>Base do Umov (API)</h1><p>Os atendimentos do mês vêm direto da API do Umov: o <b>Robô Leitor do Umov</b> traz as movimentações a cada 2 horas e o <b>Robô Montador da Base</b> monta a base do fechamento sozinho às 6h, 12h e 18h. O que é “KIT …” no grupo cliente vira Kits/Spot; o resto é Malote. Não é preciso subir planilha.</p></div>${seletorComp()}</div>
     <div id="ativa"></div>
     <div id="apiacao"></div>
     <details class="bloco" id="contingencia" style="margin-top:12px"${S.umovPrev ? ' open' : ''}><summary style="cursor:pointer"><b>Importar arquivo manualmente</b> <span class="nota">· só em contingência (API fora do ar)</span></summary>
@@ -4823,7 +4823,7 @@ function desenharOperacao(el) {
   const fP = (R.filtros?.parceiros || []).sort((a, b) => a.nome.localeCompare(b.nome)), fC = (R.filtros?.clientes || []).sort();
   const opTxt = (cat) => { const m = ko['malote_' + cat] || 0, kt = ko['kit_' + cat] || 0; return kt ? `${fmtN(m)} malote · ${fmtN(kt)} kits` : ''; };
   el.innerHTML = `
-  <div class="topo"><div><h1>Operação ao vivo</h1><p>Atendimentos do Umov lidos pelo robô a cada 2 horas. Atualizado em <b>${fmtDH(R.atualizado)}</b>.${R.sem_detalhe ? ` <span class="pill alerta">${fmtN(R.sem_detalhe)} atendimentos do período ainda sendo carregados</span>` : ''}</p></div>
+  <div class="topo"><div><h1>Operação ao vivo</h1><p>Atendimentos do Umov lidos pelo Robô Leitor do Umov a cada 2 horas. Atualizado em <b>${fmtDH(R.atualizado)}</b>.${R.sem_detalhe ? ` <span class="pill alerta">${fmtN(R.sem_detalhe)} atendimentos do período ainda sendo carregados</span>` : ''}</p></div>
     <div class="linha" style="flex-wrap:wrap;gap:8px">
       <div class="alterna" role="group" style="display:inline-flex;border:1px solid var(--rule);border-radius:8px;padding:3px;background:var(--surface)">
         ${per.map(([kk, n]) => `<button type="button" data-oper="${kk}" style="font:inherit;font-size:14px;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;${O.per === kk ? 'background:var(--btn);color:var(--on-btn);font-weight:600' : 'background:none;color:var(--muted)'}">${n}</button>`).join('')}</div>
@@ -5080,14 +5080,14 @@ function desenharTorre() {
       <h2>${prob ? (prob > 1 ? `${prob} robôs precisam de atenção` : '1 robô precisa de atenção') : 'Tudo funcionando'}</h2>
       <p class="sub" style="margin:2px 0 10px">Verificado às ${hhmm(T.agora)} · a tela se atualiza sozinha a cada minuto${fila ? ` · próximo a rodar: <b>${esc(fila.x.r.titulo.replace(/^Umov · /, ''))}</b> ${emTxt(fila.p)}` : ''}</p>
       <div class="tr-chips">${chip('ok', cont('ok'), 'funcionando')}${chip('rodando', cont('rodando'), 'rodando agora')}${chip('falha', cont('falha'), 'com falha')}${chip('atrasado', cont('atrasado'), 'atrasado(s)')}${chip('pausado', off.length, 'desligado(s)')}</div></div>
-    <div class="tr-hero-umov"><small>Umov · última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${fmtN(U.total)} atendimentos lidos · fila ${fmtN(U.fila)}</span></div>
+    <div class="tr-hero-umov"><small>Robô Leitor do Umov · última leitura</small><b>${ul ? haTxt(ul.fim) : '—'}</b><span>${fmtN(U.total)} atendimentos lidos · fila ${fmtN(U.fila)}</span></div>
   </section>
   ${linhaTempoTorre(ativos, agora)}
   <div class="tr-grid">${ativos.map(o => cartaoRobo(o, agora)).join('')}</div>
   ${off.length ? `<details class="bloco tr-off"${S.trOffAberto ? ' open' : ''}><summary><h2 style="display:inline;margin:0">Robôs desligados</h2> <span class="nota">${off.length} · cargas que já terminaram ou robôs pausados</span></summary>
     <div class="tr-off-lista">${off.map(({ r, s }) => `<div class="tr-off-item">${icoRobo(r.jobname, s[2])}<div style="flex:1;min-width:0"><b>${esc(r.titulo)}</b><div class="nota">${s[1]} · última execução ${r.ultima ? haTxt(r.ultima.inicio) : '—'}</div></div><button class="btn sec peq" data-tra="${r.jobid}" data-on="1">Ativar</button></div>`).join('')}</div></details>` : ''}
   <div id="tr-mem">${S.mem ? memoriaHtml(S.mem, true) : ''}</div>
-  <section class="bloco"><h2>Umov · o que o robô já trouxe</h2>
+  <section class="bloco"><h2>Robô Leitor do Umov · o que já trouxe</h2>
     <div class="kpis" style="margin-top:8px">
       <div class="kpi neutro"><small>Atendimentos lidos</small><b>${fmtN(U.total)}</b><span>${fmtN(U.dias)} dia(s) com detalhe</span></div>
       <div class="kpi ${U.fila > 3000 ? 'alerta' : 'neutro'}"><small>Fila para detalhar</small><b>${fmtN(U.fila)}</b><span>${U.fila ? 'vão entrar nas próximas execuções' : 'em dia'}</span></div>
