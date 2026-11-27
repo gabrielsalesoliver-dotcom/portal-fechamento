@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.27-0805';
+const VERSAO = '2026.11.27-0815';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3941,8 +3941,30 @@ function dupHtml(D, c) {
   const { m, anoBloq, antes } = dupResumo(D, c); if (!m) return '';
   const ult = antes.slice(-1), medAntes = ult.length ? ult.reduce((a, x) => a + Number(x.valor || 0), 0) / ult.length : 0;
   return m.bloqueado
-    ? `<div><small>Baixas duplicadas bloqueadas</small><b>${BRL(m.valor)}</b><span title="Mesmo código de integração com mais de uma baixa no dia: só a primeira é paga. Já contado na validação do fechamento.">${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas (mesmo ponto, mesmo dia), ${m.baixas_unit || 0} de parceiros por atendimento, não pagas · acumulado ${BRL(anoBloq)}${medAntes ? ` · outubro, antes do bloqueio: ${BRL(medAntes)} pagos` : ''}</span></div>`
+    ? `<div><small>Baixas duplicadas bloqueadas</small><b>${BRL(m.valor)}</b><button type="button" class="btn sec peq" data-dupxls="${m.competencia_id}" style="align-self:flex-start;margin:2px 0">Baixar base das duplicadas</button><span title="Mesmo código de integração com mais de uma baixa no dia: só a primeira é paga. Já contado na validação do fechamento.">${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas (mesmo ponto, mesmo dia), ${m.baixas_unit || 0} de parceiros por atendimento, não pagas · acumulado ${BRL(anoBloq)}${medAntes ? ` · outubro, antes do bloqueio: ${BRL(medAntes)} pagos` : ''}</span></div>`
     : `<div><small>Baixas duplicadas (antes do bloqueio)</small><b>${BRL(m.valor)}</b><span>${m.baixas_unit || 0} baixas repetidas (mesmo ponto, mesmo dia) de parceiros por atendimento entraram no pagamento · bloqueio automático a partir de nov/26</span></div>`;
+}
+async function baixarDuplicadas(compId, mes) {
+  const L = await todas(() => sb.rpc('dir_duplicadas_lista', { p_comp: compId }));
+  if (!L.length) { alertaTopo('Nenhuma baixa duplicada neste mês.'); return; }
+  const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Duplicadas ' + nomeMes(mes).split('/')[0].toLowerCase());
+  const MO = '"R$" #,##0.00', DUP = 'Duplicada · não paga';
+  const fill = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  ws.columns = [{ header: 'Data', width: 8 }, { header: 'Ponto', width: 44 }, { header: 'Cód. integração', width: 15 }, { header: 'Parceiro', width: 24 }, { header: 'Hora da baixa', width: 9 }, { header: 'Situação', width: 21 }, { header: 'Valor unitário', width: 13 }, { header: 'Valor não pago', width: 14 }];
+  ws.getRow(1).eachCell(c => { c.font = { bold: true }; c.fill = fill('FFF3F3F3'); c.alignment = { wrapText: true, vertical: 'top' }; });
+  let tot = 0, nd = 0;
+  L.forEach((x, i) => { const r = i + 2, dup = x.ordem > 1, vu = Number(x.v_unit || 0), np = dup && x.por_atend ? vu : 0; tot += np; if (dup) nd++;
+    const row = ws.getRow(r);
+    row.values = [x.dia.slice(8, 10) + '/' + x.dia.slice(5, 7), x.ponto, x.cod_int, x.regiao, x.hora, dup ? DUP : 'Correta · paga', vu,
+      x.por_atend ? { formula: `IF(F${r}="${DUP}",G${r},0)`, result: np } : 0];
+    row.getCell(7).numFmt = MO; row.getCell(8).numFmt = MO;
+    if (dup) row.eachCell({ includeEmpty: true }, c => { c.fill = fill('FFFDE7EA'); }); });
+  const n = L.length + 1, t = ws.getRow(n + 1);
+  t.values = ['Total', null, null, null, null, { formula: `COUNTIF(F2:F${n},"${DUP}")&" duplicadas"`, result: nd + ' duplicadas' }, null, { formula: `SUM(H2:H${n})`, result: tot }];
+  t.font = { bold: true }; t.getCell(8).numFmt = MO;
+  ws.views = [{ state: 'frozen', ySplit: 1 }]; ws.autoFilter = { from: 'A1', to: `H${n}` };
+  const buf = await wb.xlsx.writeBuffer();
+  baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Baixas_duplicadas_${mes.slice(0, 7)}.xlsx`);
 }
 function visaoGeral(box, D, c, ant) {
   const n = v => Number(v) || 0;
@@ -4095,6 +4117,7 @@ function visaoGeral(box, D, c, ant) {
   box.querySelectorAll('[data-irmapa]').forEach(e => e.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); D.aba = 'mapa'; desenharDiretoria(box.closest('main') || $('#main')); });
   const redes = () => visaoGeral(box, D, c, ant);
   box.querySelectorAll('[data-pop]').forEach(e => e.onclick = () => popComposicao(e.dataset.pop, D, c, ant));
+  box.querySelectorAll('[data-dupxls]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const t = b.textContent; b.disabled = true; b.textContent = 'Gerando…'; try { await baixarDuplicadas(b.dataset.dupxls, c.mes); } catch (e) { alertaTopo('Não foi possível gerar a base: ' + e.message); } b.disabled = false; b.textContent = t; });
   box.querySelectorAll('[data-gres]').forEach(e => e.onclick = () => { D.gresAberto = !D.gresAberto; redes(); if (D.gresAberto) setTimeout(() => { const d = $('#gresdet'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 50); });
   box.querySelectorAll('[data-gp]').forEach(e => e.onclick = () => { D.gresPer = e.dataset.gp; redes(); });
   box.querySelectorAll('[data-gs]').forEach(e => e.onclick = () => { const k = e.dataset.gs; const [sk, sd] = D.gresSort || ['total', -1]; D.gresSort = [k, sk === k ? -sd : (k === 'praca' ? 1 : -1)]; redes(); });
