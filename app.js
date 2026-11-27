@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.27-0750';
+const VERSAO = '2026.11.27-0805';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3939,10 +3939,10 @@ function dupResumo(D, c) {
 }
 function dupHtml(D, c) {
   const { m, anoBloq, antes } = dupResumo(D, c); if (!m) return '';
-  const ult = antes.slice(-2), medAntes = ult.length ? ult.reduce((a, x) => a + Number(x.valor || 0), 0) / ult.length : 0;
+  const ult = antes.slice(-1), medAntes = ult.length ? ult.reduce((a, x) => a + Number(x.valor || 0), 0) / ult.length : 0;
   return m.bloqueado
-    ? `<div><small>Baixas duplicadas bloqueadas</small><b>${BRL(m.valor)}</b><span title="Mesmo código de integração com mais de uma baixa no dia: só a primeira é paga. Já contado na validação do fechamento.">${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas (mesmo ponto, mesmo dia) não pagas · ano ${BRL(anoBloq)}${medAntes ? ` · antes: ~${BRL(medAntes)}/mês` : ''}</span></div>`
-    : `<div><small>Baixas duplicadas (antes do bloqueio)</small><b>${BRL(m.valor)}</b><span>${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas no mesmo dia e ponto entraram no pagamento · bloqueio automático a partir de nov/26</span></div>`;
+    ? `<div><small>Baixas duplicadas bloqueadas</small><b>${BRL(m.valor)}</b><span title="Mesmo código de integração com mais de uma baixa no dia: só a primeira é paga. Já contado na validação do fechamento.">${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas (mesmo ponto, mesmo dia), ${m.baixas_unit || 0} de parceiros por atendimento, não pagas · acumulado ${BRL(anoBloq)}${medAntes ? ` · outubro, antes do bloqueio: ${BRL(medAntes)} pagos` : ''}</span></div>`
+    : `<div><small>Baixas duplicadas (antes do bloqueio)</small><b>${BRL(m.valor)}</b><span>${m.baixas_unit || 0} baixas repetidas (mesmo ponto, mesmo dia) de parceiros por atendimento entraram no pagamento · bloqueio automático a partir de nov/26</span></div>`;
 }
 function visaoGeral(box, D, c, ant) {
   const n = v => Number(v) || 0;
