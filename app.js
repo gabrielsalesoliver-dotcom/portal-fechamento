@@ -10,7 +10,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const app = document.getElementById('app');
 
-const VERSAO = '2026.11.25-1700';
+const VERSAO = '2026.11.27-0750';
 const S = { user: null, perfil: null, comps: [], parceiros: [], rotas: {}, view: 'painel', compId: null, umovPrev: null, cartPrev: null };
 
 // ---------- utilidades ----------
@@ -3285,7 +3285,7 @@ async function vDiretoria(el) {
   desenharDiretoria(el);
 }
 async function carregarDiretoria() {
-  const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos, nomesMes, quinz] = await Promise.all([
+  const [comps, parcs, fech, prev, efic, adis, ddet, spotTodos, nomesMes, quinz, dups] = await Promise.all([
     q(sb.from('competencias').select('id,mes,status').order('mes')),
     q(sb.rpc('parceiros_resumo')),
     todas(() => sb.from('fechamento_parceiro').select('competencia_id,parceiro_id,status,malote,kits,fora_umov,descontos,valor_final,valor_aprovado,adiantado,antec_desconto,pago_em,data_pagamento,lote_id')),
@@ -3296,6 +3296,7 @@ async function carregarDiretoria() {
     todas(() => sb.rpc('dir_spot_todos')).catch(e => { console.error('dir_spot_todos', e); return []; }),
     todas(() => sb.from('parceiro_nome_mes').select('competencia_id,parceiro_id,nome,razao_social,cnpj')).catch(() => []),
     todas(() => sb.rpc('quinzenas_descobertas')).catch(() => []),
+    q(sb.rpc('dir_duplicadas')).catch(() => []),
   ]);
   reclassificarSpot(fech, spotTodos || [], parcs);
   S.compsFechadas = new Set(comps.filter(c => c.status === 'fechada').map(c => c.id));
@@ -3304,7 +3305,7 @@ async function carregarDiretoria() {
   if (!comComDados.length) return false;
   S.dir = S.dir || {};
   const D = S.dir;
-  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.nomesMes = nomesMes || []; D.quinz = quinz || []; D.aba = D.aba || 'executivo';
+  D.comps = comComDados; D.parcs = parcs; D.fech = fech; D.prev = prev; D.efic = efic; D.adis = adis.filter(a => ['liberado', 'nf_recebida', 'enviado_financeiro', 'pago'].includes(a.status)); D.ddet = ddet || []; D.dups = dups || []; D.nomesMes = nomesMes || []; D.quinz = quinz || []; D.aba = D.aba || 'executivo';
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const vig = comComDados.find(c => c.mes === hojeMes); if (vig) D.compId = vig.id; }
   if (!D.compId || !comComDados.some(c => c.id === D.compId)) { const fechadas = comComDados.filter(c => c.status === 'fechada' && fech.some(f => f.competencia_id === c.id)); const comFech = comComDados.filter(c => fech.some(f => f.competencia_id === c.id)); D.compId = (fechadas.length ? fechadas : comFech.length ? comFech : comComDados).slice(-1)[0].id; }
   D.op = D.op || 'tudo'; D.sort = D.sort || ['total', -1];
@@ -3894,7 +3895,7 @@ function resumoExecutivo(box, D, c, ant) {
     <div class="rx-kpis">
       ${kpi('Custo do mês', `R$ ${mil(custo)} mil`, vPrev != null ? `${vPrev <= 0 ? '▼' : '▲'} ${comoPct(vPrev)} ${vPrev <= 0 ? 'abaixo' : 'acima'} do previsto` : '', vPrev != null && vPrev <= 0 ? 'rx-bom' : 'rx-ruim', `Previsto pelo contrato: R$ ${mil(previsto)} mil${ant ? ` · ${nomeMes(ant.mes).split('/')[0]}: R$ ${mil(custoAnt)} mil` : ''}`, '#parc')}
       ${kpi('Custo por atendimento', cpa ? cpa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—', cpa && cpaAnt ? `${cpa <= cpaAnt ? '▼' : '▲'} ${comoPct(cpa / cpaAnt - 1)} sobre ${nomeMes(ant.mes).split('/')[0].toLowerCase()}` : '', cpa && cpaAnt && cpa <= cpaAnt ? 'rx-bom' : 'rx-ruim', at ? `${at.toLocaleString('pt-BR')} atendimentos realizados (Umov)${cpaAnt ? ` · ${nomeMes(ant.mes).split('/')[0]}: ${cpaAnt.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}` : ''}` : 'sem a contagem de atendimentos deste mês', '@eficiencia')}
-      ${kpi('Economia gerada pela GSM', `R$ ${mil(G.total)} mil`, custo ? `${comoPct(G.total / (custo + G.total))} do que seria pago` : '', 'rx-bom', `Validação do fechamento, descontos e antecipações · acumulado ${ano}: R$ ${mil(GAtot)} mil`, '@geral-eco')}
+      ${kpi('Economia gerada pela GSM', `R$ ${mil(G.total)} mil`, custo ? `${comoPct(G.total / (custo + G.total))} do que seria pago` : '', 'rx-bom', `Validação do fechamento, descontos e antecipações · acumulado ${ano}: R$ ${mil(GAtot)} mil${(() => { const d = dupResumo(D, c).m; return d && d.bloqueado && Number(d.valor) ? ` · inclui ${BRL(d.valor)} de baixas duplicadas bloqueadas` : ''; })()}`, '@geral-eco')}
       ${kpi(`Projeção de ${ano}`, `R$ ${(proj / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`, '', '', `Realizado até ${MES3[mSel - 1].toLowerCase()}: R$ ${(acum / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi · meses seguintes pelo previsto`, '@resumo')}
     </div>
     <section class="rx-card"><div class="rx-cab"><h3>Como chegamos aos R$ ${mil(custo)} mil</h3><span>Eixo a partir de R$ ${mil(piso).replace(',0', '')} mil${previsto ? ` · tracejado = previsto (R$ ${mil(previsto)} mil)` : ''}</span></div>
@@ -3930,6 +3931,19 @@ function resumoExecutivo(box, D, c, ant) {
   box.querySelectorAll('[data-rxmes]').forEach(e => e.onclick = () => { D.compId = e.dataset.rxmes; desenharDiretoria(tela); });
 }
 
+// Baixas duplicadas no mesmo dia (mesmo código de integração): a partir de nov/26 não entram no pagamento
+function dupResumo(D, c) {
+  const L = (D.dups || []).filter(x => x.mes.slice(0, 4) === c.mes.slice(0, 4) && x.mes <= c.mes);
+  const m = L.find(x => x.competencia_id === c.id);
+  return { m, anoBloq: L.filter(x => x.bloqueado).reduce((a, x) => a + Number(x.valor || 0), 0), antes: (D.dups || []).filter(x => !x.bloqueado) };
+}
+function dupHtml(D, c) {
+  const { m, anoBloq, antes } = dupResumo(D, c); if (!m) return '';
+  const ult = antes.slice(-2), medAntes = ult.length ? ult.reduce((a, x) => a + Number(x.valor || 0), 0) / ult.length : 0;
+  return m.bloqueado
+    ? `<div><small>Baixas duplicadas bloqueadas</small><b>${BRL(m.valor)}</b><span title="Mesmo código de integração com mais de uma baixa no dia: só a primeira é paga. Já contado na validação do fechamento.">${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas (mesmo ponto, mesmo dia) não pagas · ano ${BRL(anoBloq)}${medAntes ? ` · antes: ~${BRL(medAntes)}/mês` : ''}</span></div>`
+    : `<div><small>Baixas duplicadas (antes do bloqueio)</small><b>${BRL(m.valor)}</b><span>${Number(m.baixas).toLocaleString('pt-BR')} baixas repetidas no mesmo dia e ponto entraram no pagamento · bloqueio automático a partir de nov/26</span></div>`;
+}
 function visaoGeral(box, D, c, ant) {
   const n = v => Number(v) || 0;
   const doMes = id => D.fech.filter(f => f.competencia_id === id);
@@ -4018,7 +4032,7 @@ function visaoGeral(box, D, c, ant) {
         <div class="gbar"><i style="width:${custo ? Math.min(100, Math.round(100 * (pago + adiantado + antecTot) / custo)) : 0}%"></i></div></div>`}
     </div>
   </div>
-  ${semReal ? '' : `<section class="gres" data-gres style="cursor:pointer" title="Clique para ver por praça">
+  ${semReal ? (dupHtml(D, c) ? `<section class="gres"><div class="gres-itens">${dupHtml(D, c)}</div></section>` : '') : `<section class="gres" data-gres style="cursor:pointer" title="Clique para ver por praça">
     <div class="gres-main"><small>Economia gerada pela GSM · ${nomeMes(c.mes)}</small><b>${BRL(G.total)}</b>
       <span>${custo ? `${pct(G.total / (custo + G.total)).replace('+', '')} do que seria pago sem a validação` : ''}</span>
       <span class="gres-ano">Acumulado ${c.mes.slice(0, 4)}: <b>${BRL(GA.total)}</b></span></div>
@@ -4026,6 +4040,7 @@ function visaoGeral(box, D, c, ant) {
       <div><small>Validação do fechamento</small><b>${BRL(G.val)}</b><span>malote pago abaixo do previsto: só o realizado comprovado (${G.nAbaixo} parceiros${G.acima > 0.5 ? `; ${BRL(G.acima)} acima do previsto em ${G.nAcima}` : ''}) · ano ${BRL(GA.val)}</span></div>
       <div><small>Descontos aplicados</small><b>${BRL(G.desc)}</b><span>${catTxt(G) || 'repasses, penalidades e ajustes'} · ano ${BRL(GA.desc)}</span></div>
       <div><small>Adiantamentos e antecipações</small><b>${BRL(G.save)}</b><span>taxa cobrada para pagar antes · ano ${BRL(GA.save)}</span></div>
+      ${dupHtml(D, c)}
       <div class="gres-pot"><small>Ainda dá para reduzir</small><b>${potM === undefined ? '…' : potM === null ? '—' : BRL(potM)}</b><span>${potM === undefined ? 'calculando…' : potM === null ? 'sem execução do mês (Umov) para calcular' : 'fixo pago por atendimento previsto que não aconteceu'} · <a href="#" data-irmapa>ver no Mapa de custos</a></span></div>
     </div><span class="gres-mais">${D.gresAberto ? '▲ fechar detalhe por praça' : '▼ ver por praça'}</span></section>`}
   ${!semReal && D.gresAberto ? (() => { const per = D.gresPer || 'mes'; const ids = per === 'ano' ? mesesAno.map(x => x.id) : [c.id];
